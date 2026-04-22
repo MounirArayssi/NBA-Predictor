@@ -215,3 +215,57 @@ class TeamRollingStats(Base):
         UniqueConstraint('team_id', 'as_of_date', 'window',
                          name='uq_team_rolling_stats'),
     )
+
+
+class GameOdds(Base):
+    __tablename__ = "game_odds"
+
+    id                 = Column(Integer, primary_key=True)
+    game_id            = Column(Integer, ForeignKey("games.game_id"))
+    fetched_at         = Column(DateTime, default=func.now())
+    home_spread        = Column(Numeric(5, 1))
+    away_spread        = Column(Numeric(5, 1))
+    total_line         = Column(Numeric(5, 1))
+    vegas_home_implied = Column(Numeric(6, 2))
+    vegas_away_implied = Column(Numeric(6, 2))
+    bookmaker          = Column(String(50))
+
+
+class TeamStyleVector(Base):
+    __tablename__ = "team_style_vectors"
+
+    id                  = Column(Integer, primary_key=True)
+    team_id             = Column(Integer, ForeignKey("teams.team_id"))
+    as_of_date          = Column(Date, nullable=False)
+    season              = Column(String(10))
+    avg_pace            = Column(Numeric(6, 2))
+    three_point_rate    = Column(Numeric(5, 4))
+    offensive_rating    = Column(Numeric(6, 2))
+    defensive_rating    = Column(Numeric(6, 2))
+    efg_pct             = Column(Numeric(5, 4))
+    tov_pct             = Column(Numeric(6, 2))
+    oreb_pct            = Column(Numeric(6, 2))
+    ft_rate             = Column(Numeric(6, 2))
+    fg3_pct             = Column(Numeric(5, 4))
+    created_at          = Column(DateTime, default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint('team_id', 'as_of_date',
+                         name='uq_team_style_vector'),
+    )
+
+
+class TeamSimilarity(Base):
+    __tablename__ = "team_similarity"
+
+    id               = Column(Integer, primary_key=True)
+    team_a_id        = Column(Integer, ForeignKey("teams.team_id"))
+    team_b_id        = Column(Integer, ForeignKey("teams.team_id"))
+    as_of_date       = Column(Date, nullable=False)
+    similarity_score = Column(Numeric(8, 6))
+    created_at       = Column(DateTime, default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint('team_a_id', 'team_b_id', 'as_of_date',
+                         name='uq_team_similarity'),
+    )

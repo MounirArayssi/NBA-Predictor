@@ -8,7 +8,6 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.metrics import mean_absolute_error
-from sklearn.preprocessing import StandardScaler
 import pickle
 import warnings
 warnings.filterwarnings('ignore')
@@ -53,6 +52,29 @@ FEATURE_COLS = [
     'h2h_away_avg_score',
     'h2h_home_win_pct',
     'h2h_games_count',
+
+    # Playoff context
+    'is_playoff',
+    'series_game_num',
+    'home_series_wins',
+    'away_series_wins',
+    'is_elimination',
+    'series_momentum',
+    'series_pressure',
+
+    # Team similarity features
+    'home_proxy_off_rating',
+    'home_proxy_avg_pts',
+    'away_proxy_off_rating',
+    'away_proxy_avg_pts',
+    'home_sim_off_rating',
+    'away_sim_off_rating',
+
+
+    # Playoff elevation
+    'home_playoff_elevation',
+    'away_playoff_elevation',
+    'playoff_elevation_diff',
 ]
 
 TARGET_HOME = 'home_score'
@@ -67,9 +89,10 @@ def load_and_prepare_data(window=10):
     before = len(df)
     df = df.dropna(subset=FEATURE_COLS + [TARGET_HOME, TARGET_AWAY])
     after = len(df)
-    print(f"Dropped {before - after} rows with missing values ({after} remaining)")
+    print(f"Dropped {before - after} rows with missing values "
+          f"({after} remaining)")
 
-    # Sort chronologically — critical for avoiding data leakage
+    # Sort chronologically
     df = df.sort_values('game_date').reset_index(drop=True)
 
     return df
@@ -94,6 +117,11 @@ def train_model(train, target_col):
     X_train = train[FEATURE_COLS]
     y_train = train[target_col]
 
+    # Recency weighting — slower decay over 2 years
+    max_date = pd.to_datetime(train['game_date']).max()
+    days_ago = (max_date - pd.to_datetime(train['game_date'])).dt.days
+    sample_weights = np.exp(-days_ago / 730)
+
     model = GradientBoostingRegressor(
         n_estimators=200,
         learning_rate=0.05,
@@ -103,7 +131,7 @@ def train_model(train, target_col):
         random_state=42
     )
 
-    model.fit(X_train, y_train)
+    model.fit(X_train, y_train, sample_weight=sample_weights)
     return model
 
 
@@ -115,10 +143,6 @@ def evaluate_model(model_home, model_away, test):
     home_preds = model_home.predict(X_test)
     away_preds = model_away.predict(X_test)
 
-    # Round to nearest integer
-    home_preds_rounded = np.round(home_preds).astype(int)
-    away_preds_rounded = np.round(away_preds).astype(int)
-
     # Actual scores
     home_actual = test[TARGET_HOME].values
     away_actual = test[TARGET_AWAY].values
@@ -129,9 +153,9 @@ def evaluate_model(model_home, model_away, test):
     total_mae = (home_mae + away_mae) / 2
 
     # Winner accuracy
-    pred_winner_home = home_preds > away_preds
+    pred_winner_home   = home_preds > away_preds
     actual_winner_home = home_actual > away_actual
-    winner_accuracy = (pred_winner_home == actual_winner_home).mean()
+    winner_accuracy    = (pred_winner_home == actual_winner_home).mean()
 
     # Within N points accuracy
     total_error = np.abs(home_preds - home_actual) + \
@@ -152,16 +176,34 @@ def evaluate_model(model_home, model_away, test):
     print(f"Within 20 pts:      {within_20*100:.1f}%")
     print("="*50)
 
-    # Show sample predictions vs actuals
+    # Show mix — 5 recent regular season + 5 playoff
+    regular = test[test['season_type'] == 'Regular Season'].tail(5)
+    playoffs = test[test['season_type'] == 'Playoffs'].tail(5)
+
+    reg_preds_home  = model_home.predict(regular[FEATURE_COLS])
+    reg_preds_away  = model_away.predict(regular[FEATURE_COLS])
+    play_preds_home = model_home.predict(playoffs[FEATURE_COLS])
+    play_preds_away = model_away.predict(playoffs[FEATURE_COLS])
+
     print("\nSample predictions vs actuals:")
-    sample = test.head(10).copy()
-    sample['pred_home'] = np.round(home_preds[:10]).astype(int)
-    sample['pred_away'] = np.round(away_preds[:10]).astype(int)
-    for _, row in sample.iterrows():
-        correct = "✅" if (row['pred_home'] > row['pred_away']) == \
-                          (row['home_score'] > row['away_score']) else "❌"
+    print("--- Regular Season ---")
+    for i, (_, row) in enumerate(regular.iterrows()):
+        pred_h = int(np.round(reg_preds_home[i]))
+        pred_a = int(np.round(reg_preds_away[i]))
+        correct = "✅" if (pred_h > pred_a) == \
+                         (row['home_score'] > row['away_score']) else "❌"
         print(f"  {correct} {row['away_team']} @ {row['home_team']} | "
-              f"Pred: {row['pred_home']}-{row['pred_away']} | "
+              f"Pred: {pred_h}-{pred_a} | "
+              f"Actual: {int(row['home_score'])}-{int(row['away_score'])}")
+
+    print("--- Playoffs ---")
+    for i, (_, row) in enumerate(playoffs.iterrows()):
+        pred_h = int(np.round(play_preds_home[i]))
+        pred_a = int(np.round(play_preds_away[i]))
+        correct = "✅" if (pred_h > pred_a) == \
+                         (row['home_score'] > row['away_score']) else "❌"
+        print(f"  {correct} {row['away_team']} @ {row['home_team']} | "
+              f"Pred: {pred_h}-{pred_a} | "
               f"Actual: {int(row['home_score'])}-{int(row['away_score'])}")
 
     return {
@@ -191,42 +233,52 @@ def plot_feature_importance(model_home, model_away):
 
     fig, axes = plt.subplots(1, 2, figsize=(16, 8))
 
-    importance_home.head(15).plot(kind='barh', ax=axes[0], color='steelblue')
+    importance_home.head(15).plot(
+        kind='barh', ax=axes[0], color='steelblue'
+    )
     axes[0].set_title('Home Score — Top 15 Features')
     axes[0].invert_yaxis()
 
-    importance_away.head(15).plot(kind='barh', ax=axes[1], color='coral')
+    importance_away.head(15).plot(
+        kind='barh', ax=axes[1], color='coral'
+    )
     axes[1].set_title('Away Score — Top 15 Features')
     axes[1].invert_yaxis()
 
     plt.tight_layout()
-    plt.savefig('model/feature_importance.png', dpi=150, bbox_inches='tight')
-    print("\n✅ Feature importance plot saved to model/feature_importance.png")
+    plt.savefig(
+        'model/feature_importance.png', dpi=150, bbox_inches='tight'
+    )
+    print("\n✅ Feature importance saved to model/feature_importance.png")
 
 
 def plot_predictions_vs_actual(results, test):
     """Scatter plot of predicted vs actual scores."""
     fig, axes = plt.subplots(1, 2, figsize=(14, 6))
 
-    # Home scores
-    axes[0].scatter(test[TARGET_HOME], results['home_preds'],
-                    alpha=0.3, color='steelblue', s=10)
+    axes[0].scatter(
+        test[TARGET_HOME], results['home_preds'],
+        alpha=0.3, color='steelblue', s=10
+    )
     axes[0].plot([80, 160], [80, 160], 'r--', linewidth=1)
     axes[0].set_xlabel('Actual Home Score')
     axes[0].set_ylabel('Predicted Home Score')
     axes[0].set_title(f"Home Score (MAE: {results['home_mae']:.1f})")
 
-    # Away scores
-    axes[1].scatter(test[TARGET_AWAY], results['away_preds'],
-                    alpha=0.3, color='coral', s=10)
+    axes[1].scatter(
+        test[TARGET_AWAY], results['away_preds'],
+        alpha=0.3, color='coral', s=10
+    )
     axes[1].plot([80, 160], [80, 160], 'r--', linewidth=1)
     axes[1].set_xlabel('Actual Away Score')
     axes[1].set_ylabel('Predicted Away Score')
     axes[1].set_title(f"Away Score (MAE: {results['away_mae']:.1f})")
 
     plt.tight_layout()
-    plt.savefig('model/predictions_vs_actual.png', dpi=150, bbox_inches='tight')
-    print("✅ Predictions vs actual plot saved to model/predictions_vs_actual.png")
+    plt.savefig(
+        'model/predictions_vs_actual.png', dpi=150, bbox_inches='tight'
+    )
+    print("✅ Predictions vs actual saved to model/predictions_vs_actual.png")
 
 
 def save_models(model_home, model_away):
@@ -239,7 +291,6 @@ def save_models(model_home, model_away):
     with open('model/model_away.pkl', 'wb') as f:
         pickle.dump(model_away, f)
 
-    # Save feature columns so prediction script knows what to use
     with open('model/feature_cols.pkl', 'wb') as f:
         pickle.dump(FEATURE_COLS, f)
 
@@ -254,7 +305,7 @@ if __name__ == "__main__":
     print("\nSplitting data...")
     train, test = chronological_split(df, test_ratio=0.2)
 
-    # Train models
+    # Train
     print("\nTraining home score model...")
     model_home = train_model(train, TARGET_HOME)
     print("Training away score model...")
