@@ -724,12 +724,13 @@ def add_matchup_interactions(df):
 
     # 3pt matchup — home offense vs away defense
     # Positive = home team 3pt rate exceeds away team's 3pt defense
+    # In build_features.py add_matchup_interactions function
+    df['home_3pt_rate'] = df['home_3pt_rate'].fillna(0.35)
+    df['away_3pt_rate'] = df['away_3pt_rate'].fillna(0.35)
     df['home_3pt_matchup'] = (
         df['home_3pt_rate'] - df['away_3pt_rate']
     )
-    df['away_3pt_matchup'] = (
-        df['away_3pt_rate'] - df['home_3pt_rate']
-    )
+    df['away_3pt_matchup'] = -df['home_3pt_matchup']
 
     # Pace matchup — combined pace determines total possessions
     df['combined_pace'] = (

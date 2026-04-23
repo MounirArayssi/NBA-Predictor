@@ -224,9 +224,7 @@ def predict_team_player_stats(team_id, opponent_team_id,
                 minutes = float(playoff_min)
 
         # Skip very low usage or low minute players
-        if minutes < 15:
-            print(f"  FILTERED OUT: {player['full_name']} - {minutes:.1f} min")
-            continue
+        is_rotation = minutes >= 15
 
         features  = X[i].reshape(1, -1)
         pred_pts  = max(0, float(
@@ -254,6 +252,7 @@ def predict_team_player_stats(team_id, opponent_team_id,
             'usage_rate':             round(usage, 3),
             'returning_from_injury':  returning_from_injury,
             'recent_games':           recent_games,
+            'is_rotation': is_rotation,
         })
 
     # Sort by usage rate — best proxy for rotation order
@@ -265,20 +264,38 @@ def predict_team_player_stats(team_id, opponent_team_id,
     if not all_players:
         return [], 0, 0, 0
     
-    starters = all_players[:5]
-    bench    = all_players[5:]
+    # Split into rotation and fringe
+    rotation = [p for p in all_players if p['is_rotation']]
+    fringe   = [p for p in all_players if not p['is_rotation']]
 
+    # Sort rotation by minutes for starters/bench split
+    rotation.sort(key=lambda x: x['avg_minutes'], reverse=True)
+    starters = rotation[:5]
+    bench    = rotation[5:]
+
+    # Starters — full contribution
+    # Bench rotation — scaled by minutes
+    # Fringe (Caruso type) — small contribution weighted by minutes
     team_points = round(
-        sum(p['pred_points'] for p in starters) +
-        sum(p['pred_points'] * (p['avg_minutes'] / 35.0) for p in bench)
-    )
+    sum(p['pred_points'] for p in starters) +
+    sum(p['pred_points'] * (p['avg_minutes'] / 35.0) 
+        for p in bench) +
+    sum(p['pred_points'] * (p['avg_minutes'] / 48.0) 
+        for p in fringe)  # fringe gets minimal weight
+)
     team_rebounds = round(
         sum(p['pred_rebounds'] for p in starters) +
-        sum(p['pred_rebounds'] * (p['avg_minutes'] / 35.0) for p in bench)
+        sum(p['pred_rebounds'] * (p['avg_minutes'] / 35.0) 
+            for p in bench) +
+        sum(p['pred_rebounds'] * (p['avg_minutes'] / 48.0) 
+            for p in fringe)
     )
     team_assists = round(
         sum(p['pred_assists'] for p in starters) +
-        sum(p['pred_assists'] * (p['avg_minutes'] / 35.0) for p in bench)
+        sum(p['pred_assists'] * (p['avg_minutes'] / 35.0) 
+            for p in bench) +
+        sum(p['pred_assists'] * (p['avg_minutes'] / 48.0) 
+            for p in fringe)
     )
 
     all_players.sort(key=lambda x: x['avg_minutes'], reverse=True)
@@ -291,7 +308,7 @@ def redistribute_playoff_minutes(all_players):
     if not all_players or len(all_players) < 2:
         return all_players
 
-    MAX_MINUTES = 40
+    MAX_MINUTES = 39
     sorted_players = sorted(
         all_players, key=lambda x: x['avg_minutes'], reverse=True
     )
