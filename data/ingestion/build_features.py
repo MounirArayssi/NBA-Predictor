@@ -325,7 +325,7 @@ def add_playoff_features(df):
     df['is_elimination']   = is_elimination
     df['series_momentum']  = series_momentum
     df['series_pressure']  = df['home_series_wins'] + df['away_series_wins']
-
+    df['series_wins_diff'] = df['home_series_wins'] - df['away_series_wins']
     return df
 
 

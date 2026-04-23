@@ -4,14 +4,14 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 
 import requests
 import pandas as pd
-from datetime import timedelta
+from datetime import date, timedelta
 from sqlalchemy.orm import Session
 from data.storage.db import engine
 from data.storage.models import Base, Game, Team, GameOdds
 from config.settings import ODDS_API_KEY, ODDS_API_BASE
 
+
 def fetch_todays_odds():
-    """Fetch NBA odds for upcoming games."""
     if not ODDS_API_KEY:
         print("❌ No ODDS_API_KEY found in .env")
         return []
@@ -23,20 +23,100 @@ def fetch_todays_odds():
         "markets":    "spreads,totals",
         "oddsFormat": "american",
     }
-
     response = requests.get(url, params=params)
-
     if response.status_code != 200:
         print(f"❌ API error: {response.status_code} — {response.text}")
         return []
-
     games = response.json()
     print(f"Found {len(games)} games with odds")
     return games
 
 
+def fetch_game_ids():
+    """Get today's NBA event IDs."""
+    url = f"{ODDS_API_BASE}/sports/basketball_nba/events"
+    params = {"apiKey": ODDS_API_KEY}
+    response = requests.get(url, params=params)
+    if response.status_code == 200:
+        return response.json()
+    return []
+
+
+def fetch_player_props(event_id):
+    """Fetch player points/rebounds/assists props for one game."""
+    url = (
+        f"{ODDS_API_BASE}/sports/basketball_nba"
+        f"/events/{event_id}/odds"
+    )
+    params = {
+        "apiKey":     ODDS_API_KEY,
+        "regions":    "us",
+        "markets":    "player_points,player_rebounds,player_assists",
+        "oddsFormat": "american",
+        "bookmakers": "draftkings",
+    }
+    response = requests.get(url, params=params)
+    if response.status_code == 200:
+        return response.json()
+    print(f"  ⚠️  Props error {response.status_code}: {response.text[:100]}")
+    return None
+
+
+def parse_player_props(props_data):
+    """
+    Parse props into {player_name: {points: line, rebounds: line, assists: line}}
+    Only Over lines used as the expected value anchor.
+    """
+    if not props_data:
+        return {}
+
+    player_lines = {}
+    for bookmaker in props_data.get('bookmakers', []):
+        for market in bookmaker.get('markets', []):
+            stat = market['key'].replace('player_', '')
+            for outcome in market.get('outcomes', []):
+                if outcome.get('name') == 'Over':
+                    player = outcome.get('description', '')
+                    line   = float(outcome.get('point', 0))
+                    if player not in player_lines:
+                        player_lines[player] = {}
+                    player_lines[player][stat] = line
+
+    return player_lines
+
+
+def fetch_todays_player_props():
+    """
+    Fetch player props for today's games.
+    Returns {'{away}@{home}': {player_name: {stat: line}}}
+    """
+    events = fetch_game_ids()
+    if not events:
+        print("  No events found")
+        return {}
+
+    all_props = {}
+    today     = date.today()
+
+    for event in events:
+        commence = pd.to_datetime(event['commence_time']).date()
+        if commence != today and commence != today + timedelta(1):
+            continue
+
+        home = event.get('home_team', '')
+        away = event.get('away_team', '')
+        print(f"  Fetching props: {away} @ {home}")
+
+        props    = fetch_player_props(event['id'])
+        parsed   = parse_player_props(props)
+        game_key = f"{away}@{home}"
+        all_props[game_key] = parsed
+        print(f"    Found props for {len(parsed)} players")
+
+    return all_props
+
+
 def parse_and_store_odds(odds_data):
-    """Parse odds and match to games in database."""
     with Session(engine) as session:
         for game in odds_data:
             home_team_name = game.get('home_team')
@@ -45,9 +125,8 @@ def parse_and_store_odds(odds_data):
             game_date      = commence_time.date()
 
             print(f"\n  Processing: {away_team_name} @ {home_team_name} "
-                  f"| Date: {game_date} | UTC: {commence_time}")
+                  f"| Date: {game_date}")
 
-            # Find teams
             home_team = session.query(Team).filter(
                 Team.full_name == home_team_name
             ).first()
@@ -62,27 +141,21 @@ def parse_and_store_odds(odds_data):
                 print(f"    ⚠️  Away team not found: {away_team_name}")
                 continue
 
-            # Try matching game with date tolerance (±1 day for timezone)
             db_game = None
             for delta in [0, 1, -1]:
                 check_date = game_date + timedelta(days=delta)
                 db_game = session.query(Game).filter(
                     Game.home_team_id == home_team.team_id,
                     Game.away_team_id == away_team.team_id,
-                    Game.game_date == check_date
+                    Game.game_date    == check_date
                 ).first()
                 if db_game:
-                    print(f"    Found game on {check_date} "
-                          f"(delta={delta})")
                     break
 
             if not db_game:
-                print(f"    ⚠️  Game not found in DB — "
-                      f"tried {game_date}, {game_date + timedelta(1)}, "
-                      f"{game_date - timedelta(1)}")
+                print(f"    ⚠️  Game not found in DB")
                 continue
 
-            # Parse odds from bookmakers
             home_spread    = None
             total_line     = None
             bookmaker_name = None
@@ -106,20 +179,14 @@ def parse_and_store_odds(odds_data):
                 continue
 
             away_spread = -home_spread
+            vegas_home  = (total_line + (-home_spread)) / 2
+            vegas_away  = (total_line - (-home_spread)) / 2
 
-            # Implied scores
-            # total = home + away
-            # spread = home - away (negative means home favored)
-            vegas_home = (total_line + (-home_spread)) / 2
-            vegas_away = (total_line - (-home_spread)) / 2
-
-            # Check if odds already stored for this game
             existing = session.query(GameOdds).filter_by(
                 game_id=db_game.game_id
             ).first()
 
             if existing:
-                # Update existing
                 existing.home_spread        = home_spread
                 existing.away_spread        = away_spread
                 existing.total_line         = total_line
@@ -128,7 +195,7 @@ def parse_and_store_odds(odds_data):
                 existing.bookmaker          = bookmaker_name
                 print(f"    🔄 Updated odds")
             else:
-                odds = GameOdds(
+                session.add(GameOdds(
                     game_id            = db_game.game_id,
                     home_spread        = home_spread,
                     away_spread        = away_spread,
@@ -136,8 +203,7 @@ def parse_and_store_odds(odds_data):
                     vegas_home_implied = vegas_home,
                     vegas_away_implied = vegas_away,
                     bookmaker          = bookmaker_name
-                )
-                session.add(odds)
+                ))
                 print(f"    ✅ Spread: {home_spread:+.1f} | "
                       f"Total: {total_line} | "
                       f"Implied: {home_team.abbreviation} "
@@ -149,6 +215,15 @@ def parse_and_store_odds(odds_data):
 
 
 if __name__ == "__main__":
+    # Team odds
     odds_data = fetch_todays_odds()
     if odds_data:
         parse_and_store_odds(odds_data)
+
+    # Player props
+    print("\nFetching player props...")
+    props = fetch_todays_player_props()
+    for game, players in props.items():
+        print(f"\n{game}:")
+        for player, lines in list(players.items())[:5]:
+            print(f"  {player}: {lines}")

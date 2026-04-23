@@ -11,10 +11,28 @@ from sqlalchemy import text
 from data.storage.db import engine
 from data.storage.models import Game, Team, GameOdds
 from model.train import FEATURE_COLS
+from data.ingestion.fetch_injuries import fetch_injury_report
+from data.ingestion.fetch_odds import fetch_todays_player_props
+
+
+injury_report = fetch_injury_report()
+all_player_props = fetch_todays_player_props()
 
 # Ensemble weights
-TEAM_WEIGHT   = 0.83
-PLAYER_WEIGHT = 0.17
+# Dynamic ensemble weights based on star power
+def get_ensemble_weights(player_preds, is_playoff=False):
+    if not player_preds:
+        return 0.83, 0.17
+
+    stars = sum(1 for p in player_preds if p['usage_rate'] > 0.25)
+    player_w = min(0.15 + stars * 0.05, 0.30)
+
+    # In playoffs trust player model more — team model uses
+    # regular season pace which inflates scores
+    if is_playoff:
+        player_w = min(player_w + 0.10, 0.40)
+
+    return round(1 - player_w, 2), round(player_w, 2)
 
 
 def load_models():
@@ -449,7 +467,6 @@ def get_key_factors(row, home_pred, away_pred):
 
     return factors[:3]
 
-
 def predict_todays_games():
     print(f"\n{'='*55}")
     print(f"NBA PREDICTIONS — {date.today().strftime('%B %d, %Y')}")
@@ -463,10 +480,22 @@ def predict_todays_games():
         return []
 
     print(f"Found {len(games)} games today\n")
+
+    # Fetch injury report and player props once for all games
+    from data.ingestion.fetch_injuries import fetch_injury_report
+    from data.ingestion.fetch_odds import fetch_todays_player_props
+    from model.predict_players import predict_team_player_stats
+
+    print("Fetching injury report...")
+    injury_report = fetch_injury_report()
+
+    print("Fetching player props...")
+    all_player_props = fetch_todays_player_props()
+
     predictions = []
 
     for game in games:
-        print(f"Building features for "
+        print(f"\nBuilding features for "
               f"{game['away_team']} @ {game['home_team']}...")
 
         row_dict = build_features_for_upcoming_game(
@@ -496,9 +525,16 @@ def predict_todays_games():
         home_pred_team = float(model_home.predict(features)[0])
         away_pred_team = float(model_away.predict(features)[0])
 
+        # Match props to this game
+        game_props_key = next(
+            (k for k in all_player_props
+             if game['away_team'] in k or game['home_team'] in k),
+            None
+        )
+        game_props = all_player_props.get(game_props_key, {})
+
         # Player model predictions
         try:
-            from model.predict_players import predict_team_player_stats
             home_player_preds, home_player_pts, _, _ = \
                 predict_team_player_stats(
                     team_id          = game['home_team_id'],
@@ -516,7 +552,10 @@ def predict_todays_games():
                     ),
                     team_pace        = float(
                         row_dict.get('home_pace', 98)
-                    )
+                    ),
+                    injury_report    = injury_report,
+                    team_abbr        = game['home_team'],
+                    player_props     = game_props
                 )
 
             away_player_preds, away_player_pts, _, _ = \
@@ -536,32 +575,60 @@ def predict_todays_games():
                     ),
                     team_pace        = float(
                         row_dict.get('away_pace', 98)
-                    )
+                    ),
+                    injury_report    = injury_report,
+                    team_abbr        = game['away_team'],
+                    player_props     = game_props
                 )
+
             player_model_available = (
                 home_player_pts > 0 and away_player_pts > 0
             )
+
         except Exception as e:
             print(f"  ⚠️  Player model failed: {e}")
-            home_player_preds = []
-            away_player_preds = []
-            home_player_pts   = 0
-            away_player_pts   = 0
+            home_player_preds      = []
+            away_player_preds      = []
+            home_player_pts        = 0
+            away_player_pts        = 0
             player_model_available = False
 
-        # Ensemble blend
         if player_model_available:
+            home_disagreement = abs(home_pred_team - home_player_pts)
+            away_disagreement = abs(away_pred_team - away_player_pts)
+
+            if home_disagreement > 15 or away_disagreement > 15:
+                home_tw, home_pw = 0.90, 0.10
+                away_tw, away_pw = 0.90, 0.10
+                print(f"  ⚠️  High model disagreement — "
+                      f"trusting team model "
+                      f"(home diff: {home_disagreement:.0f}, "
+                      f"away diff: {away_disagreement:.0f})")
+            else:
+                home_tw, home_pw = get_ensemble_weights(
+                    home_player_preds,
+                    is_playoff=game['season_type'] == 'Playoffs'
+                )
+                away_tw, away_pw = get_ensemble_weights(
+                    away_player_preds,
+                    is_playoff=game['season_type'] == 'Playoffs'
+                )
+
             home_pred_final = round(
-                home_pred_team * TEAM_WEIGHT +
-                home_player_pts * PLAYER_WEIGHT
+                home_pred_team * home_tw +
+                home_player_pts * home_pw
             )
             away_pred_final = round(
-                away_pred_team * TEAM_WEIGHT +
-                away_player_pts * PLAYER_WEIGHT
+                away_pred_team * away_tw +
+                away_player_pts * away_pw
             )
         else:
             home_pred_final = round(home_pred_team)
             away_pred_final = round(away_pred_team)
+
+        # Tiebreaker
+        if home_pred_final == away_pred_final:
+            home_pred_final += 1
 
         predicted_winner = (
             game['home_team'] if home_pred_final > away_pred_final
@@ -647,7 +714,6 @@ def predict_todays_games():
         print(f"Prediction: {game['home_team']} {home_pred_final} "
               f"— {game['away_team']} {away_pred_final}")
 
-        # Show model breakdown
         if player_model_available:
             print(f"  Team model:   "
                   f"{game['home_team']} {round(home_pred_team)} — "
@@ -671,24 +737,42 @@ def predict_todays_games():
             for f in factors:
                 print(f"  → {f}")
 
-        # Player projections
         if home_player_preds:
             print(f"\n  {game['home_team']} key players:")
             for p in home_player_preds[:8]:
-                rti = " ⚠️RTI" if p.get('returning_from_injury') else ""
+                rti   = " ⚠️RTI" if p.get('returning_from_injury') else ""
+                slump = " 📉"     if p.get('slump_flag')            else ""
+                hot   = " 🔥"     if p.get('hot_flag')              else ""
                 print(f"    {p['full_name']:<22} "
                       f"{p['pred_points']:.0f}pts "
                       f"{p['pred_rebounds']:.0f}reb "
-                      f"{p['pred_assists']:.0f}ast{rti}")
+                      f"{p['pred_assists']:.0f}ast"
+                      f"{rti}{slump}{hot}")
 
         if away_player_preds:
             print(f"\n  {game['away_team']} key players:")
             for p in away_player_preds[:8]:
-                rti = " ⚠️RTI" if p.get('returning_from_injury') else ""
+                rti   = " ⚠️RTI" if p.get('returning_from_injury') else ""
+                slump = " 📉"     if p.get('slump_flag')            else ""
+                hot   = " 🔥"     if p.get('hot_flag')              else ""
                 print(f"    {p['full_name']:<22} "
                       f"{p['pred_points']:.0f}pts "
                       f"{p['pred_rebounds']:.0f}reb "
-                      f"{p['pred_assists']:.0f}ast{rti}")
+                      f"{p['pred_assists']:.0f}ast"
+                      f"{rti}{slump}{hot}")
+
+        # Injuries
+        for team_abbr in [game['home_team'], game['away_team']]:
+            team_injuries = injury_report.get(team_abbr, [])
+            key = [
+                p for p in team_injuries
+                if p['status'] in ['Out', 'Doubtful']
+            ]
+            if key:
+                print(f"\n  ⚠️  {team_abbr} injuries:")
+                for p in key:
+                    detail = f" ({p['type']})" if p['type'] else ""
+                    print(f"    ❌ {p['name']}{detail}")
 
         print()
 

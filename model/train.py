@@ -109,6 +109,8 @@ FEATURE_COLS = [
     'home_bad_night_pct',
     'away_bad_night_pct',
 
+    'series_wins_diff',
+
 ]
 
 TARGET_HOME = 'home_score'

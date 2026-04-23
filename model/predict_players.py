@@ -12,6 +12,90 @@ from data.storage.db import engine
 from data.storage.models import Team
 from model.train_players import PLAYER_FEATURE_COLS
 
+def get_player_weights(usage_rate):
+    """Stars get more weight in team total, role players less."""
+    player_w = 0.15 + (
+        min(max(usage_rate - 0.10, 0), 0.20) / 0.20
+    ) * 0.20
+    return round(1 - player_w, 2), round(player_w, 2)
+
+def get_playoff_performance_factor(player_id, team_id,
+                                    reg_usage, reg_points,
+                                    season='2025-26'):
+    """
+    Compare playoff efficiency to regular season efficiency.
+    Uses points-per-usage as the metric so usage changes
+    don't falsely trigger slump detection.
+    """
+    query = text("""
+        SELECT
+            pbs.points,
+            pbs.usage_rate,
+            pbs.true_shooting,
+            pbs.plus_minus,
+            pbs.minutes_played
+        FROM player_box_scores pbs
+        JOIN games g ON pbs.game_id = g.game_id
+        WHERE pbs.player_id = :player_id
+        AND pbs.team_id     = :team_id
+        AND g.season_type   = 'Playoffs'
+        AND g.season        = :season
+        AND g.is_final      = TRUE
+        AND pbs.minutes_played >= 10
+        ORDER BY g.game_date DESC
+        LIMIT 4
+    """)
+
+    with engine.connect() as conn:
+        result = conn.execute(query, {
+            'player_id': int(player_id),
+            'team_id':   int(team_id),
+            'season':    season
+        }).fetchall()
+
+    if not result:
+        return 1.0, False, False
+
+    playoff_df = pd.DataFrame(result, columns=[
+        'points', 'usage_rate', 'true_shooting',
+        'plus_minus', 'minutes_played'
+    ])
+
+    playoff_pts   = float(playoff_df['points'].mean())
+    playoff_usage = float(playoff_df['usage_rate'].mean()) \
+                    if playoff_df['usage_rate'].notna().any() else reg_usage
+    playoff_ts    = float(playoff_df['true_shooting'].mean()) \
+                    if playoff_df['true_shooting'].notna().any() else 0.55
+
+    # Points per usage — efficiency metric
+    reg_ppu    = reg_points / max(reg_usage, 0.05)
+    playoff_ppu = playoff_pts / max(playoff_usage, 0.05)
+
+    # Efficiency drop — normalized by regular season baseline
+    efficiency_diff = (playoff_ppu - reg_ppu) / max(reg_ppu, 1.0)
+
+    # Minimum absolute threshold — ignore tiny changes
+    # A player going 13pts/15% → 8pts/9% usage
+    # reg_ppu = 13/0.15 = 86.7
+    # playoff_ppu = 8/0.09 = 88.9 → barely changed, ignore
+    # vs Ingram: 21pts/28% → 12pts/28% 
+    # reg_ppu = 75, playoff_ppu = 42.8 → -43% efficiency drop
+
+    slump_flag = False
+    hot_flag   = False
+
+    if efficiency_diff < -0.20:   # 20%+ efficiency drop
+        penalty    = max(0.82, 1.0 + efficiency_diff * 0.4)
+        slump_flag = True
+        return penalty, slump_flag, hot_flag
+
+    elif efficiency_diff > 0.20:  # 20%+ efficiency boost
+        boost    = min(1.15, 1.0 + efficiency_diff * 0.3)
+        hot_flag = True
+        return boost, slump_flag, hot_flag
+
+    return 1.0, False, False
+
 
 def load_player_models():
     with open('model/player_models.pkl', 'rb') as f:
@@ -113,7 +197,7 @@ def get_team_roster(team_id, game_date=None, is_playoff=False):
         )
     )
             GROUP BY pbs.player_id
-            HAVING COUNT(*) >= 5
+            HAVING COUNT(*) >= 7
         ) recent ON recent.player_id = p.player_id
 
 JOIN player_rolling_stats prs
@@ -141,7 +225,8 @@ JOIN player_rolling_stats prs5
     )
 
         WHERE prs.avg_minutes >= :min_minutes
-        AND prs.avg_points    >= 4
+        AND prs.avg_points    >= 6
+        AND prs.avg_usage_rate >= 0.08
         ORDER BY prs.avg_minutes DESC
         LIMIT :limit
     """)
@@ -163,7 +248,10 @@ def predict_team_player_stats(team_id, opponent_team_id,
                                is_home, is_playoff,
                                team_off_rating, opp_def_rating,
                                opp_pace, team_pace,
-                               game_date=None):
+                               game_date=None,
+                               injury_report=None,
+                               team_abbr=None,
+                               player_props=None):
     """
     Predict stat lines for all rotation players on a team.
     Returns player predictions and team totals.
@@ -177,10 +265,33 @@ def predict_team_player_stats(team_id, opponent_team_id,
     if is_playoff:
         playoff_minutes_map = get_playoff_series_minutes(team_id)
 
-
     if roster.empty:
         return [], 0, 0, 0
 
+    # Remove confirmed Out/Doubtful players from roster
+    if injury_report and team_abbr:
+        out_players = {
+            p['name'].lower()
+            for p in injury_report.get(team_abbr, [])
+            if p['status'] in ['Out', 'Doubtful']
+        }
+        if out_players:
+            before = len(roster)
+            roster = roster[
+                ~roster['full_name'].str.lower().isin(out_players)
+            ].reset_index(drop=True)
+            removed = before - len(roster)
+            if removed > 0:
+                print(f"  🚫 Removed {removed} injured player(s) "
+                      f"from {team_abbr} rotation")
+    # After injury removal
+    if is_playoff and len(roster) < 7:
+        # Boost remaining players minutes by injury absence factor
+        absent_factor = 1 + (0.15 * (7 - len(roster)))
+        roster['player_avg_min_l10'] = roster[
+            'player_avg_min_l10'
+        ] * absent_factor
+    # rest of the function stays exactly the same...
     # Add game context features
     roster['is_home']          = int(is_home)
     roster['is_playoff']       = int(is_playoff)
@@ -216,14 +327,12 @@ def predict_team_player_stats(team_id, opponent_team_id,
         usage   = float(player['player_avg_usage_l10'])
         minutes = float(player['player_avg_min_l10'])
 
-    # Override with actual playoff minutes if available
         player_id_int = int(player['player_id'])
         if player_id_int in playoff_minutes_map:
             playoff_min = playoff_minutes_map[player_id_int]
             if playoff_min >= 1:
                 minutes = float(playoff_min)
 
-        # Skip very low usage or low minute players
         is_rotation = minutes >= 15
 
         features  = X[i].reshape(1, -1)
@@ -237,25 +346,74 @@ def predict_team_player_stats(team_id, opponent_team_id,
             models['assists'].predict(features)[0]
         ))
 
-        # Injury return flag
-        recent_games = int(player.get('recent_games', 20))
+        slump_flag = False
+        hot_flag   = False
+
+        if is_playoff:
+            factor, slump_flag, hot_flag = get_playoff_performance_factor(
+                int(player['player_id']),
+                team_id,
+                reg_usage  = float(player.get('player_avg_usage_l10', 0.15)),
+                reg_points = float(player.get('player_avg_points_l10', pred_pts))
+            )
+            
+            if factor != 1.0:
+                pred_pts     = pred_pts * factor
+                pred_reb     = pred_reb * (1 + (factor - 1) * 0.4)
+                pred_ast     = pred_ast * (1 + (factor - 1) * 0.4)
+                playoff_flag = True
+        else:
+            # Regular season — use L5 vs L10 momentum
+            l5_pts  = float(player.get('player_avg_points_l5', pred_pts))
+            l10_pts = float(player.get('player_avg_points_l10', pred_pts))
+            momentum = l5_pts - l10_pts
+
+            if momentum < -4:
+                pred_pts  *= 0.90
+                pred_reb  *= 0.95
+                pred_ast  *= 0.95
+                slump_flag = True
+            elif momentum > 4:
+                pred_pts  *= 1.08
+                pred_reb  *= 1.03
+                pred_ast  *= 1.03
+                hot_flag   = True
+
+
+        # Only anchor top 4 players by usage
+        top_4_names = {
+        p['full_name'] 
+        for p in sorted(all_players, 
+                    key=lambda x: x['usage_rate'], 
+                    reverse=True)[:4]
+        }
+
+        # Then in the loop:
+        player_props_filtered = player_props if player['full_name'] in top_4_names else {}
+        pred_pts, pred_reb, pred_ast = apply_vegas_props_anchor(
+        pred_pts, pred_reb, pred_ast,   
+        player['full_name'], player_props_filtered
+        )
+        recent_games          = int(player.get('recent_games', 20))
         returning_from_injury = recent_games < 7
 
         all_players.append({
-            'player_id':              int(player['player_id']),
-            'full_name':              player['full_name'],
-            'position':               player.get('position', ''),
-            'pred_points':            round(pred_pts, 1),
-            'pred_rebounds':          round(pred_reb, 1),
-            'pred_assists':           round(pred_ast, 1),
-            'avg_minutes':            round(minutes, 1),
-            'usage_rate':             round(usage, 3),
-            'returning_from_injury':  returning_from_injury,
-            'recent_games':           recent_games,
-            'is_rotation': is_rotation,
+            'player_id':             int(player['player_id']),
+            'full_name':             player['full_name'],
+            'position':              player.get('position', ''),
+            'pred_points':           round(pred_pts, 1),
+            'pred_rebounds':         round(pred_reb, 1),
+            'pred_assists':          round(pred_ast, 1),
+            'avg_minutes':           round(minutes, 1),
+            'usage_rate':            round(usage, 3),
+            'returning_from_injury': returning_from_injury,
+            'recent_games':          recent_games,
+            'is_rotation':           is_rotation,
+            'slump_flag':            slump_flag,
+            'hot_flag':              hot_flag,
+            'playoff_flag': False,
         })
 
-    # Sort by usage rate — best proxy for rotation order
     all_players.sort(key=lambda x: x['avg_minutes'], reverse=True)
 
     if is_playoff:
@@ -263,46 +421,91 @@ def predict_team_player_stats(team_id, opponent_team_id,
 
     if not all_players:
         return [], 0, 0, 0
-    
-    # Split into rotation and fringe
+
     rotation = [p for p in all_players if p['is_rotation']]
     fringe   = [p for p in all_players if not p['is_rotation']]
 
-    # Sort rotation by minutes for starters/bench split
     rotation.sort(key=lambda x: x['avg_minutes'], reverse=True)
-    starters = rotation[:5]
+    starters = sorted(rotation,
+                  key=lambda x: x['avg_minutes'],
+                  reverse=True)[:5]
     bench    = rotation[5:]
 
-    # Starters — full contribution
-    # Bench rotation — scaled by minutes
-    # Fringe (Caruso type) — small contribution weighted by minutes
     team_points = round(
     sum(p['pred_points'] for p in starters) +
-    sum(p['pred_points'] * (p['avg_minutes'] / 35.0) 
-        for p in bench) +
-    sum(p['pred_points'] * (p['avg_minutes'] / 48.0) 
-        for p in fringe)  # fringe gets minimal weight
+    sum(p['pred_points'] * 0.5 for p in bench) +
+    sum(p['pred_points'] * 0.2 for p in fringe)
 )
     team_rebounds = round(
-        sum(p['pred_rebounds'] for p in starters) +
-        sum(p['pred_rebounds'] * (p['avg_minutes'] / 35.0) 
-            for p in bench) +
-        sum(p['pred_rebounds'] * (p['avg_minutes'] / 48.0) 
-            for p in fringe)
-    )
+    sum(p['pred_rebounds'] for p in starters) +
+    sum(p['pred_rebounds'] * 0.5 for p in bench) +
+    sum(p['pred_rebounds'] * 0.2 for p in fringe)
+)
     team_assists = round(
-        sum(p['pred_assists'] for p in starters) +
-        sum(p['pred_assists'] * (p['avg_minutes'] / 35.0) 
-            for p in bench) +
-        sum(p['pred_assists'] * (p['avg_minutes'] / 48.0) 
-            for p in fringe)
-    )
+    sum(p['pred_assists'] for p in starters) +
+    sum(p['pred_assists'] * 0.5 for p in bench) +
+    sum(p['pred_assists'] * 0.2 for p in fringe)
+)
 
     all_players.sort(key=lambda x: x['avg_minutes'], reverse=True)
-    # Return top 8 for display
     predictions = all_players[:8]
 
     return predictions, team_points, team_rebounds, team_assists
+
+
+def apply_vegas_props_anchor(pred_pts, pred_reb, pred_ast,
+                              player_name, player_props,
+                              anchor_weight=0.3):
+    if not player_props:
+        return pred_pts, pred_reb, pred_ast
+
+    # Normalize name for matching
+    def normalize(name):
+        return name.lower().replace('.', '').replace('-', ' ').strip()
+
+    player_norm = normalize(player_name)
+
+    props = None
+    for name, lines in player_props.items():
+        if normalize(name) == player_norm:
+            props = lines
+            break
+
+    # Fallback — last name + first initial match
+    if not props:
+        last  = player_name.split()[-1].lower()
+        first = player_name[0].lower()
+        for name, lines in player_props.items():
+            parts = name.split()
+            if (len(parts) >= 2 and
+                    parts[-1].lower() == last and
+                    parts[0][0].lower() == first):
+                props = lines
+                break
+
+    if not props:
+        return pred_pts, pred_reb, pred_ast
+
+    def nudge(pred, line, weight, cap=1.5):
+        if not line:
+            return pred
+        adj = max(-cap, min(cap, (line - pred) * weight))
+        return round(pred + adj, 1)
+
+    new_pts = nudge(pred_pts, props.get('points'), anchor_weight)
+    new_reb = nudge(pred_reb, props.get('rebounds'), anchor_weight)
+    new_ast = nudge(pred_ast, props.get('assists'), anchor_weight)
+
+    if abs(new_pts - pred_pts) > 0.1:
+        print(f"    📊 [{player_name}] "
+              f"pts {pred_pts:.1f}→{new_pts:.1f} "
+              f"(Vegas: {props.get('points','—')}) | "
+              f"reb {pred_reb:.1f}→{new_reb:.1f} | "
+              f"ast {pred_ast:.1f}→{new_ast:.1f}")
+
+    return new_pts, new_reb, new_ast
+
+
 
 def redistribute_playoff_minutes(all_players):
     if not all_players or len(all_players) < 2:

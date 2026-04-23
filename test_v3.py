@@ -1,10 +1,16 @@
-from nba_api.stats.endpoints import boxscoretraditionalv3
+import requests
+import os
+from dotenv import load_dotenv
+load_dotenv()
 
-test = boxscoretraditionalv3.BoxScoreTraditionalV3(game_id="0042500122")
-dfs = test.get_data_frames()
-
-print("Dataframe 1 (current):")
-print(dfs[1][['teamTricode', 'points', 'startersBench']])
-
-print("\nDataframe 2:")
-print(dfs[2][['teamTricode', 'points']])
+key = os.getenv('ODDS_API_KEY')
+url = 'https://api.the-odds-api.com/v4/sports/basketball_nba/odds'
+params = {
+    'apiKey':     key,
+    'regions':    'us',
+    'markets':    'spreads,totals',
+    'oddsFormat': 'american'
+}
+response = requests.get(url, params=params, timeout=10)
+print(f'Remaining requests: {response.headers.get("x-requests-remaining")}')
+print(f'Used requests: {response.headers.get("x-requests-used")}')
