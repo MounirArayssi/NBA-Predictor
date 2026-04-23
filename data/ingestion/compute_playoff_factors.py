@@ -12,7 +12,7 @@ def safe_ratio(ply_val, reg_val, pct_threshold=0.08):
     """
     Compute ratio between playoff and regular season value.
     Returns 1.0 (neutral) if difference is within threshold %.
-    This prevents small fluctuations from being treated as real changes.
+    Prevents small fluctuations from being treated as real changes.
     """
     if pd.isna(reg_val) or reg_val == 0:
         return 1.0
@@ -83,8 +83,6 @@ def compute_player_playoff_factors():
     # --- Elevation metrics with percentage-based thresholds ---
 
     # Points — 8% threshold
-    # 30ppg player: ignores differences < 2.4pts
-    # 15ppg player: ignores differences < 1.2pts
     merged['points_factor'] = merged.apply(
         lambda r: safe_ratio(
             r['avg_points_ply'],
@@ -93,12 +91,12 @@ def compute_player_playoff_factors():
         ), axis=1
     ).clip(0.5, 2.0)
 
-    # True shooting — 5% threshold
+    # True shooting — 8% threshold
     merged['ts_factor'] = merged.apply(
         lambda r: safe_ratio(
             r['avg_ts_ply'],
             r['avg_ts_reg'],
-            pct_threshold=0.05
+            pct_threshold=0.08
         ), axis=1
     ).clip(0.7, 1.3)
 
@@ -111,7 +109,7 @@ def compute_player_playoff_factors():
         ), axis=1
     ).clip(0.7, 1.5)
 
-    # Turnovers — penalize only meaningful increases (10% threshold)
+    # Turnovers — penalize only meaningful increases
     merged['tov_factor'] = merged.apply(
         lambda r: 1.0 if abs(
             r['avg_tov_ply'] - r['avg_tov_reg']
@@ -123,23 +121,23 @@ def compute_player_playoff_factors():
         axis=1
     ).clip(0.85, 1.15)
 
-    # Plus/minus — 10% threshold
+    # Plus/minus — ignore < 2pt difference
     merged['pm_factor'] = merged.apply(
         lambda r: 1.0 if abs(
             r['avg_plus_minus_ply'] - r['avg_plus_minus_reg']
-        ) < 2.0  # ignore < 2pt PM difference
+        ) < 2.0
         else 1.0 + (
             (r['avg_plus_minus_ply'] - r['avg_plus_minus_reg']) / 20
         ),
         axis=1
     ).clip(0.85, 1.15)
 
-    # Assists — 10% threshold
+    # Assists — 15% threshold
     merged['ast_factor'] = merged.apply(
         lambda r: safe_ratio(
             r['avg_ast_ply'],
             r['avg_ast_reg'],
-            pct_threshold=0.10
+            pct_threshold=0.15
         ), axis=1
     ).clip(0.7, 1.5)
 
@@ -152,16 +150,16 @@ def compute_player_playoff_factors():
         ), axis=1
     ).clip(0.7, 1.5)
 
-    # FG% — 5% threshold
+    # FG% — 8% threshold
     merged['fg_factor'] = merged.apply(
         lambda r: safe_ratio(
             r['avg_fg_pct_ply'],
             r['avg_fg_pct_reg'],
-            pct_threshold=0.05
+            pct_threshold=0.08
         ), axis=1
     ).clip(0.7, 1.3)
 
-    # Defensive impact (steals + blocks) — 10% threshold
+    # Defensive impact — 10% threshold
     merged['def_factor'] = merged.apply(
         lambda r: safe_ratio(
             r['avg_stl_ply'] + r['avg_blk_ply'],
@@ -185,8 +183,6 @@ def compute_player_playoff_factors():
     ).clip(0, 1)
 
     # Combined elevation score
-    # Points: 25%, TS: 20%, Usage: 10%, TOV: 10%
-    # PM: 10%, AST: 10%, REB: 5%, FG%: 5%, DEF: 5%
     merged['raw_elevation'] = (
         merged['points_factor']  * 0.25 +
         merged['ts_factor']      * 0.20 +
@@ -219,7 +215,7 @@ def compute_player_playoff_factors():
     ]]
     print(bottom.to_string(index=False))
 
-    # Show Jokic specifically
+    # Show Jokic
     jokic = merged[merged['player_id'] == 237]
     if not jokic.empty:
         print(f"\n  Jokic playoff elevation: "
@@ -240,11 +236,67 @@ def compute_player_playoff_factors():
     return factor_dict, merged
 
 
-def compute_team_playoff_elevation(factor_dict):
+def apply_series_context(base_elevation, series_game_num,
+                         team_won_last, is_elimination,
+                         team_series_wins, opp_series_wins):
+    """
+    Adjust team elevation based on series context.
+
+    Game 1: 50% weight — unknown matchup, no adjustments made yet
+    Game 2: 70% weight — one game of data, partial adjustments
+    Game 3: 85% weight — coaching adjustments baked in
+    Game 4+: 100% weight — full playoff DNA showing
+
+    Momentum: winning last game adds slight boost
+    Elimination: amplifies elevation signal
+    Series deficit: team down 0-2 plays desperate, more volatile
+    """
+    # Game number weight
+    if series_game_num == 1:
+        game_weight = 0.50
+    elif series_game_num == 2:
+        game_weight = 0.70
+    elif series_game_num == 3:
+        game_weight = 0.85
+    else:
+        game_weight = 1.00
+
+    # Apply game weight to elevation
+    adjusted = base_elevation * game_weight
+
+    # Momentum signal — won last game = slight confidence boost
+    if team_won_last and series_game_num > 1:
+        adjusted += 0.15
+    elif not team_won_last and series_game_num > 1:
+        adjusted -= 0.05
+
+    # Elimination game — pressure amplifies playoff DNA
+    if is_elimination:
+        if base_elevation > 0:
+            adjusted *= 1.2   # good playoff teams elevate more
+        else:
+            adjusted *= 0.8   # bad playoff teams don't collapse as much
+
+    # Series deficit — team down 0-2 plays desperate
+    # Creates more variance, slightly unpredictable
+    series_deficit = opp_series_wins - team_series_wins
+    if series_deficit >= 2:
+        adjusted *= 0.85  # discount elevation when down badly
+
+    return adjusted
+
+
+def compute_team_playoff_elevation(factor_dict,
+                                   series_game_num=1,
+                                   home_won_last=False,
+                                   away_won_last=False,
+                                   is_elimination=False,
+                                   home_series_wins=0,
+                                   away_series_wins=0):
     """
     Aggregate player playoff factors to team level.
-    Weighted by usage rate so stars matter more than bench players.
-    Asymmetric cap: max +3 reward, max -1.5 penalty.
+    Applies series context adjustments on top of base elevation.
+    Conservative scaling (0.2) and asymmetric cap (-1.5 to +3).
     """
     print("\nComputing team playoff elevation scores...")
 
@@ -308,11 +360,18 @@ def compute_team_playoff_elevation(factor_dict):
         )
 
         avg_team_pts = float(team_players['avg_points'].sum())
-        raw_adj = (weighted_factor - 1.0) * avg_team_pts * 0.4
 
-        # Asymmetric cap — more room to reward elevation than penalize decline
-        capped_adj = float(np.clip(raw_adj, -1.5, 3.0))
-        team_elevations[int(team_id)] = capped_adj
+        # More conservative scaling — 0.2 instead of 0.4
+        raw_adj = (weighted_factor - 1.0) * avg_team_pts * 0.2
+
+        # Asymmetric cap
+        base_elevation = float(np.clip(raw_adj, -1.5, 3.0))
+        team_elevations[int(team_id)] = base_elevation
+
+    # Apply series context to home and away teams
+    # We store base elevations and apply context at prediction time
+    # This function returns base elevations for training
+    # At prediction time, apply_series_context() adjusts them
 
     abbrev_map = dict(zip(
         roster_df['team_id'].astype(int),
@@ -334,8 +393,80 @@ def compute_team_playoff_elevation(factor_dict):
     return team_elevations
 
 
+def get_series_adjusted_elevations(team_elevations,
+                                   home_team_id, away_team_id,
+                                   series_game_num,
+                                   home_series_wins, away_series_wins):
+    """
+    Apply series context to get game-specific elevation adjustments.
+    Called at prediction time for upcoming games.
+
+    Returns adjusted elevations for home and away teams.
+    """
+    home_base = team_elevations.get(int(home_team_id), 0.0)
+    away_base = team_elevations.get(int(away_team_id), 0.0)
+
+    # Who won the last game?
+    # If home has more series wins they likely won last
+    home_won_last = home_series_wins > away_series_wins
+    away_won_last = away_series_wins > home_series_wins
+
+    # Is it an elimination game?
+    is_elimination = (home_series_wins == 3 or away_series_wins == 3)
+
+    home_adjusted = apply_series_context(
+        base_elevation   = home_base,
+        series_game_num  = series_game_num,
+        team_won_last    = home_won_last,
+        is_elimination   = is_elimination,
+        team_series_wins = home_series_wins,
+        opp_series_wins  = away_series_wins
+    )
+
+    away_adjusted = apply_series_context(
+        base_elevation   = away_base,
+        series_game_num  = series_game_num,
+        team_won_last    = away_won_last,
+        is_elimination   = is_elimination,
+        team_series_wins = away_series_wins,
+        opp_series_wins  = home_series_wins
+    )
+
+    return home_adjusted, away_adjusted
+
+
 if __name__ == "__main__":
     factor_dict, player_df = compute_player_playoff_factors()
+
     if factor_dict:
         team_elevations = compute_team_playoff_elevation(factor_dict)
+
+        # Example: show series-adjusted elevations for a game 3
+        # BOS (home, up 2-0) vs PHI (away, down 0-2)
+        print("\n  Example series context adjustments:")
+        print("  BOS vs PHI — Game 3, BOS leads 2-0")
+
+        # Find BOS and PHI team IDs
+        from data.storage.models import Team
+        from sqlalchemy.orm import Session
+        from data.storage.db import engine as db_engine
+
+        with Session(db_engine) as session:
+            bos = session.query(Team).filter_by(abbreviation='BOS').first()
+            phi = session.query(Team).filter_by(abbreviation='PHI').first()
+
+            if bos and phi:
+                home_adj, away_adj = get_series_adjusted_elevations(
+                    team_elevations  = team_elevations,
+                    home_team_id     = bos.team_id,
+                    away_team_id     = phi.team_id,
+                    series_game_num  = 3,
+                    home_series_wins = 2,
+                    away_series_wins = 0
+                )
+                print(f"  BOS elevation: {team_elevations.get(bos.team_id, 0):.3f} "
+                      f"→ series adjusted: {home_adj:.3f}")
+                print(f"  PHI elevation: {team_elevations.get(phi.team_id, 0):.3f} "
+                      f"→ series adjusted: {away_adj:.3f}")
+
     print("\n✅ Playoff factors computed")

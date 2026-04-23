@@ -75,6 +75,40 @@ FEATURE_COLS = [
     'home_playoff_elevation',
     'away_playoff_elevation',
     'playoff_elevation_diff',
+
+
+    # Scoring variance
+    'home_scoring_std',
+    'away_scoring_std',
+    'home_consistency',
+    'away_consistency',
+    'variance_differential',
+
+    # Matchup interactions
+    'home_3pt_matchup',
+    'away_3pt_matchup',
+    'combined_pace',
+    'home_off_vs_away_def',
+    'away_off_vs_home_def',
+    'net_rating_diff',
+
+    'home_def_vs_away_style',
+    'away_def_vs_home_style',
+    'home_def_style_edge',
+    'away_def_style_edge',
+
+    'has_vegas_odds',
+    
+    'home_momentum',
+    'away_momentum',
+    'home_def_momentum',
+    'away_def_momentum',
+
+
+    # Shooting consistency
+    'home_bad_night_pct',
+    'away_bad_night_pct',
+
 ]
 
 TARGET_HOME = 'home_score'
@@ -120,14 +154,15 @@ def train_model(train, target_col):
     # Recency weighting — slower decay over 2 years
     max_date = pd.to_datetime(train['game_date']).max()
     days_ago = (max_date - pd.to_datetime(train['game_date'])).dt.days
-    sample_weights = np.exp(-days_ago / 730)
+    sample_weights = np.exp(-days_ago / 550)
 
     model = GradientBoostingRegressor(
-        n_estimators=200,
-        learning_rate=0.05,
-        max_depth=4,
-        min_samples_leaf=10,
-        subsample=0.8,
+        n_estimators=150,
+        learning_rate=0.04,
+        max_depth=3,
+        min_samples_leaf=15,
+        subsample=0.7,
+        max_features=0.8,
         random_state=42
     )
 
@@ -296,6 +331,29 @@ def save_models(model_home, model_away):
 
     print("✅ Models saved to model/")
 
+def check_overfitting(model_home, model_away, train, test):
+    """Compare train vs test performance to detect overfitting."""
+    
+    for split_name, split_df in [('TRAIN', train), ('TEST', test)]:
+        X = split_df[FEATURE_COLS]
+        home_preds = model_home.predict(X)
+        away_preds = model_away.predict(X)
+        
+        home_mae = mean_absolute_error(
+            split_df[TARGET_HOME], home_preds
+        )
+        away_mae = mean_absolute_error(
+            split_df[TARGET_AWAY], away_preds
+        )
+        winner_acc = (
+            (home_preds > away_preds) == 
+            (split_df[TARGET_HOME].values > 
+             split_df[TARGET_AWAY].values)
+        ).mean()
+        
+        print(f"{split_name}: MAE={((home_mae+away_mae)/2):.2f} | "
+              f"Winner={winner_acc*100:.1f}%")
+        
 
 if __name__ == "__main__":
     # Load data
@@ -303,7 +361,7 @@ if __name__ == "__main__":
 
     # Split chronologically
     print("\nSplitting data...")
-    train, test = chronological_split(df, test_ratio=0.2)
+    train, test = chronological_split(df, test_ratio=0.15)
 
     # Train
     print("\nTraining home score model...")
@@ -321,5 +379,5 @@ if __name__ == "__main__":
 
     # Save
     save_models(model_home, model_away)
-
+    check_overfitting(model_home, model_away, train, test)
     print("\n✅ Training complete")

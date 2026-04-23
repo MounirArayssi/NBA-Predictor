@@ -269,3 +269,36 @@ class TeamSimilarity(Base):
         UniqueConstraint('team_a_id', 'team_b_id', 'as_of_date',
                          name='uq_team_similarity'),
     )
+
+
+
+class PlayerRollingStats(Base):
+    __tablename__ = "player_rolling_stats"
+
+    id               = Column(Integer, primary_key=True)
+    player_id        = Column(Integer, ForeignKey("players.player_id"))
+    team_id          = Column(Integer, ForeignKey("teams.team_id"))
+    as_of_date       = Column(Date, nullable=False)
+    window           = Column(Integer, nullable=False)
+    season           = Column(String(10))
+    avg_points       = Column(Numeric(6, 2))
+    avg_minutes      = Column(Numeric(5, 2))
+    avg_usage_rate   = Column(Numeric(5, 4))
+    avg_fg_pct       = Column(Numeric(5, 4))
+    avg_fg3_pct      = Column(Numeric(5, 4))
+    avg_true_shooting = Column(Numeric(5, 4))
+    avg_rebounds     = Column(Numeric(5, 2))
+    avg_assists      = Column(Numeric(5, 2))
+    avg_steals       = Column(Numeric(5, 2))
+    avg_blocks       = Column(Numeric(5, 2))
+    avg_turnovers    = Column(Numeric(5, 2))
+    avg_plus_minus   = Column(Numeric(5, 2))
+    games_counted    = Column(Integer)
+    created_at       = Column(DateTime, default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint(
+            'player_id', 'team_id', 'as_of_date', 'window',
+            name='uq_player_rolling_stats'
+        ),
+    )
