@@ -259,8 +259,12 @@ def predict_team_player_stats(team_id, opponent_team_id,
     if game_date is None:
         game_date = date.today()
 
-    models  = load_player_models()
-    roster  = get_team_roster(team_id, game_date)
+    if player_props is None:
+        player_props = {}
+
+    models = load_player_models()
+    roster = get_team_roster(team_id, game_date, is_playoff=is_playoff)
+
     playoff_minutes_map = {}
     if is_playoff:
         playoff_minutes_map = get_playoff_series_minutes(team_id)
@@ -268,150 +272,229 @@ def predict_team_player_stats(team_id, opponent_team_id,
     if roster.empty:
         return [], 0, 0, 0
 
-    # Remove confirmed Out/Doubtful players from roster
+    roster['injury_points_bump'] = 0.0
     if injury_report and team_abbr:
         out_players = {
             p['name'].lower()
             for p in injury_report.get(team_abbr, [])
             if p['status'] in ['Out', 'Doubtful']
         }
+
         if out_players:
             before = len(roster)
+
+            injured_rows = roster[
+                roster['full_name'].str.lower().isin(out_players)
+            ].copy()
+
             roster = roster[
-                ~roster['full_name'].str.lower().isin(out_players)
-            ].reset_index(drop=True)
+            ~roster['full_name'].str.lower().isin(out_players)
+        ].reset_index(drop=True)
+
             removed = before - len(roster)
+
             if removed > 0:
                 print(f"  🚫 Removed {removed} injured player(s) "
-                      f"from {team_abbr} rotation")
-    # After injury removal
-    if is_playoff and len(roster) < 7:
-        # Boost remaining players minutes by injury absence factor
-        absent_factor = 1 + (0.15 * (7 - len(roster)))
-        roster['player_avg_min_l10'] = roster[
-            'player_avg_min_l10'
-        ] * absent_factor
-    # rest of the function stays exactly the same...
-    # Add game context features
-    roster['is_home']          = int(is_home)
-    roster['is_playoff']       = int(is_playoff)
-    roster['opp_def_rating']   = float(opp_def_rating)
-    roster['opp_pace']         = float(opp_pace)
-    roster['team_off_rating']  = float(team_off_rating)
-    roster['pace_factor']      = float(opp_pace) / 98.0
-    roster['off_environment']  = (
-        float(team_off_rating) - float(opp_def_rating)
-    )
-    roster['usage_rate_clean'] = roster[
-        'player_avg_usage_l10'
-    ].fillna(0.20)
-    roster['points_momentum']  = (
-        roster['player_avg_points_l5'] -
-        roster['player_avg_points_l10']
-    ).fillna(0)
-    roster['usage_momentum']   = (
-        roster['player_avg_usage_l5'] -
-        roster['player_avg_usage_l10']
-    ).fillna(0)
-    roster['ts_momentum']      = (
-        roster['player_avg_ts_l5'] -
-        roster['player_avg_ts_l10']
-    ).fillna(0)
-    roster['game_date']        = pd.Timestamp(game_date)
-    roster                     = roster.fillna(0)
+                  f"from {team_abbr} rotation")
 
-    X = roster[PLAYER_FEATURE_COLS].values
+        # Redistribute only part of injured players' scoring
+            if not injured_rows.empty and not roster.empty:
+                lost_points = injured_rows[
+                    'player_avg_points_l10'
+            ].astype(float).sum()
+
+                lost_usage = injured_rows[
+                'player_avg_usage_l10'
+            ].astype(float).sum()
+
+                if lost_usage >= 0.28:
+                    replacement_rate = 0.58
+                elif lost_usage >= 0.22:
+                    replacement_rate = 0.65
+                elif lost_usage >= 0.16:
+                    replacement_rate = 0.75
+                else:
+                    replacement_rate = 0.85
+
+                redistributed_points = lost_points * replacement_rate
+
+                roster['usage_share'] = (
+                    roster['player_avg_usage_l10'].astype(float) *
+                    roster['player_avg_min_l10'].astype(float)
+                )
+
+                total_share = roster['usage_share'].sum()
+
+                if total_share > 0:
+                    roster['injury_points_bump'] = (
+                        roster['usage_share'] / total_share
+                    ) * redistributed_points
+                else:
+                    roster['injury_points_bump'] = 0.0
+
+                # Cap individual bump so one role player doesn't absorb too much
+                roster['injury_points_bump'] = roster[
+                    'injury_points_bump'
+                ].clip(upper=4.0)
+
+                print(
+                    f"  🔁 Redistributed {redistributed_points:.1f} "
+                    f"injury points across rotation"
+                )
+
+        if roster.empty:
+            return [], 0, 0, 0
+
+        # If playoff injuries shorten rotation, bump remaining baseline minutes
+        if is_playoff and len(roster) < 7:
+            absent_factor = 1 + (0.15 * (7 - len(roster)))
+            roster['player_avg_min_l10'] = (
+            roster['player_avg_min_l10'].astype(float) * absent_factor
+            )
+
+        # Add game context features
+        roster['is_home'] = int(is_home)
+        roster['is_playoff'] = int(is_playoff)
+        roster['opp_def_rating'] = float(opp_def_rating)
+        roster['opp_pace'] = float(opp_pace)
+        roster['team_off_rating'] = float(team_off_rating)
+        roster['pace_factor'] = float(opp_pace) / 98.0
+        roster['off_environment'] = float(team_off_rating) - float(opp_def_rating)
+
+        roster['usage_rate_clean'] = roster['player_avg_usage_l10'].fillna(0.20)
+
+        roster['points_momentum'] = (
+        roster['player_avg_points_l5'].astype(float) -
+        roster['player_avg_points_l10'].astype(float)
+        ).fillna(0)
+
+        roster['usage_momentum'] = (
+        roster['player_avg_usage_l5'].astype(float) -
+        roster['player_avg_usage_l10'].astype(float)
+        ).fillna(0)
+
+        roster['ts_momentum'] = (
+        roster['player_avg_ts_l5'].astype(float) -
+        roster['player_avg_ts_l10'].astype(float)
+        ).fillna(0)
+
+        roster['game_date'] = pd.Timestamp(game_date)
+        roster = roster.fillna(0)
+
+        X = roster[PLAYER_FEATURE_COLS].values
+
+    # Determine top 4 usage players once
+    top_4_names = set(
+        roster.sort_values('player_avg_usage_l10', ascending=False)
+              .head(4)['full_name']
+              .tolist()
+    )
 
     all_players = []
+
     for i, (_, player) in enumerate(roster.iterrows()):
-        usage   = float(player['player_avg_usage_l10'])
-        minutes = float(player['player_avg_min_l10'])
+        usage = float(player.get('player_avg_usage_l10', 0) or 0)
+        minutes = float(player.get('player_avg_min_l10', 0) or 0)
 
         player_id_int = int(player['player_id'])
+
         if player_id_int in playoff_minutes_map:
-            playoff_min = playoff_minutes_map[player_id_int]
+            playoff_min = float(playoff_minutes_map[player_id_int])
             if playoff_min >= 1:
-                minutes = float(playoff_min)
+                minutes = playoff_min
 
         is_rotation = minutes >= 15
 
-        features  = X[i].reshape(1, -1)
-        pred_pts  = max(0, float(
-            models['points'].predict(features)[0]
-        ))
-        pred_reb  = max(0, float(
-            models['rebounds'].predict(features)[0]
-        ))
-        pred_ast  = max(0, float(
-            models['assists'].predict(features)[0]
-        ))
+        features = X[i].reshape(1, -1)
+
+        pred_pts = float(max(0, models['points'].predict(features)[0]))
+        pred_reb = float(max(0, models['rebounds'].predict(features)[0]))
+        pred_ast = float(max(0, models['assists'].predict(features)[0]))
+        injury_bump = float(player.get('injury_points_bump', 0) or 0)
+        pred_pts += injury_bump
 
         slump_flag = False
-        hot_flag   = False
+        hot_flag = False
+        playoff_flag = False
 
         if is_playoff:
             factor, slump_flag, hot_flag = get_playoff_performance_factor(
                 int(player['player_id']),
                 team_id,
-                reg_usage  = float(player.get('player_avg_usage_l10', 0.15)),
-                reg_points = float(player.get('player_avg_points_l10', pred_pts))
+                reg_usage=float(player.get('player_avg_usage_l10', 0.15) or 0.15),
+                reg_points=float(player.get('player_avg_points_l10', pred_pts) or pred_pts)
             )
-            
+
+            factor = float(factor)
+
             if factor != 1.0:
-                pred_pts     = pred_pts * factor
-                pred_reb     = pred_reb * (1 + (factor - 1) * 0.4)
-                pred_ast     = pred_ast * (1 + (factor - 1) * 0.4)
+                pred_pts *= factor
+                pred_reb *= (1 + (factor - 1) * 0.4)
+                pred_ast *= (1 + (factor - 1) * 0.4)
                 playoff_flag = True
+
         else:
-            # Regular season — use L5 vs L10 momentum
-            l5_pts  = float(player.get('player_avg_points_l5', pred_pts))
-            l10_pts = float(player.get('player_avg_points_l10', pred_pts))
+            l5_pts = float(player.get('player_avg_points_l5', pred_pts) or pred_pts)
+            l10_pts = float(player.get('player_avg_points_l10', pred_pts) or pred_pts)
             momentum = l5_pts - l10_pts
 
             if momentum < -4:
-                pred_pts  *= 0.90
-                pred_reb  *= 0.95
-                pred_ast  *= 0.95
+                pred_pts *= 0.90
+                pred_reb *= 0.95
+                pred_ast *= 0.95
                 slump_flag = True
             elif momentum > 4:
-                pred_pts  *= 1.08
-                pred_reb  *= 1.03
-                pred_ast  *= 1.03
-                hot_flag   = True
-
+                pred_pts *= 1.08
+                pred_reb *= 1.03
+                pred_ast *= 1.03
+                hot_flag = True
 
         # Only anchor top 4 players by usage
-        top_4_names = {
-        p['full_name'] 
-        for p in sorted(all_players, 
-                    key=lambda x: x['usage_rate'], 
-                    reverse=True)[:4]
-        }
-
-        # Then in the loop:
-        player_props_filtered = player_props if player['full_name'] in top_4_names else {}
-        pred_pts, pred_reb, pred_ast = apply_vegas_props_anchor(
-        pred_pts, pred_reb, pred_ast,   
-        player['full_name'], player_props_filtered
+        player_props_filtered = (
+            player_props if player['full_name'] in top_4_names else {}
         )
-        recent_games          = int(player.get('recent_games', 20))
+
+        pred_pts, pred_reb, pred_ast = apply_vegas_props_anchor(
+            pred_pts,
+            pred_reb,
+            pred_ast,
+            player['full_name'],
+            player_props_filtered
+        )
+
+        pred_pts = float(pred_pts)
+        pred_reb = float(pred_reb)
+        pred_ast = float(pred_ast)
+
+        # Minutes-based realism check
+        baseline_pts = float(
+            player.get('player_avg_points_l10', pred_pts) or pred_pts
+        )
+
+        if minutes < 24 and pred_pts > baseline_pts * 1.35:
+            pred_pts = baseline_pts * 0.65 + pred_pts * 0.35
+        elif minutes < 30 and pred_pts > baseline_pts * 1.50:
+            pred_pts = baseline_pts * 0.75 + pred_pts * 0.25
+
+        recent_games = int(player.get('recent_games', 20) or 20)
         returning_from_injury = recent_games < 7
 
         all_players.append({
-            'player_id':             int(player['player_id']),
-            'full_name':             player['full_name'],
-            'position':              player.get('position', ''),
-            'pred_points':           round(pred_pts, 1),
-            'pred_rebounds':         round(pred_reb, 1),
-            'pred_assists':          round(pred_ast, 1),
-            'avg_minutes':           round(minutes, 1),
-            'usage_rate':            round(usage, 3),
+            'player_id': int(player['player_id']),
+            'full_name': player['full_name'],
+            'position': player.get('position', ''),
+            'pred_points': float(round(pred_pts, 1)),
+            'pred_rebounds': float(round(pred_reb, 1)),
+            'pred_assists': float(round(pred_ast, 1)),
+            'avg_minutes': float(round(minutes, 1)),
+            'usage_rate': float(round(usage, 3)),
             'returning_from_injury': returning_from_injury,
-            'recent_games':          recent_games,
-            'is_rotation':           is_rotation,
-            'slump_flag':            slump_flag,
-            'hot_flag':              hot_flag,
-            'playoff_flag': False,
+            'recent_games': recent_games,
+            'is_rotation': is_rotation,
+            'slump_flag': slump_flag,
+            'hot_flag': hot_flag,
+            'playoff_flag': playoff_flag,
+            'baseline_points': float(round(baseline_pts, 1)),
         })
 
     all_players.sort(key=lambda x: x['avg_minutes'], reverse=True)
@@ -419,39 +502,45 @@ def predict_team_player_stats(team_id, opponent_team_id,
     if is_playoff:
         all_players = redistribute_playoff_minutes(all_players)
 
+    for p in all_players:
+        baseline_pts = float(p.get('baseline_points', p['pred_points']) or p['pred_points'])
+        minutes = float(p.get('avg_minutes', 0) or 0)
+        pred_pts = float(p.get('pred_points', 0) or 0)
+
+    if minutes < 24 and pred_pts > baseline_pts * 1.35:
+        p['pred_points'] = round(baseline_pts * 0.65 + pred_pts * 0.35, 1)
+    elif minutes < 30 and pred_pts > baseline_pts * 1.50:
+        p['pred_points'] = round(baseline_pts * 0.75 + pred_pts * 0.25, 1)
+
     if not all_players:
         return [], 0, 0, 0
 
-    rotation = [p for p in all_players if p['is_rotation']]
-    fringe   = [p for p in all_players if not p['is_rotation']]
-
-    rotation.sort(key=lambda x: x['avg_minutes'], reverse=True)
-    starters = sorted(rotation,
-                  key=lambda x: x['avg_minutes'],
-                  reverse=True)[:5]
-    bench    = rotation[5:]
-
-    team_points = round(
-    sum(p['pred_points'] for p in starters) +
-    sum(p['pred_points'] * 0.5 for p in bench) +
-    sum(p['pred_points'] * 0.2 for p in fringe)
-)
-    team_rebounds = round(
-    sum(p['pred_rebounds'] for p in starters) +
-    sum(p['pred_rebounds'] * 0.5 for p in bench) +
-    sum(p['pred_rebounds'] * 0.2 for p in fringe)
-)
-    team_assists = round(
-    sum(p['pred_assists'] for p in starters) +
-    sum(p['pred_assists'] * 0.5 for p in bench) +
-    sum(p['pred_assists'] * 0.2 for p in fringe)
-)
-
     all_players.sort(key=lambda x: x['avg_minutes'], reverse=True)
-    predictions = all_players[:8]
+
+    rotation = all_players[:8]
+
+    team_points = round(sum(float(p['pred_points']) for p in rotation))
+    team_rebounds = round(sum(float(p['pred_rebounds']) for p in rotation))
+    team_assists = round(sum(float(p['pred_assists']) for p in rotation))
+    expected_points = (
+    float(team_off_rating) *
+    ((float(team_pace) + float(opp_pace)) / 2) / 100
+    )
+
+    upper_bound = expected_points + 10
+
+    if team_points > upper_bound:
+        scale = upper_bound / team_points
+
+        for p in rotation:
+            p['pred_points'] = round(float(p['pred_points']) * scale, 1)
+
+        team_points = round(sum(float(p['pred_points']) for p in rotation))
+
+
+    predictions = rotation
 
     return predictions, team_points, team_rebounds, team_assists
-
 
 def apply_vegas_props_anchor(pred_pts, pred_reb, pred_ast,
                               player_name, player_props,
@@ -505,41 +594,65 @@ def apply_vegas_props_anchor(pred_pts, pred_reb, pred_ast,
 
     return new_pts, new_reb, new_ast
 
-
-
 def redistribute_playoff_minutes(all_players):
-    if not all_players or len(all_players) < 2:
+    if not all_players or len(all_players) < 5:
         return all_players
 
-    MAX_MINUTES = 39
-    sorted_players = sorted(
-        all_players, key=lambda x: x['avg_minutes'], reverse=True
+    TARGET_TOTAL = 240
+
+    players = sorted(
+        all_players,
+        key=lambda x: float(x.get('avg_minutes', 0) or 0),
+        reverse=True
     )
 
-    starters = sorted_players[:5]
-    bench    = sorted_players[5:]
+    rotation = players[:9]
+    fringe = players[9:]
 
-    # Boost starters by 15% regardless of injury status
-    # RTI players who are playing full minutes shouldn't be penalized
-    for p in starters:
-        original = p['avg_minutes']
-        boosted  = min(original * 1.15, MAX_MINUTES)
-        ratio    = boosted / original if original > 0 else 1.0
-        p['pred_points']   = round(p['pred_points']   * ratio, 1)
-        p['pred_rebounds'] = round(p['pred_rebounds'] * ratio, 1)
-        p['pred_assists']  = round(p['pred_assists']  * ratio, 1)
-        p['avg_minutes']   = round(boosted, 1)
+    old_minutes = np.array(
+        [max(float(p.get('avg_minutes', 0) or 0), 1.0) for p in rotation],
+        dtype=float
+    )
 
-    for p in bench:
-        original = p['avg_minutes']
-        reduced  = original * 0.90
-        ratio    = reduced / original if original > 0 else 1.0
-        p['pred_points']   = round(p['pred_points']   * ratio, 1)
-        p['pred_rebounds'] = round(p['pred_rebounds'] * ratio, 1)
-        p['pred_assists']  = round(p['pred_assists']  * ratio, 1)
-        p['avg_minutes']   = round(reduced, 1)
+    new_minutes = old_minutes / old_minutes.sum() * TARGET_TOTAL
 
-    return sorted_players
+    for i in range(len(rotation)):
+        if i < 3:
+            new_minutes[i] = np.clip(new_minutes[i], 34, 40)
+        elif i < 5:
+            new_minutes[i] = np.clip(new_minutes[i], 30, 36)
+        elif i < 8:
+            new_minutes[i] = np.clip(new_minutes[i], 16, 26)
+        else:
+            new_minutes[i] = np.clip(new_minutes[i], 6, 18)
+
+    new_minutes = new_minutes / new_minutes.sum() * TARGET_TOTAL
+
+    for i, p in enumerate(rotation):
+        old = max(float(p.get('avg_minutes', 0) or 0), 1.0)
+        new = float(new_minutes[i])
+        ratio = new / old
+
+        p['pred_points'] = round(float(p.get('pred_points', 0) or 0) * ratio, 1)
+        p['pred_rebounds'] = round(float(p.get('pred_rebounds', 0) or 0) * ratio, 1)
+        p['pred_assists'] = round(float(p.get('pred_assists', 0) or 0) * ratio, 1)
+        p['avg_minutes'] = round(new, 1)
+        p['is_rotation'] = new >= 12
+
+    for p in fringe:
+        p['avg_minutes'] = round(min(float(p.get('avg_minutes', 0) or 0), 5.0), 1)
+        p['pred_points'] = round(float(p.get('pred_points', 0) or 0) * 0.25, 1)
+        p['pred_rebounds'] = round(float(p.get('pred_rebounds', 0) or 0) * 0.25, 1)
+        p['pred_assists'] = round(float(p.get('pred_assists', 0) or 0) * 0.25, 1)
+        p['is_rotation'] = False
+
+    updated_players = rotation + fringe
+    updated_players.sort(
+        key=lambda x: float(x.get('avg_minutes', 0) or 0),
+        reverse=True
+    )
+
+    return updated_players
 
 if __name__ == "__main__":
     from model.predict import get_todays_games

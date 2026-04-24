@@ -20,19 +20,53 @@ all_player_props = fetch_todays_player_props()
 
 # Ensemble weights
 # Dynamic ensemble weights based on star power
-def get_ensemble_weights(player_preds, is_playoff=False):
-    if not player_preds:
-        return 0.83, 0.17
+def get_ensemble_weights(
+    home_player_preds,
+    away_player_preds,
+    home_team_pts,
+    away_team_pts,
+    home_player_pts,
+    away_player_pts,
+    is_playoff=False
+):
+    # Base weights
+    team_w = 0.72
+    player_w = 0.28
 
-    stars = sum(1 for p in player_preds if p['usage_rate'] > 0.25)
-    player_w = min(0.15 + stars * 0.05, 0.30)
+    # --- 1. Star-driven adjustment ---
+    stars = sum(
+        1 for p in home_player_preds + away_player_preds
+        if p['usage_rate'] > 0.25
+    )
 
-    # In playoffs trust player model more — team model uses
-    # regular season pace which inflates scores
+    player_w += min(stars * 0.03, 0.09)
+
+    # --- 2. Playoff boost ---
     if is_playoff:
-        player_w = min(player_w + 0.10, 0.40)
+        player_w += 0.05
 
-    return round(1 - player_w, 2), round(player_w, 2)
+    # --- 3. Disagreement penalty (MOST IMPORTANT) ---
+    team_home_winner = home_team_pts > away_team_pts
+    player_home_winner = home_player_pts > away_player_pts
+
+    if team_home_winner != player_home_winner:
+        player_w *= 0.680  
+    
+    team_total = home_team_pts + away_team_pts
+    player_total = home_player_pts + away_player_pts
+    total_gap = player_total - team_total
+
+    if total_gap > 20:
+        player_w *= 0.78
+    elif total_gap > 12:
+        player_w *= 0.08
+
+        
+    # --- 4. Clamp weights ---
+    player_w = max(0.15, min(player_w, 0.35))
+    team_w = 1 - player_w
+
+    return round(team_w, 2), round(player_w, 2)
 
 
 def load_models():
@@ -606,13 +640,23 @@ def predict_todays_games():
                       f"away diff: {away_disagreement:.0f})")
             else:
                 home_tw, home_pw = get_ensemble_weights(
-                    home_player_preds,
-                    is_playoff=game['season_type'] == 'Playoffs'
-                )
+    home_player_preds,
+    away_player_preds,
+    home_pred_team,
+    away_pred_team,
+    home_player_pts,
+    away_player_pts,
+    is_playoff=game['season_type'] == 'Playoffs'
+)
                 away_tw, away_pw = get_ensemble_weights(
-                    away_player_preds,
-                    is_playoff=game['season_type'] == 'Playoffs'
-                )
+    home_player_preds,
+    away_player_preds,
+    home_pred_team,
+    away_pred_team,
+    home_player_pts,
+    away_player_pts,
+    is_playoff=game['season_type'] == 'Playoffs'
+)
 
             home_pred_final = round(
                 home_pred_team * home_tw +
