@@ -65,6 +65,15 @@ def load_player_training_data():
             prs5.avg_usage_rate  AS player_avg_usage_l5,
             prs5.avg_true_shooting AS player_avg_ts_l5,
 
+            -- Advanced stats (10-game window)
+            prs.avg_efg_pct        AS player_avg_efg_l10,
+            prs.avg_oreb_pct       AS player_avg_oreb_pct_l10,
+            prs.avg_dreb_pct       AS player_avg_dreb_pct_l10,
+            prs.avg_ast_pct        AS player_avg_ast_pct_l10,
+            prs.avg_off_rating     AS player_avg_off_rating_l10,
+            prs.avg_net_rating     AS player_avg_net_rating_l10,
+
+
             -- Opponent team stats
             opp_trs.avg_defensive_rating AS opp_def_rating,
             opp_trs.avg_pace             AS opp_pace,
@@ -203,7 +212,16 @@ def add_player_features(df):
 
     # Usage share proxy
     df['usage_rate_clean'] = df['player_avg_usage_l10'].fillna(0.20)
-
+    
+    # Fill new advanced stat NAs with league averages
+    df['player_avg_efg_l10']       = df['player_avg_efg_l10'].fillna(0.50)
+    df['player_avg_oreb_pct_l10']  = df['player_avg_oreb_pct_l10'].fillna(0.05)
+    df['player_avg_dreb_pct_l10']  = df['player_avg_dreb_pct_l10'].fillna(0.15)
+    df['player_avg_ast_pct_l10']   = df['player_avg_ast_pct_l10'].fillna(0.15)
+    df['player_avg_off_rating_l10']= df['player_avg_off_rating_l10'].fillna(110.0)
+    df['player_avg_net_rating_l10']= df['player_avg_net_rating_l10'].fillna(0.0)   
+    
+     
     return df
 
 
@@ -244,6 +262,13 @@ PLAYER_FEATURE_COLS = [
     'opp_def_rating',
     'opp_pace',
     'team_off_rating',
+
+    'player_avg_efg_l10',
+    'player_avg_oreb_pct_l10',
+    'player_avg_dreb_pct_l10',
+    'player_avg_ast_pct_l10',
+    'player_avg_net_rating_l10',
+    'player_avg_off_rating_l10',
 ]
 
 

@@ -111,6 +111,16 @@ FEATURE_COLS = [
 
     'series_wins_diff',
 
+
+    'home_q4_avg',
+    'away_q4_avg',
+    'home_q4_diff',
+    'away_q4_diff',
+    'home_clutch',
+    'away_clutch',
+    'clutch_diff',
+    'q4_diff_spread',
+
 ]
 
 TARGET_HOME = 'home_score'

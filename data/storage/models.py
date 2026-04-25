@@ -110,6 +110,19 @@ class PlayerBoxScore(Base):
     usage_rate      = Column(Numeric(5, 2))
     true_shooting   = Column(Numeric(5, 4))
     created_at      = Column(DateTime, default=func.now())
+    oreb       = Column(Integer)
+    dreb       = Column(Integer)
+    efg_pct    = Column(Numeric(5, 4))
+    oreb_pct   = Column(Numeric(5, 4))
+    dreb_pct   = Column(Numeric(5, 4))
+    ast_pct    = Column(Numeric(5, 4))
+    tov_pct    = Column(Numeric(5, 4))
+    blk_pct    = Column(Numeric(5, 4))
+    stl_pct    = Column(Numeric(5, 4))
+    off_rating = Column(Numeric(6, 2))
+    def_rating = Column(Numeric(6, 2))
+    net_rating = Column(Numeric(6, 2))
+    pace       = Column(Numeric(6, 2))
 
 
 class TeamBoxScore(Base):
@@ -147,6 +160,10 @@ class TeamBoxScore(Base):
     fastbreak_points    = Column(Integer)
     second_chance_pts   = Column(Integer)
     created_at          = Column(DateTime, default=func.now())
+    q1_points  = Column(Integer)
+    q2_points  = Column(Integer)
+    q3_points  = Column(Integer)
+    q4_points  = Column(Integer)
 
 
 class Prediction(Base):
@@ -294,6 +311,15 @@ class PlayerRollingStats(Base):
     avg_turnovers    = Column(Numeric(5, 2))
     avg_plus_minus   = Column(Numeric(5, 2))
     games_counted    = Column(Integer)
+    avg_efg_pct    = Column(Numeric(5, 4))
+    avg_oreb_pct   = Column(Numeric(5, 4))
+    avg_dreb_pct   = Column(Numeric(5, 4))
+    avg_ast_pct    = Column(Numeric(5, 4))
+    avg_off_rating = Column(Numeric(6, 2))
+    avg_def_rating = Column(Numeric(6, 2))
+    avg_net_rating = Column(Numeric(6, 2))
+    avg_blk_pct    = Column(Numeric(5, 4))
+    avg_stl_pct    = Column(Numeric(5, 4))
     created_at       = Column(DateTime, default=func.now())
 
     __table_args__ = (

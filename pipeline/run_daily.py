@@ -3,18 +3,18 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import logging
+import subprocess
 from datetime import date, datetime
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 from data.storage.db import engine
-from data.storage.models import Game, Team
-from config.settings import CURRENT_SEASON
 
 # Setup logging
 os.makedirs('logs', exist_ok=True)
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s | %(levelname)s | %(message)s',
-    handlers=[
+    level   = logging.INFO,
+    format  = '%(asctime)s | %(message)s',
+    handlers = [
         logging.FileHandler(
             f'logs/pipeline_{date.today().strftime("%Y%m%d")}.log'
         ),
@@ -24,286 +24,225 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 
-def step_fetch_new_games():
-    log.info("STEP 1: Fetching new completed games...")
+def run_step(name, func, skip=False):
+    if skip:
+        log.info(f"⏭️  Skipping: {name}")
+        return True
+    log.info(f"▶️  {name}...")
     try:
-        from data.ingestion.fetch_games import (
-            fetch_and_store_games,
-            fetch_upcoming_games
-        )
-        fetch_and_store_games(
-            season=CURRENT_SEASON,
-            season_type='Playoffs'
-        )
-        fetch_and_store_games(
-            season=CURRENT_SEASON,
-            season_type='Regular Season'
-        )
-        fetch_upcoming_games()
-        log.info("  ✅ Games fetched")
+        func()
+        log.info(f"✅ {name} done")
+        return True
     except Exception as e:
-        log.error(f"  ❌ Failed: {e}")
-        raise
+        log.error(f"❌ {name} failed: {e}")
+        return False
+
+
+def step_fetch_games():
+    from data.ingestion.fetch_games import (
+        fetch_and_store_games,
+        fetch_upcoming_games
+    )
+    from config.settings import CURRENT_SEASON
+    fetch_and_store_games(season=CURRENT_SEASON, season_type='Playoffs')
+    fetch_and_store_games(season=CURRENT_SEASON, season_type='Regular Season')
+    fetch_upcoming_games()
 
 
 def step_fetch_box_scores():
-    log.info("STEP 2: Fetching missing box scores...")
-    try:
-        from data.ingestion.fetch_box_scores import fetch_all_box_scores
-        fetch_all_box_scores()
-        log.info("  ✅ Box scores fetched")
-    except Exception as e:
-        log.error(f"  ❌ Failed: {e}")
-        raise
+    from data.ingestion.fetch_box_scores import fetch_all_box_scores
+    fetch_all_box_scores()
 
 
 def step_fetch_odds():
-    log.info("STEP 3: Fetching today's odds...")
-    try:
-        from data.ingestion.fetch_odds import (
-            fetch_todays_odds,
-            parse_and_store_odds
-        )
-        odds_data = fetch_todays_odds()
-        if odds_data:
-            parse_and_store_odds(odds_data)
-            log.info(f"  ✅ Odds fetched for {len(odds_data)} games")
-        else:
-            log.info("  ⚠️  No odds available today")
-    except Exception as e:
-        log.error(f"  ❌ Failed: {e}")
-        raise
+    from data.ingestion.fetch_odds import fetch_todays_odds, parse_and_store_odds
+    odds = fetch_todays_odds()
+    if odds:
+        parse_and_store_odds(odds)
 
 
-def step_compute_rolling_stats():
-    log.info("STEP 4: Recomputing rolling stats...")
-    try:
-        from data.ingestion.compute_rolling_stats import (
-            compute_and_store_rolling_stats
-        )
-        for window in [5, 10, 20]:
-            compute_and_store_rolling_stats(window=window)
-        log.info("  ✅ Rolling stats updated")
-    except Exception as e:
-        log.error(f"  ❌ Failed: {e}")
-        raise
+def step_rolling_stats():
+    from data.ingestion.compute_rolling_stats import (
+        compute_and_store_rolling_stats,
+        compute_todays_stats
+    )
+    for w in [5, 7, 10, 20]:
+        compute_and_store_rolling_stats(window=w)
+        compute_todays_stats(window=w)
 
 
-def step_compute_similarity():
-    log.info("STEP 5: Recomputing team similarity...")
-    try:
-        from data.ingestion.compute_team_similarity import (
-            compute_and_store_similarity
-        )
-        compute_and_store_similarity()
-        log.info("  ✅ Team similarity updated")
-    except Exception as e:
-        log.error(f"  ❌ Failed: {e}")
-        raise
+def step_player_rolling_stats():
+    from data.ingestion.compute_player_rolling_stats import (
+        compute_player_rolling_stats
+    )
+    for w in [5, 10]:
+        compute_player_rolling_stats(window=w)
 
 
-def step_retrain_model():
-    log.info("STEP 6: Retraining model...")
-    try:
-        from data.ingestion.build_features import build_feature_dataset
-        from model.train import (
-            chronological_split,
-            train_model,
-            save_models,
-            FEATURE_COLS,
-            TARGET_HOME,
-            TARGET_AWAY
-        )
-        import pandas as pd
-
-        df = build_feature_dataset(window=10)
-        df = df.dropna(
-            subset=FEATURE_COLS + [TARGET_HOME, TARGET_AWAY]
-        )
-        df = df.sort_values('game_date').reset_index(drop=True)
-
-        train, test = chronological_split(df, test_ratio=0.2)
-
-        model_home = train_model(train, TARGET_HOME)
-        model_away = train_model(train, TARGET_AWAY)
-
-        save_models(model_home, model_away)
-        log.info("  ✅ Model retrained and saved")
-
-        return model_home, model_away
-
-    except Exception as e:
-        log.error(f"  ❌ Failed: {e}")
-        raise
-
-
-def step_generate_predictions(model_home, model_away):
-    log.info("STEP 7: Generating predictions for today's games...")
-    try:
-        from data.ingestion.build_features import build_feature_dataset
-        from model.train import FEATURE_COLS
-        import numpy as np
-        import pickle
-
-        # Load feature cols
-        with open('model/feature_cols.pkl', 'rb') as f:
-            feature_cols = pickle.load(f)
-
-        # Get today's scheduled games
-        today = date.today()
-        with Session(engine) as session:
-            games = session.query(Game).filter(
-                Game.game_date == today,
-                Game.status == 'scheduled'
-            ).all()
-
-            if not games:
-                log.info("  No games scheduled today")
-                return []
-
-            log.info(f"  Found {len(games)} games today")
-
-            # Build features for today's games
-            df = build_feature_dataset(window=10)
-            today_df = df[
-                df['game_date'] == pd.Timestamp(today)
-            ].copy()
-
-            if today_df.empty:
-                log.info("  No feature data for today's games yet")
-                return []
-
-            predictions = []
-            for _, row in today_df.iterrows():
-                # Check all features available
-                missing = [
-                    f for f in FEATURE_COLS
-                    if f not in row.index or pd.isna(row[f])
-                ]
-                if missing:
-                    log.warning(
-                        f"  Missing features for "
-                        f"{row['away_team']} @ {row['home_team']}: "
-                        f"{missing[:3]}..."
+def step_update_series():
+    """Update playoff series context for all games."""
+    log.info("  Updating series context...")
+    query = text("""
+        WITH ordered_series AS (
+            SELECT
+                g.game_id,
+                g.game_date,
+                g.home_team_id,
+                g.away_team_id,
+                g.home_score,
+                g.away_score,
+                g.is_final,
+                LEAST(g.home_team_id, g.away_team_id)    AS team_a,
+                GREATEST(g.home_team_id, g.away_team_id) AS team_b,
+                ROW_NUMBER() OVER (
+                    PARTITION BY
+                        LEAST(g.home_team_id, g.away_team_id),
+                        GREATEST(g.home_team_id, g.away_team_id)
+                    ORDER BY g.game_date, g.game_id
+                ) AS game_num
+            FROM games g
+            WHERE g.season_type = 'Playoffs'
+            AND g.season = '2025-26'
+        ),
+        series_wins AS (
+            SELECT
+                cur.game_id,
+                cur.game_num,
+                cur.home_team_id,
+                cur.away_team_id,
+                COALESCE((
+                    SELECT COUNT(*)
+                    FROM ordered_series prev
+                    WHERE prev.team_a = cur.team_a
+                    AND prev.team_b = cur.team_b
+                    AND prev.game_num < cur.game_num
+                    AND prev.is_final = TRUE
+                    AND (
+                        (prev.home_team_id = cur.home_team_id
+                         AND prev.home_score > prev.away_score)
+                        OR
+                        (prev.away_team_id = cur.home_team_id
+                         AND prev.away_score > prev.home_score)
                     )
-                    continue
-
-                features = row[FEATURE_COLS].values.reshape(1, -1)
-                home_pred = float(model_home.predict(features)[0])
-                away_pred = float(model_away.predict(features)[0])
-
-                home_wins = home_pred > away_pred
-                margin = abs(home_pred - away_pred)
-
-                # Confidence based on predicted margin
-                if margin >= 12:
-                    confidence = "High"
-                elif margin >= 6:
-                    confidence = "Medium"
-                else:
-                    confidence = "Low"
-
-                pred = {
-                    'home_team':    row['home_team'],
-                    'away_team':    row['away_team'],
-                    'home_pred':    round(home_pred),
-                    'away_pred':    round(away_pred),
-                    'predicted_winner': row['home_team'] if home_wins
-                                        else row['away_team'],
-                    'margin':       round(margin, 1),
-                    'confidence':   confidence,
-                    'is_playoff':   row['season_type'] == 'Playoffs',
-                    'series_game':  int(row.get('series_game_num', 0)),
-                }
-                predictions.append(pred)
-
-                log.info(
-                    f"  {row['away_team']} @ {row['home_team']} | "
-                    f"Pred: {row['home_team']} {round(home_pred)} — "
-                    f"{row['away_team']} {round(away_pred)} | "
-                    f"Winner: {pred['predicted_winner']} "
-                    f"({confidence} confidence)"
-                )
-
-        return predictions
-
-    except Exception as e:
-        log.error(f"  ❌ Failed: {e}")
-        raise
+                ), 0) AS home_wins,
+                COALESCE((
+                    SELECT COUNT(*)
+                    FROM ordered_series prev
+                    WHERE prev.team_a = cur.team_a
+                    AND prev.team_b = cur.team_b
+                    AND prev.game_num < cur.game_num
+                    AND prev.is_final = TRUE
+                    AND (
+                        (prev.home_team_id = cur.away_team_id
+                         AND prev.home_score > prev.away_score)
+                        OR
+                        (prev.away_team_id = cur.away_team_id
+                         AND prev.away_score > prev.home_score)
+                    )
+                ), 0) AS away_wins
+            FROM ordered_series cur
+        )
+        UPDATE games
+        SET
+            series_game_num  = sw.game_num,
+            home_series_wins = sw.home_wins,
+            away_series_wins = sw.away_wins,
+            is_elimination   = CASE
+                                 WHEN sw.home_wins = 3 OR sw.away_wins = 3
+                                 THEN TRUE ELSE FALSE
+                               END
+        FROM series_wins sw
+        WHERE games.game_id = sw.game_id
+    """)
+    with Session(engine) as session:
+        session.execute(query)
+        session.commit()
+    log.info("  Series context updated")
 
 
-def run_pipeline(skip_retrain=False):
-    """
-    Run the full daily pipeline.
-    skip_retrain=True for faster runs when you just want fresh data.
-    """
+def step_predict():
+    from model.predict import predict_todays_games
+    predictions = predict_todays_games()
+    return predictions
+
+
+def step_tweet(predictions, dry_run=False):
+    from twitter.bot import post_predictions
+    if predictions:
+        post_predictions(predictions, dry_run=dry_run)
+    else:
+        log.info("  No predictions to tweet")
+
+
+def run_pipeline(skip_retrain=False, dry_run_twitter=True,
+                 skip_twitter=False):
     start = datetime.now()
     log.info("=" * 55)
-    log.info(f"DAILY PIPELINE STARTING — {date.today()}")
+    log.info(f"DAILY PIPELINE — {date.today()}")
     log.info("=" * 55)
 
-    try:
-        step_fetch_new_games()
-        step_fetch_box_scores()
-        step_fetch_odds()
-        step_compute_rolling_stats()
-        step_compute_similarity()
+    run_step("Fetch games",              step_fetch_games)
+    run_step("Fetch box scores",         step_fetch_box_scores)
+    run_step("Fetch odds",               step_fetch_odds)
+    run_step("Rolling stats",            step_rolling_stats)
+    run_step("Player rolling stats",     step_player_rolling_stats)
+    run_step("Update series context",    step_update_series)
 
-        if not skip_retrain:
-            model_home, model_away = step_retrain_model()
-        else:
-            import pickle
-            with open('model/model_home.pkl', 'rb') as f:
-                model_home = pickle.load(f)
-            with open('model/model_away.pkl', 'rb') as f:
-                model_away = pickle.load(f)
-            log.info("STEP 6: Skipped retraining — using saved model")
+    if not skip_retrain:
+        def retrain():
+            from data.ingestion.build_features import build_feature_dataset
+            from model.train import (
+                chronological_split, train_model,
+                save_models, FEATURE_COLS,
+                TARGET_HOME, TARGET_AWAY
+            )
+            df = build_feature_dataset(window=10)
+            df = df.dropna(
+                subset=FEATURE_COLS + [TARGET_HOME, TARGET_AWAY]
+            )
+            df = df.sort_values('game_date').reset_index(drop=True)
+            train, test = chronological_split(df, test_ratio=0.15)
+            mh = train_model(train, TARGET_HOME)
+            ma = train_model(train, TARGET_AWAY)
+            save_models(mh, ma)
+        run_step("Retrain model", retrain)
+    else:
+        log.info("⏭️  Skipping retrain")
 
-        predictions = step_generate_predictions(model_home, model_away)
+    predictions = step_predict()
 
-        elapsed = (datetime.now() - start).seconds
-        log.info("=" * 55)
-        log.info(
-            f"PIPELINE COMPLETE — {elapsed}s | "
-            f"{len(predictions)} predictions generated"
+    if not skip_twitter:
+        run_step(
+            "Post to Twitter",
+            lambda: step_tweet(predictions, dry_run=dry_run_twitter)
         )
-        log.info("=" * 55)
 
-        return predictions
+    elapsed = (datetime.now() - start).seconds
+    log.info("=" * 55)
+    log.info(f"PIPELINE COMPLETE — {elapsed}s")
+    log.info("=" * 55)
 
-    except Exception as e:
-        log.error(f"PIPELINE FAILED: {e}")
-        raise
+    return predictions
 
 
 if __name__ == "__main__":
     import argparse
-    import pandas as pd
 
-    parser = argparse.ArgumentParser(
-        description='NBA Prediction Daily Pipeline'
-    )
-    parser.add_argument(
-        '--skip-retrain',
-        action='store_true',
-        help='Skip model retraining (faster, uses saved model)'
-    )
-    parser.add_argument(
-        '--odds-only',
-        action='store_true',
-        help='Only fetch odds and generate predictions'
-    )
+    parser = argparse.ArgumentParser(description='NBA Daily Pipeline')
+    parser.add_argument('--skip-retrain',  action='store_true')
+    parser.add_argument('--skip-twitter',  action='store_true')
+    parser.add_argument('--post-twitter',  action='store_true',
+                        help='Actually post tweets (default is dry run)')
+    parser.add_argument('--predict-only',  action='store_true',
+                        help='Just run predictions, skip data fetching')
     args = parser.parse_args()
 
-    if args.odds_only:
-        # Quick run — just odds + predictions
-        log.info("Quick run: odds + predictions only")
-        step_fetch_odds()
-        import pickle
-        with open('model/model_home.pkl', 'rb') as f:
-            model_home = pickle.load(f)
-        with open('model/model_away.pkl', 'rb') as f:
-            model_away = pickle.load(f)
-        predictions = step_generate_predictions(model_home, model_away)
+    if args.predict_only:
+        predictions = step_predict()
+        step_tweet(predictions, dry_run=not args.post_twitter)
     else:
-        predictions = run_pipeline(skip_retrain=args.skip_retrain)
+        run_pipeline(
+            skip_retrain   = args.skip_retrain,
+            dry_run_twitter = not args.post_twitter,
+            skip_twitter   = args.skip_twitter
+        )

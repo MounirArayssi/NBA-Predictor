@@ -136,6 +136,7 @@ def build_feature_dataset(window=10):
     df = add_matchup_interactions(df)
     df = add_style_defensive_matchup(df)
     df = add_shooting_consistency(df)
+    df = add_quarter_features(df)
     return df
 
 
@@ -326,6 +327,112 @@ def add_playoff_features(df):
     df['series_momentum']  = series_momentum
     df['series_pressure']  = df['home_series_wins'] + df['away_series_wins']
     df['series_wins_diff'] = df['home_series_wins'] - df['away_series_wins']
+    return df
+
+def add_quarter_features(df):
+    """
+    Add quarter-based performance features.
+    Focus on 4th quarter clutch performance.
+    """
+    print("  Computing quarter features...")
+
+    query = text("""
+        SELECT
+            tbs.team_id,
+            tbs.q1_points,
+            tbs.q2_points,
+            tbs.q3_points,
+            tbs.q4_points,
+            tbs.points,
+            g.game_date,
+            -- Opponent Q4
+            opp.q4_points AS opp_q4_points
+        FROM team_box_scores tbs
+        JOIN games g ON tbs.game_id = g.game_id
+        JOIN team_box_scores opp
+            ON opp.game_id = tbs.game_id
+            AND opp.team_id != tbs.team_id
+        WHERE g.is_final = TRUE
+        AND tbs.q4_points IS NOT NULL
+        ORDER BY tbs.team_id, g.game_date
+    """)
+
+    q_df = pd.read_sql(query, engine)
+    q_df['game_date'] = pd.to_datetime(q_df['game_date'])
+    df['game_date']   = pd.to_datetime(df['game_date'])
+
+    home_q4_avg   = []
+    away_q4_avg   = []
+    home_q4_diff  = []
+    away_q4_diff  = []
+    home_q1_avg   = []
+    away_q1_avg   = []
+    home_clutch   = []
+    away_clutch   = []
+
+    for _, row in df.iterrows():
+        game_date = row['game_date']
+        home_id   = row['home_team_id']
+        away_id   = row['away_team_id']
+
+        for team_id, lists in [
+            (home_id, (home_q4_avg, home_q4_diff,
+                       home_q1_avg, home_clutch)),
+            (away_id, (away_q4_avg, away_q4_diff,
+                       away_q1_avg, away_clutch))
+        ]:
+            recent = q_df[
+                (q_df['team_id'] == team_id) &
+                (q_df['game_date'] < game_date)
+            ].tail(10)
+
+            if len(recent) < 3:
+                lists[0].append(26.0)   # league avg Q4
+                lists[1].append(0.0)
+                lists[2].append(27.0)   # league avg Q1
+                lists[3].append(0.50)
+                continue
+
+            q4_avg  = float(recent['q4_points'].mean())
+            q4_diff = float(
+                (recent['q4_points'] -
+                 recent['opp_q4_points']).mean()
+            )
+            q1_avg  = float(recent['q1_points'].mean())
+
+            # Clutch win rate — games won where Q4 margin <= 5
+            close_games = recent[
+                abs(recent['q4_points'] -
+                    recent['opp_q4_points']) <= 5
+            ]
+            if len(close_games) >= 2:
+                clutch_rate = float(
+                    (close_games['q4_points'] >
+                     close_games['opp_q4_points']).mean()
+                )
+            else:
+                clutch_rate = 0.50
+
+            lists[0].append(q4_avg)
+            lists[1].append(q4_diff)
+            lists[2].append(q1_avg)
+            lists[3].append(clutch_rate)
+
+    df['home_q4_avg']    = home_q4_avg
+    df['away_q4_avg']    = away_q4_avg
+    df['home_q4_diff']   = home_q4_diff
+    df['away_q4_diff']   = away_q4_diff
+    df['home_q1_avg']    = home_q1_avg
+    df['away_q1_avg']    = away_q1_avg
+    df['home_clutch']    = home_clutch
+    df['away_clutch']    = away_clutch
+    df['clutch_diff']    = (
+        df['home_clutch'] - df['away_clutch']
+    )
+    df['q4_diff_spread'] = (
+        df['home_q4_diff'] - df['away_q4_diff']
+    )
+
     return df
 
 

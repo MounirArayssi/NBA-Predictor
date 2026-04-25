@@ -18,32 +18,41 @@ def compute_player_rolling_stats(window=10):
     Similar to team rolling stats but at individual level.
     """
     print(f"Computing player rolling stats (window={window})...")
-
+    
     query = text("""
-        SELECT
-            pbs.player_id,
-            pbs.team_id,
-            pbs.points,
-            pbs.minutes_played,
-            pbs.usage_rate,
-            pbs.fg_pct,
-            pbs.fg3_pct,
-            pbs.true_shooting,
-            pbs.rebounds,
-            pbs.assists,
-            pbs.steals,
-            pbs.blocks,
-            pbs.turnovers,
-            pbs.plus_minus,
-            g.game_date,
-            g.season
-        FROM player_box_scores pbs
-        JOIN games g ON pbs.game_id = g.game_id
-        WHERE g.is_final = TRUE
-        AND pbs.minutes_played >= 5
-        AND pbs.points IS NOT NULL
-        ORDER BY pbs.player_id, g.game_date
-    """)
+    SELECT
+        pbs.player_id,
+        pbs.team_id,
+        pbs.points,
+        pbs.minutes_played,
+        pbs.usage_rate,
+        pbs.fg_pct,
+        pbs.fg3_pct,
+        pbs.true_shooting,
+        pbs.rebounds,
+        pbs.assists,
+        pbs.steals,
+        pbs.blocks,
+        pbs.turnovers,
+        pbs.plus_minus,
+        pbs.efg_pct,
+        pbs.oreb_pct,
+        pbs.dreb_pct,
+        pbs.ast_pct,
+        pbs.off_rating,
+        pbs.def_rating,
+        pbs.net_rating,
+        pbs.blk_pct,
+        pbs.stl_pct,
+        g.game_date,
+        g.season
+    FROM player_box_scores pbs
+    JOIN games g ON pbs.game_id = g.game_id
+    WHERE g.is_final = TRUE
+    AND pbs.minutes_played >= 5
+    AND pbs.points IS NOT NULL
+    ORDER BY pbs.player_id, g.game_date
+""")
 
     df = pd.read_sql(query, engine)
     print(f"  Loaded {len(df)} player game records")
@@ -110,6 +119,15 @@ def compute_player_rolling_stats(window=10):
                     avg_blocks       = safe_mean('blocks'),
                     avg_turnovers    = safe_mean('turnovers'),
                     avg_plus_minus   = safe_mean('plus_minus'),
+                    avg_efg_pct    = safe_mean('efg_pct'),
+                    avg_oreb_pct   = safe_mean('oreb_pct'),
+                    avg_dreb_pct   = safe_mean('dreb_pct'),
+                    avg_ast_pct    = safe_mean('ast_pct'),
+                    avg_off_rating = safe_mean('off_rating'),
+                    avg_def_rating = safe_mean('def_rating'),
+                    avg_net_rating = safe_mean('net_rating'),
+                    avg_blk_pct    = safe_mean('blk_pct'),
+                    avg_stl_pct    = safe_mean('stl_pct'),
                     games_counted    = window
                 )
                 session.add(stats)
@@ -161,7 +179,16 @@ def compute_player_rolling_stats(window=10):
                 avg_steals       = safe_mean('steals'),
                 avg_blocks       = safe_mean('blocks'),
                 avg_turnovers    = safe_mean('turnovers'),
-                avg_plus_minus   = safe_mean('plus_minus'),
+                avg_plus_minus   = safe_mean('plus_minus'),    
+                avg_efg_pct    = safe_mean('efg_pct'),
+                avg_oreb_pct   = safe_mean('oreb_pct'),
+                avg_dreb_pct   = safe_mean('dreb_pct'),
+                avg_ast_pct    = safe_mean('ast_pct'),
+                avg_off_rating = safe_mean('off_rating'),
+                avg_def_rating = safe_mean('def_rating'),
+                avg_net_rating = safe_mean('net_rating'),
+                avg_blk_pct    = safe_mean('blk_pct'),
+                avg_stl_pct    = safe_mean('stl_pct'),
                 games_counted    = window
             )
 

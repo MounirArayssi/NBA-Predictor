@@ -76,6 +76,56 @@ def load_models():
         model_away = pickle.load(f)
     return model_home, model_away
 
+def save_predictions(predictions):
+    """Save predictions to database and CSV."""
+    if not predictions:
+        return
+
+    from sqlalchemy.orm import Session
+    from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, Date
+    from data.storage.db import engine
+    from data.storage.models import Base
+    from datetime import datetime
+
+    # Save to CSV log
+    import csv
+    import os
+
+    os.makedirs('logs', exist_ok=True)
+    csv_path = 'logs/predictions_log.csv'
+    file_exists = os.path.exists(csv_path)
+
+    with open(csv_path, 'a', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=[
+            'date', 'home_team', 'away_team',
+            'home_pred', 'away_pred',
+            'predicted_winner', 'margin', 'confidence',
+            'home_pred_team', 'away_pred_team',
+            'home_pred_player', 'away_pred_player',
+            'is_playoff', 'season_type'
+        ])
+        if not file_exists:
+            writer.writeheader()
+
+        for pred in predictions:
+            writer.writerow({
+                'date':              date.today().isoformat(),
+                'home_team':         pred['home_team'],
+                'away_team':         pred['away_team'],
+                'home_pred':         pred['home_pred'],
+                'away_pred':         pred['away_pred'],
+                'predicted_winner':  pred['predicted_winner'],
+                'margin':            pred['margin'],
+                'confidence':        pred['confidence'],
+                'home_pred_team':    pred.get('home_pred_team', ''),
+                'away_pred_team':    pred.get('away_pred_team', ''),
+                'home_pred_player':  pred.get('home_pred_player', ''),
+                'away_pred_player':  pred.get('away_pred_player', ''),
+                'is_playoff':        pred['is_playoff'],
+                'season_type':       pred['season_type'],
+            })
+
+    print(f"✅ Predictions saved to {csv_path}")
 
 def get_todays_games():
     """Get all scheduled games for today."""
@@ -424,82 +474,467 @@ def build_features_for_upcoming_game(home_team_id, away_team_id,
     return row_dict
 
 
-def get_key_factors(row, home_pred, away_pred):
-    """Generate human-readable key factors driving the prediction."""
-    factors = []
+def get_key_factors(row, home_pred, away_pred,
+                    home_player_preds=None,
+                    away_player_preds=None,
+                    injury_report=None,
+                    confidence=None,
+                    max_factors=4):
+    scored = []
 
-    if row.get('home_avg_points', 0) > row.get('away_def_rating', 0):
-        factors.append(
-            f"{row['home_team']} averaging "
-            f"{float(row['home_avg_points']):.0f} pts "
-            f"vs {row['away_team']} allowing "
-            f"{float(row['away_def_rating']):.0f} per 100"
-        )
+    home = row["home_team"]
+    away = row["away_team"]
 
-    rest_adv = row.get('rest_advantage', 0)
-    if rest_adv >= 2:
-        factors.append(
-            f"{row['home_team']} has {int(rest_adv)} more rest days"
-        )
-    elif rest_adv <= -2:
-        factors.append(
-            f"{row['away_team']} has "
-            f"{int(abs(rest_adv))} more rest days"
-        )
+    def val(key, default=0):
+        try:
+            return float(row.get(key, default) or default)
+        except Exception:
+            return default
 
-    home_mom = row.get('home_momentum', 0)
-    away_mom = row.get('away_momentum', 0)
-    if home_mom > 3:
-        factors.append(
-            f"{row['home_team']} trending up "
-            f"(+{home_mom:.1f} pts vs 10-game avg)"
-        )
-    elif home_mom < -3:
-        factors.append(
-            f"{row['home_team']} trending down "
-            f"({home_mom:.1f} pts vs 10-game avg)"
-        )
-    if away_mom > 3:
-        factors.append(
-            f"{row['away_team']} trending up "
-            f"(+{away_mom:.1f} pts vs 10-game avg)"
+    def add(score, text):
+        if text not in [x[1] for x in scored]:
+            scored.append((score, text))
+
+    # -------------------------
+    # Core ratings
+    # -------------------------
+    home_off = val("home_off_rating")
+    away_def = val("away_def_rating")
+    away_off = val("away_off_rating")
+    home_def = val("home_def_rating")
+
+    home_edge = home_off - away_def
+    away_edge = away_off - home_def
+
+    if home_edge >= 8:
+        add(
+            abs(home_edge),
+            f"{home} offense has a strong efficiency edge vs {away}'s defense"
         )
 
-    combined = row.get('combined_pace', 98)
-    if combined > 101:
-        factors.append(
-            f"High pace game expected "
-            f"({combined:.0f} possessions)"
-        )
-    elif combined < 95:
-        factors.append(
-            f"Slow, defensive game expected "
-            f"({combined:.0f} possessions)"
+    if away_edge >= 8:
+        add(
+            abs(away_edge),
+            f"{away} offense has a strong efficiency edge vs {home}'s defense"
         )
 
-    if row.get('is_playoff', 0) and row.get('series_game_num', 0) > 1:
-        game_num = int(row['series_game_num'])
-        h_wins   = int(row['home_series_wins'])
-        a_wins   = int(row['away_series_wins'])
-        factors.append(
-            f"Game {game_num} — Series: "
-            f"{row['home_team']} {h_wins} — "
-            f"{row['away_team']} {a_wins}"
+    # -------------------------
+    # Pace
+    # -------------------------
+    pace = val("combined_pace", 98)
+
+    if pace >= 101:
+        add(
+            6,
+            "up-tempo game environment expected — pace should boost scoring chances"
+        )
+    elif pace <= 95:
+        add(
+            6,
+            "slower pace projected — fewer possessions raises upset/under risk"
         )
 
-    vegas_total = row.get('vegas_total', 0)
-    if vegas_total and float(vegas_total) > 0:
+    # -------------------------
+    # Vegas disagreement
+    # -------------------------
+    vegas_total = val("vegas_total")
+    if vegas_total > 0:
         our_total = home_pred + away_pred
-        diff = our_total - float(vegas_total)
-        if abs(diff) > 8:
+        diff = our_total - vegas_total
+
+        if abs(diff) >= 10:
             direction = "higher" if diff > 0 else "lower"
-            factors.append(
-                f"Model predicts {abs(diff):.0f} pts "
-                f"{direction} than Vegas total "
-                f"({float(vegas_total):.0f})"
+            add(
+                abs(diff),
+                f"model total is {abs(diff):.0f} points {direction} than Vegas"
             )
 
-    return factors[:3]
+    # -------------------------
+    # Spread/value context
+    # -------------------------
+    vegas_spread = row.get("vegas_spread", None)
+
+    if vegas_spread is not None:
+        try:
+            vegas_spread = float(vegas_spread)
+            model_margin = home_pred - away_pred
+
+            # Adjust this if your spread convention is different.
+            spread_gap = model_margin + vegas_spread
+
+            if abs(spread_gap) >= 5:
+                team = home if spread_gap > 0 else away
+                add(
+                    abs(spread_gap),
+                    f"{team} shows spread value — model margin differs from market by {abs(spread_gap):.1f}"
+                )
+        except Exception:
+            pass
+
+    # -------------------------
+    # Momentum
+    # -------------------------
+    home_mom = val("home_momentum")
+    away_mom = val("away_momentum")
+
+    if home_mom >= 5:
+        add(
+            abs(home_mom),
+            f"{home} offense is trending up recently — scoring above baseline"
+        )
+    elif home_mom <= -5:
+        add(
+            abs(home_mom),
+            f"{home} offense is trending down recently — scoring below baseline"
+        )
+
+    if away_mom >= 5:
+        add(
+            abs(away_mom),
+            f"{away} offense is trending up recently — scoring above baseline"
+        )
+    elif away_mom <= -5:
+        add(
+            abs(away_mom),
+            f"{away} offense is trending down recently — scoring below baseline"
+        )
+
+    # -------------------------
+    # Style matchup: 3PT profile
+    # -------------------------
+    home_3pa = val("home_3pa_rate")
+    away_opp_3pa = val("away_opp_3pa_rate")
+    away_3pa = val("away_3pa_rate")
+    home_opp_3pa = val("home_opp_3pa_rate")
+
+    if home_3pa >= 0.38 and away_opp_3pa >= 0.37:
+        add(
+            9,
+            f"{home} 3PT volume matches up well vs a {away} defense that allows perimeter looks"
+        )
+
+    if away_3pa >= 0.38 and home_opp_3pa >= 0.37:
+        add(
+            9,
+            f"{away} 3PT volume matches up well vs a {home} defense that allows perimeter looks"
+        )
+
+    # -------------------------
+    # Style matchup: paint scoring
+    # -------------------------
+    home_paint = val("home_paint_pts")
+    away_paint_allowed = val("away_paint_pts_allowed")
+    away_paint = val("away_paint_pts")
+    home_paint_allowed = val("home_paint_pts_allowed")
+
+    if home_paint >= 50 and away_paint_allowed >= 50:
+        add(
+            8,
+            f"{home} has a paint-pressure edge vs {away}'s interior defense"
+        )
+
+    if away_paint >= 50 and home_paint_allowed >= 50:
+        add(
+            8,
+            f"{away} has a paint-pressure edge vs {home}'s interior defense"
+        )
+
+    # -------------------------
+    # Style matchup: transition
+    # -------------------------
+    home_trans = val("home_transition_freq")
+    away_trans_def = val("away_transition_def_rating")
+    away_trans = val("away_transition_freq")
+    home_trans_def = val("home_transition_def_rating")
+
+    if home_trans >= 0.17 and away_trans_def >= 120:
+        add(
+            8,
+            f"{home} can create transition pressure vs a vulnerable {away} transition defense"
+        )
+
+    if away_trans >= 0.17 and home_trans_def >= 120:
+        add(
+            8,
+            f"{away} can create transition pressure vs a vulnerable {home} transition defense"
+        )
+
+    # -------------------------
+    # Style matchup: isolation
+    # -------------------------
+    home_iso = val("home_iso_freq")
+    away_iso_def = val("away_iso_def_rating")
+    away_iso = val("away_iso_freq")
+    home_iso_def = val("home_iso_def_rating")
+
+    if home_iso >= 0.10 and away_iso_def >= 1.05:
+        add(
+            7,
+            f"{home} isolation scoring profile could punish {away}'s one-on-one defense"
+        )
+
+    if away_iso >= 0.10 and home_iso_def >= 1.05:
+        add(
+            7,
+            f"{away} isolation scoring profile could punish {home}'s one-on-one defense"
+        )
+
+    # -------------------------
+    # Style matchup: pick-and-roll
+    # -------------------------
+    home_pnr = val("home_pnr_ball_handler_ppp")
+    away_pnr_def = val("away_pnr_def_ppp")
+    away_pnr = val("away_pnr_ball_handler_ppp")
+    home_pnr_def = val("home_pnr_def_ppp")
+
+    if home_pnr >= 0.95 and away_pnr_def >= 0.95:
+        add(
+            8,
+            f"{home} pick-and-roll attack has a favorable matchup vs {away}'s coverage"
+        )
+
+    if away_pnr >= 0.95 and home_pnr_def >= 0.95:
+        add(
+            8,
+            f"{away} pick-and-roll attack has a favorable matchup vs {home}'s coverage"
+        )
+
+    # -------------------------
+    # Extra possessions: rebounding
+    # -------------------------
+    home_oreb = val("home_oreb_pct")
+    away_dreb = val("away_dreb_pct")
+    away_oreb = val("away_oreb_pct")
+    home_dreb = val("home_dreb_pct")
+
+    if home_oreb >= 0.30 and away_dreb <= 0.70:
+        add(
+            7,
+            f"{home} could generate extra possessions through offensive rebounding"
+        )
+
+    if away_oreb >= 0.30 and home_dreb <= 0.70:
+        add(
+            7,
+            f"{away} could generate extra possessions through offensive rebounding"
+        )
+
+    # -------------------------
+    # Turnover pressure
+    # -------------------------
+    home_tov = val("home_tov_pct")
+    away_force_tov = val("away_opp_tov_pct")
+    away_tov = val("away_tov_pct")
+    home_force_tov = val("home_opp_tov_pct")
+
+    if home_tov >= 0.145 and away_force_tov >= 0.145:
+        add(
+            7,
+            f"{home} turnover risk is elevated vs {away}'s defensive pressure"
+        )
+
+    if away_tov >= 0.145 and home_force_tov >= 0.145:
+        add(
+            7,
+            f"{away} turnover risk is elevated vs {home}'s defensive pressure"
+        )
+
+    # -------------------------
+    # Volatility / bad-night risk
+    # -------------------------
+    home_std = val("home_scoring_std")
+    away_std = val("away_scoring_std")
+
+    if home_std >= 9:
+        add(
+            home_std,
+            f"{home} has high scoring volatility — wider boom/bust range"
+        )
+
+    if away_std >= 9:
+        add(
+            away_std,
+            f"{away} has high scoring volatility — wider boom/bust range"
+        )
+
+    home_bad_night = val("home_bad_night_pct", 0.15)
+    away_bad_night = val("away_bad_night_pct", 0.15)
+
+    if home_bad_night > 0.35:
+        add(
+            home_bad_night * 20,
+            f"{home} has elevated bad-night risk — projection is more fragile"
+        )
+
+    if away_bad_night > 0.35:
+        add(
+            away_bad_night * 20,
+            f"{away} has elevated bad-night risk — projection is more fragile"
+        )
+
+    # -------------------------
+    # Star dependency
+    # -------------------------
+    home_usage = val("home_top_player_usage")
+    away_usage = val("away_top_player_usage")
+
+    if home_usage >= 0.32:
+        add(
+            7,
+            f"{home} is heavily dependent on its lead creator — star performance could swing the game"
+        )
+
+    if away_usage >= 0.32:
+        add(
+            7,
+            f"{away} is heavily dependent on its lead creator — star performance could swing the game"
+        )
+
+    # -------------------------
+    # Confidence explanation
+    # -------------------------
+    if confidence == "LOW":
+        add(
+            9,
+            "low-confidence projection — model sees a narrow margin or high volatility"
+        )
+    elif confidence == "HIGH":
+        add(
+            5,
+            "high-confidence projection — model sees clear separation between teams"
+        )
+
+    # -------------------------
+    # Team model vs player model disagreement
+    # -------------------------
+    home_team_pred = val("home_team_pred", None)
+    away_team_pred = val("away_team_pred", None)
+    home_player_pred = val("home_player_pred", None)
+    away_player_pred = val("away_player_pred", None)
+
+    if home_team_pred and home_player_pred:
+        gap = home_player_pred - home_team_pred
+        if abs(gap) >= 7:
+            direction = "more upside" if gap > 0 else "more downside"
+            add(
+                abs(gap),
+                f"{home} player model shows {direction} than team trends suggest"
+            )
+
+    if away_team_pred and away_player_pred:
+        gap = away_player_pred - away_team_pred
+        if abs(gap) >= 7:
+            direction = "more upside" if gap > 0 else "more downside"
+            add(
+                abs(gap),
+                f"{away} player model shows {direction} than team trends suggest"
+            )
+
+    # -------------------------
+    # Playoff context
+    # -------------------------
+    if row.get("is_playoff") and row.get("series_game_num", 0):
+        game_num = int(row.get("series_game_num", 0))
+        h_wins = int(row.get("home_series_wins", 0))
+        a_wins = int(row.get("away_series_wins", 0))
+
+        if h_wins == 3 or a_wins == 3:
+            trailer = away if h_wins == 3 else home
+            add(
+                10,
+                f"elimination pressure — {trailer} must win to keep the series alive"
+            )
+        elif h_wins == 2 and a_wins == 0:
+            add(
+                8,
+                f"{home} leads 2-0 — {away} is in desperation mode"
+            )
+        elif a_wins == 2 and h_wins == 0:
+            add(
+                8,
+                f"{away} leads 2-0 — {home} is in desperation mode"
+            )
+        elif h_wins == 1 and a_wins == 1:
+            add(
+                6,
+                "series tied 1-1 — Game 3 creates a major leverage spot"
+            )
+        elif game_num == 1:
+            add(
+                5,
+                "Game 1 tone-setter — early series adjustments matter"
+            )
+
+    # -------------------------
+    # Player hot/cold form
+    # -------------------------
+    def player_flags(team, preds):
+        if not preds:
+            return
+
+        hot = [p for p in preds if p.get("hot_flag")]
+        cold = [p for p in preds if p.get("slump_flag")]
+
+        if hot:
+            names = ", ".join(
+                p.get("full_name", "").split()[-1]
+                for p in hot[:2]
+                if p.get("full_name")
+            )
+            if names:
+                add(
+                    6,
+                    f"{team} has recent player-form upside from {names}"
+                )
+
+        if cold:
+            names = ", ".join(
+                p.get("full_name", "").split()[-1]
+                for p in cold[:2]
+                if p.get("full_name")
+            )
+            if names:
+                add(
+                    6,
+                    f"{team} has player-form risk from {names}"
+                )
+
+    player_flags(home, home_player_preds)
+    player_flags(away, away_player_preds)
+
+    # -------------------------
+    # Injuries
+    # -------------------------
+    if injury_report:
+        for inj in injury_report:
+            try:
+                team = inj.get("team")
+                player = inj.get("player") or inj.get("full_name")
+                status = str(inj.get("status", "")).lower()
+                impact = float(inj.get("impact_score", 0) or 0)
+
+                if status in ["out", "doubtful"] and impact >= 7:
+                    add(
+                        impact + 3,
+                        f"{team} missing high-impact player {player} — rotation/usage shift matters"
+                    )
+            except Exception:
+                continue
+
+    # -------------------------
+    # Fallback if nothing fires
+    # -------------------------
+    if not scored:
+        winner = home if home_pred > away_pred else away
+        add(
+            1,
+            f"{winner} projects slightly better overall, but no major matchup edge stands out"
+        )
+
+    scored = sorted(scored, key=lambda x: x[0], reverse=True)
+
+    return [text for score, text in scored[:max_factors]]
+
 
 def predict_todays_games():
     print(f"\n{'='*55}")
@@ -710,7 +1145,11 @@ def predict_todays_games():
                 conf_emoji = "🎲"
 
         factors = get_key_factors(
-            row_dict, home_pred_final, away_pred_final
+            row_dict, home_pred_final, away_pred_final,
+            home_player_preds = home_player_preds,
+            away_player_preds = away_player_preds,
+            injury_report     = injury_report,
+            confidence= confidence
         )
 
         vegas_line = ""
@@ -823,7 +1262,7 @@ def predict_todays_games():
     print(f"\n{'='*55}")
     print(f"Generated {len(predictions)} predictions")
     print(f"{'='*55}\n")
-
+    save_predictions(predictions)
     return predictions
 
 

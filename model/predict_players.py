@@ -144,12 +144,14 @@ def get_team_roster(team_id, game_date=None, is_playoff=False):
     """
     limit = 9 if is_playoff else 12
     min_minutes = 16 if is_playoff else 15
+    min_games = 8 if is_playoff else 7
 
     query = text("""
         SELECT
             p.player_id,
             p.full_name,
             p.position,
+
             prs.avg_points          AS player_avg_points_l10,
             prs.avg_rebounds        AS player_avg_reb_l10,
             prs.avg_assists         AS player_avg_ast_l10,
@@ -160,12 +162,22 @@ def get_team_roster(team_id, game_date=None, is_playoff=False):
             prs.avg_fg3_pct         AS player_avg_fg3_l10,
             prs.avg_plus_minus      AS player_avg_pm_l10,
             prs.avg_turnovers       AS player_avg_tov_l10,
+
             prs5.avg_points         AS player_avg_points_l5,
             prs5.avg_rebounds       AS player_avg_reb_l5,
             prs5.avg_assists        AS player_avg_ast_l5,
             prs5.avg_usage_rate     AS player_avg_usage_l5,
             prs5.avg_true_shooting  AS player_avg_ts_l5,
+
+            prs.avg_efg_pct         AS player_avg_efg_l10,
+            prs.avg_oreb_pct        AS player_avg_oreb_pct_l10,
+            prs.avg_dreb_pct        AS player_avg_dreb_pct_l10,
+            prs.avg_ast_pct         AS player_avg_ast_pct_l10,
+            prs.avg_off_rating      AS player_avg_off_rating_l10,
+            prs.avg_net_rating      AS player_avg_net_rating_l10,
+
             recent.recent_games
+
         FROM players p
 
         JOIN (
@@ -173,76 +185,133 @@ def get_team_roster(team_id, game_date=None, is_playoff=False):
                 pbs.player_id,
                 COUNT(*) AS recent_games
             FROM player_box_scores pbs
-            JOIN games g ON pbs.game_id = g.game_id
+            JOIN games g 
+                ON pbs.game_id = g.game_id
             WHERE pbs.team_id = :team_id
-            AND g.season = '2025-26'
-            AND pbs.minutes_played >= 10
-            AND g.game_date >= (
-                SELECT MAX(g2.game_date) - INTERVAL '65 days'
-                FROM games g2
-                WHERE g2.season = '2025-26'
-                AND g2.is_final = TRUE
-            )    
-                AND (
-        :is_playoff = false
-        OR EXISTS (
-            SELECT 1
-            FROM player_box_scores pbs3
-            JOIN games g3 ON pbs3.game_id = g3.game_id
-            WHERE pbs3.player_id = pbs.player_id
-            AND pbs3.team_id = :team_id
-            AND g3.season_type = 'Playoffs'
-            AND g3.season = '2025-26'
-            AND pbs3.minutes_played >= 3
-        )
-    )
+              AND g.season = '2025-26'
+              AND pbs.minutes_played >= 10
+              AND g.game_date >= (
+                    SELECT MAX(g2.game_date) - INTERVAL '65 days'
+                    FROM games g2
+                    WHERE g2.season = '2025-26'
+                      AND g2.is_final = TRUE
+              )
+              AND (
+                    :is_playoff = false
+                    OR EXISTS (
+                        SELECT 1
+                        FROM player_box_scores pbs3
+                        JOIN games g3 
+                            ON pbs3.game_id = g3.game_id
+                        WHERE pbs3.player_id = pbs.player_id
+                          AND pbs3.team_id = :team_id
+                          AND g3.season_type = 'Playoffs'
+                          AND g3.season = '2025-26'
+                          AND pbs3.minutes_played >= 3
+                    )
+              )
             GROUP BY pbs.player_id
-            HAVING COUNT(*) >= 7
-        ) recent ON recent.player_id = p.player_id
+            HAVING COUNT(*) >= :min_games
+        ) recent 
+            ON recent.player_id = p.player_id
 
-JOIN player_rolling_stats prs
-    ON prs.player_id   = p.player_id
-    AND prs.team_id    = :team_id
-    AND prs."window"   = 10
-    AND prs.as_of_date = (
-        SELECT MAX(as_of_date)
-        FROM player_rolling_stats
-        WHERE player_id = p.player_id
-        AND team_id     = :team_id
-        AND "window"    = 10
-    )
+        JOIN player_rolling_stats prs
+            ON prs.player_id = p.player_id
+           AND prs.team_id = :team_id
+           AND prs."window" = 10
+           AND prs.as_of_date = (
+                SELECT MAX(as_of_date)
+                FROM player_rolling_stats
+                WHERE player_id = p.player_id
+                  AND team_id = :team_id
+                  AND "window" = 10
+           )
 
-JOIN player_rolling_stats prs5
-    ON prs5.player_id   = p.player_id
-    AND prs5.team_id    = :team_id
-    AND prs5."window"   = 5
-    AND prs5.as_of_date = (
-        SELECT MAX(as_of_date)
-        FROM player_rolling_stats
-        WHERE player_id = p.player_id
-        AND team_id     = :team_id
-        AND "window"    = 5
-    )
+        JOIN player_rolling_stats prs5
+            ON prs5.player_id = p.player_id
+           AND prs5.team_id = :team_id
+           AND prs5."window" = 5
+           AND prs5.as_of_date = (
+                SELECT MAX(as_of_date)
+                FROM player_rolling_stats
+                WHERE player_id = p.player_id
+                  AND team_id = :team_id
+                  AND "window" = 5
+           )
 
         WHERE prs.avg_minutes >= :min_minutes
-        AND prs.avg_points    >= 6
-        AND prs.avg_usage_rate >= 0.08
+          AND prs.avg_points >= 6
+          AND prs.avg_usage_rate >= 0.08
+
         ORDER BY prs.avg_minutes DESC
         LIMIT :limit
     """)
 
     with engine.connect() as conn:
         result = conn.execute(query, {
-            'team_id': int(team_id),
-            'limit':   limit,
-            'min_minutes': min_minutes,
-            'is_playoff': is_playoff
+            "team_id": int(team_id),
+            "limit": limit,
+            "min_minutes": min_minutes,
+            "min_games": min_games,
+            "is_playoff": is_playoff,
         })
+
         roster = pd.DataFrame(
             result.fetchall(),
             columns=result.keys()
         )
+
     return roster
+
+def get_injury_familiarity_factor(injured_rows, team_games=82):
+    """
+    Reduces injury redistribution when a player has missed a lot of the season.
+    Teams are already more familiar with playing without them.
+    """
+    if injured_rows.empty:
+        return 1.0
+
+    factors = []
+
+    for _, row in injured_rows.iterrows():
+        recent_games = float(row.get("recent_games", team_games) or team_games)
+
+        games_missed = max(team_games - recent_games, 0)
+        missed_pct = games_missed / team_games
+
+        factor = 1.0 - min(missed_pct * 0.75, 0.45)
+        factors.append(factor)
+
+    return min(factors) if factors else 1.0
+
+def calculate_scoring_expansion_score(row):
+    """
+    Data-driven score for how likely a player is to absorb extra scoring usage.
+    Higher = better candidate to receive injury scoring bump.
+    """
+    points = float(row.get("player_avg_points_l10", 0) or 0)
+    minutes = max(float(row.get("player_avg_min_l10", 0) or 0), 1.0)
+    usage = float(row.get("player_avg_usage_l10", 0) or 0)
+
+    # These columns may not exist yet, so safe defaults are used.
+    fga = float(row.get("player_avg_fga_l10", 0) or 0)
+    fg3a = float(row.get("player_avg_fg3a_l10", 0) or 0)
+    fta = float(row.get("player_avg_fta_l10", 0) or 0)
+
+    points_per_min = points / minutes
+    fga_per_min = fga / minutes if fga > 0 else points_per_min * 0.65
+    three_rate = fg3a / max(fga, 1.0)
+    fta_per_fga = fta / max(fga, 1.0)
+
+    score = (
+        0.35 * usage +
+        0.25 * points_per_min +
+        0.20 * fga_per_min +
+        0.10 * three_rate +
+        0.10 * fta_per_fga
+    )
+
+    return max(score, 0.01)
 
 def predict_team_player_stats(team_id, opponent_team_id,
                                is_home, is_playoff,
@@ -308,34 +377,52 @@ def predict_team_player_stats(team_id, opponent_team_id,
             ].astype(float).sum()
 
                 if lost_usage >= 0.28:
-                    replacement_rate = 0.58
+                    replacement_rate = 0.48
                 elif lost_usage >= 0.22:
-                    replacement_rate = 0.65
+                    replacement_rate = 0.53
                 elif lost_usage >= 0.16:
-                    replacement_rate = 0.75
+                    replacement_rate = 0.67
                 else:
-                    replacement_rate = 0.85
+                    replacement_rate = 0.76
 
-                redistributed_points = lost_points * replacement_rate
+                familiarity_factor = get_injury_familiarity_factor(injured_rows)
 
-                roster['usage_share'] = (
-                    roster['player_avg_usage_l10'].astype(float) *
-                    roster['player_avg_min_l10'].astype(float)
+                redistributed_points = (
+                    lost_points *
+                    replacement_rate *
+                    familiarity_factor
                 )
 
-                total_share = roster['usage_share'].sum()
+                roster["usage_share"] = (
+                    roster["player_avg_usage_l10"].astype(float) *
+                    roster["player_avg_min_l10"].astype(float)
+                )
+
+                roster["scoring_expansion_score"] = roster.apply(
+                    calculate_scoring_expansion_score,
+                    axis=1
+                )
+
+                roster["redistribution_weight"] = (
+                    roster["usage_share"] *
+                    roster["scoring_expansion_score"]
+                )
+
+                total_share = roster["redistribution_weight"].sum()
 
                 if total_share > 0:
-                    roster['injury_points_bump'] = (
-                        roster['usage_share'] / total_share
+                    roster["injury_points_bump"] = (
+                    roster["redistribution_weight"] / total_share
                     ) * redistributed_points
                 else:
-                    roster['injury_points_bump'] = 0.0
+                    roster["injury_points_bump"] = 0.0
 
                 # Cap individual bump so one role player doesn't absorb too much
+                cap = 2.5 if is_playoff else 4.0
+
                 roster['injury_points_bump'] = roster[
                     'injury_points_bump'
-                ].clip(upper=4.0)
+                    ].clip(upper=cap)
 
                 print(
                     f"  🔁 Redistributed {redistributed_points:.1f} "
@@ -378,6 +465,14 @@ def predict_team_player_stats(team_id, opponent_team_id,
         roster['player_avg_ts_l10'].astype(float)
         ).fillna(0)
 
+        roster['player_avg_efg_l10']        = roster.get('player_avg_efg_l10', pd.Series(0.50, index=roster.index)).fillna(0.50)
+        roster['player_avg_oreb_pct_l10']   = roster.get('player_avg_oreb_pct_l10', pd.Series(0.05, index=roster.index)).fillna(0.05)
+        roster['player_avg_dreb_pct_l10']   = roster.get('player_avg_dreb_pct_l10', pd.Series(0.15, index=roster.index)).fillna(0.15)
+        roster['player_avg_ast_pct_l10']    = roster.get('player_avg_ast_pct_l10', pd.Series(0.15, index=roster.index)).fillna(0.15)
+        roster['player_avg_off_rating_l10'] = roster.get('player_avg_off_rating_l10', pd.Series(110.0, index=roster.index)).fillna(110.0)
+        roster['player_avg_net_rating_l10'] = roster.get('player_avg_net_rating_l10', pd.Series(0.0, index=roster.index)).fillna(0.0)
+        
+        
         roster['game_date'] = pd.Timestamp(game_date)
         roster = roster.fillna(0)
 
@@ -523,17 +618,43 @@ def predict_team_player_stats(team_id, opponent_team_id,
     team_rebounds = round(sum(float(p['pred_rebounds']) for p in rotation))
     team_assists = round(sum(float(p['pred_assists']) for p in rotation))
     expected_points = (
-    float(team_off_rating) *
-    ((float(team_pace) + float(opp_pace)) / 2) / 100
+        float(team_off_rating) *
+        ((float(team_pace) + float(opp_pace)) / 2) / 100
     )
 
     upper_bound = expected_points + 10
 
+    # if is_playoff:
+    #     expected_points *= 0.965
+
+    # 🔼 Upper clamp (already exists)
     if team_points > upper_bound:
         scale = upper_bound / team_points
 
         for p in rotation:
             p['pred_points'] = round(float(p['pred_points']) * scale, 1)
+
+        team_points = round(sum(float(p['pred_points']) for p in rotation))
+
+    # 🔽 NEW: Lower bound correction
+    if is_playoff and team_points < expected_points - 10:
+        scale = (expected_points - 6) / max(team_points, 1)
+
+        scale = min(scale, 1.1)
+
+        for p in rotation:
+            usage = float(p.get("usage_rate", 0) or 0)
+            baseline = float(p.get("baseline_points", p["pred_points"]) or p["pred_points"])
+
+            # Non-primary scorers get less of the team-level correction
+            if usage < 0.20 and baseline < 19:
+                player_scale = 1 + ((scale - 1) * 0.35)
+            elif usage < 0.23 and baseline < 21:
+                player_scale = 1 + ((scale - 1) * 0.55)
+            else:
+                player_scale = scale
+
+            p["pred_points"] = round(float(p["pred_points"]) * player_scale, 1)
 
         team_points = round(sum(float(p['pred_points']) for p in rotation))
 
@@ -618,13 +739,13 @@ def redistribute_playoff_minutes(all_players):
 
     for i in range(len(rotation)):
         if i < 3:
-            new_minutes[i] = np.clip(new_minutes[i], 34, 40)
+            new_minutes[i] = np.clip(new_minutes[i], 34, 39)
         elif i < 5:
-            new_minutes[i] = np.clip(new_minutes[i], 30, 36)
+            new_minutes[i] = np.clip(new_minutes[i], 29, 35)
         elif i < 8:
-            new_minutes[i] = np.clip(new_minutes[i], 16, 26)
+            new_minutes[i] = np.clip(new_minutes[i], 15, 25)
         else:
-            new_minutes[i] = np.clip(new_minutes[i], 6, 18)
+            new_minutes[i] = np.clip(new_minutes[i], 5, 16)
 
     new_minutes = new_minutes / new_minutes.sum() * TARGET_TOTAL
 
@@ -633,17 +754,45 @@ def redistribute_playoff_minutes(all_players):
         new = float(new_minutes[i])
         ratio = new / old
 
-        p['pred_points'] = round(float(p.get('pred_points', 0) or 0) * ratio, 1)
-        p['pred_rebounds'] = round(float(p.get('pred_rebounds', 0) or 0) * ratio, 1)
-        p['pred_assists'] = round(float(p.get('pred_assists', 0) or 0) * ratio, 1)
+        # Do not let playoff minute boost create fake star leaps
+        capped_ratio_pts = min(ratio, 1.18)
+        capped_ratio_reb_ast = min(ratio, 1.12)
+
+        pred_pts = float(p.get('pred_points', 0) or 0)
+        pred_reb = float(p.get('pred_rebounds', 0) or 0)
+        pred_ast = float(p.get('pred_assists', 0) or 0)
+
+        baseline_pts = float(p.get('baseline_points', pred_pts) or pred_pts)
+        usage = float(p.get('usage_rate', 0.18) or 0.18)
+
+        pred_pts *= capped_ratio_pts
+        pred_reb *= capped_ratio_reb_ast
+        pred_ast *= capped_ratio_reb_ast
+
+        # Efficiency penalty when usage/minutes jump
+        if ratio > 1.08:
+            penalty = 1 - min((ratio - 1.0) * 0.25, 0.10)
+            pred_pts *= penalty
+
+        # Role-player realism clamp
+        if usage < 0.18:
+            pred_pts = min(pred_pts, baseline_pts + 4.0)
+        elif usage < 0.23:
+            pred_pts = min(pred_pts, baseline_pts + 5.5)
+        else:
+            pred_pts = min(pred_pts, baseline_pts + 7.0)
+
+        p['pred_points'] = round(pred_pts, 1)
+        p['pred_rebounds'] = round(pred_reb, 1)
+        p['pred_assists'] = round(pred_ast, 1)
         p['avg_minutes'] = round(new, 1)
         p['is_rotation'] = new >= 12
 
     for p in fringe:
-        p['avg_minutes'] = round(min(float(p.get('avg_minutes', 0) or 0), 5.0), 1)
-        p['pred_points'] = round(float(p.get('pred_points', 0) or 0) * 0.25, 1)
-        p['pred_rebounds'] = round(float(p.get('pred_rebounds', 0) or 0) * 0.25, 1)
-        p['pred_assists'] = round(float(p.get('pred_assists', 0) or 0) * 0.25, 1)
+        p['avg_minutes'] = round(min(float(p.get('avg_minutes', 0) or 0), 4.0), 1)
+        p['pred_points'] = round(float(p.get('pred_points', 0) or 0) * 0.15, 1)
+        p['pred_rebounds'] = round(float(p.get('pred_rebounds', 0) or 0) * 0.15, 1)
+        p['pred_assists'] = round(float(p.get('pred_assists', 0) or 0) * 0.15, 1)
         p['is_rotation'] = False
 
     updated_players = rotation + fringe
@@ -653,6 +802,7 @@ def redistribute_playoff_minutes(all_players):
     )
 
     return updated_players
+
 
 if __name__ == "__main__":
     from model.predict import get_todays_games
