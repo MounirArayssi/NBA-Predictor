@@ -21,6 +21,7 @@ from datetime import datetime, timedelta
 
 import numpy as np
 import pandas as pd
+from train import FEATURE_COLS as TEAM_FEATURE_COLS
 
 # Set matplotlib backend BEFORE importing pyplot
 import matplotlib
@@ -65,37 +66,26 @@ TEAM_FEATURE_COLS = [
     'home_avg_points',
     'home_off_rating',
     'home_def_rating',
-    'home_pace',
     'home_fg_pct',
     'home_fg3_pct',
     'home_3pt_rate',
     'home_win_pct',
-    'home_home_avg_pts',
 
     # Away team form
     'away_avg_points',
     'away_off_rating',
     'away_def_rating',
-    'away_pace',
     'away_fg_pct',
     'away_fg3_pct',
     'away_3pt_rate',
     'away_win_pct',
-    'away_away_avg_pts',
 
     # Matchup context
-    'pace_differential',
     'home_rest_days',
     'away_rest_days',
     'rest_advantage',
     'home_back_to_back',
     'away_back_to_back',
-
-    # Head to head
-    'h2h_home_avg_score',
-    'h2h_away_avg_score',
-    'h2h_home_win_pct',
-    'h2h_games_count',
 
     # Playoff context
     'is_playoff',
@@ -103,21 +93,8 @@ TEAM_FEATURE_COLS = [
     'home_series_wins',
     'away_series_wins',
     'is_elimination',
-    'series_momentum',
     'series_pressure',
 
-    # Team similarity features
-    'home_proxy_off_rating',
-    'home_proxy_avg_pts',
-    'away_proxy_off_rating',
-    'away_proxy_avg_pts',
-    'home_sim_off_rating',
-    'away_sim_off_rating',
-
-    # Playoff elevation
-    'home_playoff_elevation',
-    'away_playoff_elevation',
-    'playoff_elevation_diff',
 
     # Scoring variance
     'home_scoring_std',
@@ -134,18 +111,6 @@ TEAM_FEATURE_COLS = [
     'away_off_vs_home_def',
     'net_rating_diff',
 
-    'home_def_vs_away_style',
-    'away_def_vs_home_style',
-    'home_def_style_edge',
-    'away_def_style_edge',
-
-    'has_vegas_odds',
-    
-    'home_momentum',
-    'away_momentum',
-    'home_def_momentum',
-    'away_def_momentum',
-
     # Shooting consistency
     'home_bad_night_pct',
     'away_bad_night_pct',
@@ -160,7 +125,9 @@ TEAM_FEATURE_COLS = [
     'away_clutch',
     'clutch_diff',
     'q4_diff_spread',
+
 ]
+
 
 PLAYER_FEATURE_COLS = [
     # Player recent form (10 game)
@@ -392,22 +359,48 @@ def analyze_correlations(df, features, target, output_dir):
     """Analyze feature correlations with target and each other."""
     print("Analyzing correlations...")
     
+    # Ensure target is numeric
+    if df[target].dtype == 'object':
+        df[target] = pd.to_numeric(df[target], errors='coerce')
+    
     # Correlation with target
     correlations = []
     for feature in features:
         if feature in df.columns:
-            corr, pval = pearsonr(df[feature].fillna(0), df[target].fillna(0))
-            correlations.append({
-                'feature': feature,
-                'correlation': corr,
-                'abs_correlation': abs(corr),
-                'p_value': pval
-            })
+            # Ensure feature is numeric
+            if df[feature].dtype == 'object':
+                try:
+                    df[feature] = pd.to_numeric(df[feature], errors='coerce')
+                except:
+                    print(f"  Skipping non-numeric feature: {feature}")
+                    continue
+            
+            # Skip if all NaN after conversion
+            if df[feature].isna().all():
+                continue
+                
+            try:
+                corr, pval = pearsonr(df[feature].fillna(0), df[target].fillna(0))
+                correlations.append({
+                    'feature': feature,
+                    'correlation': corr,
+                    'abs_correlation': abs(corr),
+                    'p_value': pval
+                })
+            except Exception as e:
+                print(f"  Skipping {feature} due to error: {e}")
+                continue
     
     corr_df = pd.DataFrame(correlations).sort_values('abs_correlation', ascending=False)
     
     # Feature correlation matrix (top correlated features only)
     top_features = corr_df.head(20)['feature'].tolist()
+    
+    # Ensure all top features are numeric
+    for feat in top_features:
+        if df[feat].dtype == 'object':
+            df[feat] = pd.to_numeric(df[feat], errors='coerce')
+    
     corr_matrix = df[top_features].corr()
     
     # Plot correlation matrix

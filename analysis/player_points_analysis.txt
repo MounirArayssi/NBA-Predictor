@@ -1,0 +1,159 @@
+================================================================================
+NBA PREDICTOR - PLAYER POINTS MODEL FEATURE ANALYSIS
+================================================================================
+Generated: 2026-04-25 00:05:53
+Training Data: 51673 player-game records
+Features: 32
+
+TOP 25 FEATURES (Gini Importance):
+--------------------------------------------------------------------------------
+player_avg_points_l10                    0.762071
+player_avg_points_l5                     0.110078
+usage_rate_clean                         0.035945
+player_avg_usage_l10                     0.033561
+player_avg_min_l10                       0.017268
+player_avg_usage_l5                      0.011356
+player_avg_ts_l10                        0.004676
+opp_def_rating                           0.004189
+player_avg_fg3_l10                       0.003136
+player_avg_ast_l10                       0.002868
+player_avg_ts_l5                         0.001897
+player_avg_fg_l10                        0.001851
+pace_factor                              0.001746
+opp_pace                                 0.001639
+player_avg_ast_l5                        0.001523
+player_avg_pm_l10                        0.001010
+player_avg_reb_l5                        0.000981
+off_environment                          0.000961
+points_momentum                          0.000951
+player_avg_tov_l10                       0.000682
+player_avg_reb_l10                       0.000488
+team_off_rating                          0.000483
+usage_momentum                           0.000248
+ts_momentum                              0.000156
+is_playoff                               0.000156
+
+
+TOP 25 FEATURES (Permutation Importance):
+--------------------------------------------------------------------------------
+player_avg_points_l10                    0.343083 (±0.002531)
+player_avg_points_l5                     0.015026 (±0.000412)
+player_avg_min_l10                       0.010325 (±0.000384)
+usage_rate_clean                         0.009025 (±0.000428)
+player_avg_usage_l10                     0.007255 (±0.000312)
+player_avg_usage_l5                      0.003211 (±0.000226)
+opp_def_rating                           0.002537 (±0.000191)
+player_avg_fg3_l10                       0.001573 (±0.000135)
+player_avg_ts_l10                        0.001205 (±0.000079)
+player_avg_ast_l10                       0.001077 (±0.000067)
+pace_factor                              0.000785 (±0.000054)
+player_avg_ts_l5                         0.000780 (±0.000084)
+player_avg_fg_l10                        0.000753 (±0.000090)
+opp_pace                                 0.000752 (±0.000045)
+player_avg_pm_l10                        0.000509 (±0.000054)
+player_avg_ast_l5                        0.000397 (±0.000037)
+points_momentum                          0.000369 (±0.000038)
+player_avg_reb_l5                        0.000323 (±0.000060)
+player_avg_tov_l10                       0.000242 (±0.000026)
+off_environment                          0.000226 (±0.000032)
+player_avg_reb_l10                       0.000185 (±0.000027)
+team_off_rating                          0.000153 (±0.000029)
+is_playoff                               0.000081 (±0.000008)
+usage_momentum                           0.000062 (±0.000011)
+ts_momentum                              0.000035 (±0.000011)
+
+
+FEATURE GROUP IMPORTANCE:
+--------------------------------------------------------------------------------
+Group                                 Total         Mean    Count               Top Feature
+--------------------------------------------------------------------------------
+Recent Scoring (L10)               0.767058     0.255686        3     player_avg_points_l10
+Recent Form (L5)                   0.125835     0.025167        5      player_avg_points_l5
+Usage & Minutes                    0.086774     0.028925        3          usage_rate_clean
+Opponent                           0.005828     0.002914        2            opp_def_rating
+Efficiency                         0.004676     0.001559        3         player_avg_ts_l10
+Context                            0.002943     0.000736        4               pace_factor
+Playmaking                         0.002868     0.001434        2        player_avg_ast_l10
+Momentum                           0.001355     0.000452        3           points_momentum
+Impact                             0.001010     0.000505        2         player_avg_pm_l10
+Ball Security                      0.000682     0.000682        1        player_avg_tov_l10
+Rebounding                         0.000488     0.000163        3        player_avg_reb_l10
+Team Environment                   0.000483     0.000483        1           team_off_rating
+
+
+TOP 20 CORRELATIONS WITH ACTUAL POINTS:
+--------------------------------------------------------------------------------
+player_avg_points_l10                      0.6501 (p=0.0000e+00)
+player_avg_points_l5                       0.6284 (p=0.0000e+00)
+usage_rate_clean                           0.6033 (p=0.0000e+00)
+player_avg_usage_l10                       0.6033 (p=0.0000e+00)
+player_avg_usage_l5                        0.5851 (p=0.0000e+00)
+player_avg_min_l10                         0.4996 (p=0.0000e+00)
+player_avg_tov_l10                         0.4971 (p=0.0000e+00)
+player_avg_ast_l10                         0.4353 (p=0.0000e+00)
+player_avg_ast_l5                          0.4199 (p=0.0000e+00)
+player_avg_reb_l10                         0.2441 (p=0.0000e+00)
+player_avg_reb_l5                          0.2333 (p=0.0000e+00)
+player_avg_fg3_l10                         0.1433 (p=5.2265e-235)
+player_avg_ts_l10                          0.1126 (p=1.7877e-145)
+player_avg_pm_l10                          0.1001 (p=4.1307e-115)
+player_avg_ts_l5                           0.0839 (p=2.0094e-81)
+player_avg_fg_l10                          0.0738 (p=2.0994e-63)
+team_off_rating                            0.0381 (p=4.7938e-18)
+opp_def_rating                             0.0300 (p=8.4189e-12)
+opp_pace                                   0.0230 (p=1.6306e-07)
+pace_factor                                0.0230 (p=1.6306e-07)
+
+
+PREDICTION INFLUENCE (Top 20 by Range Impact):
+--------------------------------------------------------------------------------
+Feature                                   Q1->Q4       Impact
+--------------------------------------------------------------------------------
+player_avg_points_l10                 8.3-> 22.1        13.76
+player_avg_points_l5                  8.4-> 21.8        13.34
+player_avg_usage_l10                  8.7-> 21.4        12.77
+usage_rate_clean                      8.7-> 21.4        12.77
+player_avg_usage_l5                   8.8-> 21.3        12.55
+player_avg_min_l10                    9.0-> 20.6        11.64
+player_avg_tov_l10                    9.7-> 20.4        10.64
+player_avg_ast_l10                   10.0-> 19.2         9.16
+player_avg_ast_l5                    10.2-> 19.0         8.84
+player_avg_reb_l10                   10.8-> 16.4         5.61
+player_avg_reb_l5                    11.2-> 16.4         5.23
+player_avg_fg3_l10                   11.2-> 14.6         3.39
+player_avg_ts_l10                    11.3-> 14.0         2.70
+player_avg_fg_l10                    11.5-> 13.7         2.22
+player_avg_pm_l10                    13.8-> 16.0         2.22
+player_avg_ts_l5                     11.5-> 13.6         2.13
+opp_def_rating                       13.5-> 14.2         0.74
+ts_momentum                          12.1-> 12.8         0.64
+team_off_rating                      13.7-> 14.3         0.53
+points_momentum                      14.5-> 15.0         0.53
+
+
+================================================================================
+KEY INSIGHTS
+================================================================================
+
+Most Predictive Features for Points:
+  #1: player_avg_points_l10               (0.7621)
+  #11: player_avg_points_l5                (0.1101)
+  #23: usage_rate_clean                    (0.0359)
+  #5: player_avg_usage_l10                (0.0336)
+  #4: player_avg_min_l10                  (0.0173)
+
+Recent Form (L5) vs Historical (L10):
+  L5 Total Importance:  0.1258
+  L10 Total Importance: 0.8276
+  Ratio (L5/L10):       0.15
+
+Context Feature Importance:
+  opp_def_rating       0.004189
+  opp_pace             0.001639
+  is_playoff           0.000156
+  is_home              0.000080
+
+Momentum Feature Importance:
+  points_momentum      0.000951
+  usage_momentum       0.000248
+  ts_momentum          0.000156

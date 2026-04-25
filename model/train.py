@@ -21,37 +21,26 @@ FEATURE_COLS = [
     'home_avg_points',
     'home_off_rating',
     'home_def_rating',
-    'home_pace',
     'home_fg_pct',
     'home_fg3_pct',
     'home_3pt_rate',
     'home_win_pct',
-    'home_home_avg_pts',
 
     # Away team form
     'away_avg_points',
     'away_off_rating',
     'away_def_rating',
-    'away_pace',
     'away_fg_pct',
     'away_fg3_pct',
     'away_3pt_rate',
     'away_win_pct',
-    'away_away_avg_pts',
 
     # Matchup context
-    'pace_differential',
     'home_rest_days',
     'away_rest_days',
     'rest_advantage',
     'home_back_to_back',
     'away_back_to_back',
-
-    # Head to head
-    'h2h_home_avg_score',
-    'h2h_away_avg_score',
-    'h2h_home_win_pct',
-    'h2h_games_count',
 
     # Playoff context
     'is_playoff',
@@ -59,22 +48,7 @@ FEATURE_COLS = [
     'home_series_wins',
     'away_series_wins',
     'is_elimination',
-    'series_momentum',
     'series_pressure',
-
-    # Team similarity features
-    'home_proxy_off_rating',
-    'home_proxy_avg_pts',
-    'away_proxy_off_rating',
-    'away_proxy_avg_pts',
-    'home_sim_off_rating',
-    'away_sim_off_rating',
-
-
-    # Playoff elevation
-    'home_playoff_elevation',
-    'away_playoff_elevation',
-    'playoff_elevation_diff',
 
 
     # Scoring variance
@@ -92,25 +66,11 @@ FEATURE_COLS = [
     'away_off_vs_home_def',
     'net_rating_diff',
 
-    'home_def_vs_away_style',
-    'away_def_vs_home_style',
-    'home_def_style_edge',
-    'away_def_style_edge',
-
-    'has_vegas_odds',
-    
-    'home_momentum',
-    'away_momentum',
-    'home_def_momentum',
-    'away_def_momentum',
-
-
     # Shooting consistency
     'home_bad_night_pct',
     'away_bad_night_pct',
 
     'series_wins_diff',
-
 
     'home_q4_avg',
     'away_q4_avg',

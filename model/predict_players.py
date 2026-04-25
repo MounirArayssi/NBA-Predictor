@@ -349,16 +349,22 @@ def predict_team_player_stats(team_id, opponent_team_id,
             if p['status'] in ['Out', 'Doubtful']
         }
 
-        if out_players:
-            before = len(roster)
+        risk_players = {
+            p['name'].lower(): p['status']
+            for p in injury_report.get(team_abbr, [])
+            if p['status'] in ['Questionable', 'Day-To-Day']
+        }
 
+        if out_players:
+
+            before = len(roster)
             injured_rows = roster[
                 roster['full_name'].str.lower().isin(out_players)
-            ].copy()
+                ].copy()
 
             roster = roster[
-            ~roster['full_name'].str.lower().isin(out_players)
-        ].reset_index(drop=True)
+                ~roster['full_name'].str.lower().isin(out_players)
+                ].reset_index(drop=True)
 
             removed = before - len(roster)
 
@@ -366,7 +372,7 @@ def predict_team_player_stats(team_id, opponent_team_id,
                 print(f"  🚫 Removed {removed} injured player(s) "
                   f"from {team_abbr} rotation")
 
-        # Redistribute only part of injured players' scoring
+            # Redistribute only part of injured players' scoring
             if not injured_rows.empty and not roster.empty:
                 lost_points = injured_rows[
                     'player_avg_points_l10'
@@ -428,6 +434,41 @@ def predict_team_player_stats(team_id, opponent_team_id,
                     f"  🔁 Redistributed {redistributed_points:.1f} "
                     f"injury points across rotation"
                 )
+        
+        # Apply availability-risk penalty for players not ruled out
+        if risk_players and not roster.empty:
+            for idx, row in roster.iterrows():
+                name = str(row["full_name"]).lower()
+
+                if name in risk_players:
+                    status = risk_players[name]
+
+                    if status == "Questionable":
+                        min_factor = 0.85
+                        pts_factor = 0.88
+                    elif status == "Day-To-Day":
+                        min_factor = 0.93
+                        pts_factor = 0.95
+                    else:
+                        continue
+
+                    roster.at[idx, "player_avg_min_l10"] = (
+                        float(row["player_avg_min_l10"] or 0) * min_factor
+                    )
+
+                    roster.at[idx, "player_avg_points_l10"] = (
+                        float(row["player_avg_points_l10"] or 0) * pts_factor
+                    )
+
+                    roster.at[idx, "player_avg_points_l5"] = (
+                        float(row["player_avg_points_l5"] or 0) * pts_factor
+                    )
+
+                    print(
+                        f"  ⚠️  {row['full_name']} listed {status} — "
+                        f"applying availability-risk penalty"
+                    )
+
 
         if roster.empty:
             return [], 0, 0, 0

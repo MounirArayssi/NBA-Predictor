@@ -1,9 +1,9 @@
 ================================================================================
 NBA PREDICTOR - TEAM MODEL FEATURE ANALYSIS
 ================================================================================
-Generated: 2026-04-24 23:57:26
+Generated: 2026-04-25 01:03:52
 Training Data: 3714 games
-Features Analyzed: 75/75
+Features Analyzed: 47/47
 
 
 ================================================================================
@@ -12,70 +12,64 @@ HOME MODEL ANALYSIS
 
 TOP 20 FEATURES (Gini Importance):
 --------------------------------------------------------------------------------
-combined_pace                            0.134019
-net_rating_diff                          0.082697
-away_pace                                0.062404
-away_def_rating                          0.047825
-home_off_rating                          0.046903
-home_avg_points                          0.040477
-home_proxy_avg_pts                       0.034849
-home_fg3_pct                             0.034222
-home_proxy_off_rating                    0.032189
-home_sim_off_rating                      0.027425
-h2h_home_avg_score                       0.025053
-home_pace                                0.024790
-home_fg_pct                              0.024538
-away_def_vs_home_style                   0.021057
-home_momentum                            0.020459
-away_def_momentum                        0.018100
-home_home_avg_pts                        0.016051
-away_proxy_off_rating                    0.015804
-home_rest_days                           0.014922
-away_fg_pct                              0.014868
+combined_pace                            0.198338
+net_rating_diff                          0.104491
+away_def_rating                          0.078918
+home_off_rating                          0.071599
+home_avg_points                          0.059967
+home_fg3_pct                             0.049353
+home_fg_pct                              0.039343
+away_fg3_pct                             0.028735
+home_rest_days                           0.024566
+home_def_rating                          0.023377
+away_off_rating                          0.022607
+away_fg_pct                              0.021888
+clutch_diff                              0.020653
+variance_differential                    0.019102
+away_avg_points                          0.018220
+home_q4_diff                             0.017087
+away_q4_avg                              0.017084
+home_q4_avg                              0.016982
+away_off_vs_home_def                     0.015564
+away_clutch                              0.014604
 
 
 TOP 20 FEATURES (Permutation Importance):
 --------------------------------------------------------------------------------
-combined_pace                            0.054034 (±0.004246)
-net_rating_diff                          0.028731 (±0.001916)
-away_pace                                0.020706 (±0.001367)
-home_off_rating                          0.018001 (±0.001374)
-away_def_rating                          0.014602 (±0.001539)
-home_fg3_pct                             0.013182 (±0.001551)
-home_avg_points                          0.011614 (±0.000948)
-home_sim_off_rating                      0.011089 (±0.001563)
-home_proxy_off_rating                    0.010043 (±0.001222)
-home_proxy_avg_pts                       0.009435 (±0.001553)
-away_def_vs_home_style                   0.007902 (±0.000906)
-home_fg_pct                              0.006701 (±0.000833)
-away_proxy_off_rating                    0.006561 (±0.000911)
-home_pace                                0.006306 (±0.000663)
-h2h_home_avg_score                       0.006182 (±0.000706)
-away_fg_pct                              0.004828 (±0.000413)
-away_def_momentum                        0.004214 (±0.000701)
-home_momentum                            0.004067 (±0.000447)
-away_fg3_pct                             0.003741 (±0.000486)
-home_rest_days                           0.003446 (±0.000330)
+combined_pace                            0.101967 (±0.005326)
+net_rating_diff                          0.037549 (±0.002523)
+away_def_rating                          0.033029 (±0.002209)
+home_off_rating                          0.025753 (±0.001560)
+home_fg3_pct                             0.016101 (±0.001869)
+home_avg_points                          0.014672 (±0.000976)
+home_fg_pct                              0.010759 (±0.001000)
+away_fg3_pct                             0.007675 (±0.000766)
+clutch_diff                              0.007208 (±0.000622)
+home_rest_days                           0.005996 (±0.000610)
+away_off_rating                          0.005902 (±0.000491)
+away_fg_pct                              0.005878 (±0.000568)
+variance_differential                    0.005372 (±0.000492)
+away_avg_points                          0.005180 (±0.000501)
+away_q4_avg                              0.004944 (±0.000702)
+home_def_rating                          0.004247 (±0.000684)
+home_q4_avg                              0.004143 (±0.000606)
+away_off_vs_home_def                     0.003739 (±0.000546)
+away_clutch                              0.003651 (±0.000629)
+away_q4_diff                             0.003410 (±0.000402)
 
 
 FEATURE GROUP IMPORTANCE:
 --------------------------------------------------------------------------------
 Group                                 Total         Mean    Count               Top Feature
 --------------------------------------------------------------------------------
-Home Team Form                     0.306822     0.021916       14           home_off_rating
-Away Team Form                     0.206222     0.014730       14                 away_pace
-Matchup Features                   0.194242     0.021582        9             combined_pace
-Team Similarity                    0.123460     0.020577        6        home_proxy_avg_pts
-Momentum                           0.061376     0.012275        5             home_momentum
-Clutch Performance                 0.057570     0.007196        8               clutch_diff
-Head to Head                       0.050489     0.012622        4        h2h_home_avg_score
-Scoring Variance                   0.039531     0.007906        5     variance_differential
-Rest & Schedule                    0.027028     0.005406        5            home_rest_days
-Defensive Matchups                 0.026809     0.006702        4    away_def_vs_home_style
-Shooting Consistency               0.005241     0.002621        2        home_bad_night_pct
-Playoff Elevation                  0.004246     0.001415        3    home_playoff_elevation
-Playoff Context                    0.002743     0.000343        8          home_series_wins
-Vegas Context                      0.000000     0.000000        1            has_vegas_odds
+Home Team Form                     0.272370     0.030263        9           home_off_rating
+Matchup Features                   0.247263     0.041211        6             combined_pace
+Away Team Form                     0.196779     0.021864        9           away_def_rating
+Clutch Performance                 0.112373     0.014047        8               clutch_diff
+Scoring Variance                   0.065588     0.013118        5     variance_differential
+Rest & Schedule                    0.050100     0.010020        5            home_rest_days
+Shooting Consistency               0.012244     0.006122        2        away_bad_night_pct
+Playoff Context                    0.004205     0.000601        7          series_wins_diff
 
 
 TOP 15 CORRELATIONS WITH HOME SCORE:
@@ -83,39 +77,39 @@ TOP 15 CORRELATIONS WITH HOME SCORE:
 combined_pace                              0.2603 (p=1.3609e-58)
 home_avg_points                            0.2517 (p=9.4543e-55)
 net_rating_diff                            0.2373 (p=1.0556e-48)
-away_pace                                  0.2289 (p=2.3764e-45)
-away_def_vs_home_style                     0.2208 (p=2.9157e-42)
 away_def_rating                            0.2208 (p=2.9157e-42)
-home_home_avg_pts                          0.2059 (p=7.7334e-37)
 home_off_rating                            0.1947 (p=4.7891e-33)
-home_proxy_avg_pts                         0.1874 (p=1.0297e-30)
-h2h_home_avg_score                         0.1805 (p=1.4125e-28)
 away_win_pct                              -0.1777 (p=9.9340e-28)
-home_pace                                  0.1638 (p=9.6598e-24)
 home_fg_pct                                0.1638 (p=9.6663e-24)
-home_sim_off_rating                        0.1459 (p=4.0790e-19)
-home_proxy_off_rating                      0.1423 (p=2.9735e-18)
+home_win_pct                               0.1417 (p=4.0090e-18)
+is_playoff                                -0.0953 (p=5.8601e-09)
+home_q4_avg                                0.0888 (p=6.0343e-08)
+series_game_num                           -0.0827 (p=4.5543e-07)
+away_q4_avg                                0.0814 (p=6.8276e-07)
+series_pressure                           -0.0733 (p=7.7444e-06)
+away_off_rating                           -0.0707 (p=1.6287e-05)
+home_series_wins                          -0.0694 (p=2.3159e-05)
 
 
 PREDICTION INFLUENCE (Top 15 by Range Impact):
 --------------------------------------------------------------------------------
 Feature                                   Q1->Q4       Impact
 --------------------------------------------------------------------------------
-combined_pace                       111.3->119.1         7.75
-home_avg_points                     111.4->118.7         7.37
-net_rating_diff                     111.8->118.5         6.64
-home_home_avg_pts                   111.7->118.1         6.48
-away_pace                           112.2->118.5         6.26
-away_def_rating                     112.0->118.0         5.94
-away_def_vs_home_style              112.0->118.0         5.94
-home_off_rating                     111.9->117.8         5.85
-away_series_wins                    115.2->109.6        -5.56
-h2h_home_avg_score                  112.2->117.7         5.53
-home_fg_pct                         112.5->118.0         5.44
-home_sim_off_rating                 112.2->117.3         5.17
-home_win_pct                        112.8->118.0         5.15
-home_pace                           112.3->117.1         4.82
-away_win_pct                        117.5->112.8        -4.70
+combined_pace                       111.2->118.9         7.70
+home_avg_points                     111.2->118.8         7.61
+net_rating_diff                     112.0->118.8         6.86
+away_def_rating                     112.2->118.5         6.30
+away_series_wins                    115.2->109.7        -5.55
+home_off_rating                     112.3->117.6         5.33
+away_win_pct                        118.1->113.0        -5.12
+home_fg_pct                         112.5->117.6         5.03
+home_win_pct                        113.2->117.8         4.65
+series_pressure                     115.3->110.8        -4.46
+home_series_wins                    115.2->110.9        -4.33
+series_wins_diff                    115.2->111.1        -4.07
+is_playoff                          115.3->111.6        -3.69
+series_game_num                     115.3->111.6        -3.69
+is_elimination                      115.1->111.7        -3.41
 
 
 ================================================================================
@@ -124,126 +118,123 @@ AWAY MODEL ANALYSIS
 
 TOP 20 FEATURES (Gini Importance):
 --------------------------------------------------------------------------------
-combined_pace                            0.126954
-net_rating_diff                          0.096999
-away_avg_points                          0.085969
-home_pace                                0.052569
-h2h_away_avg_score                       0.051364
-home_def_rating                          0.051125
-away_sim_off_rating                      0.045034
-away_off_rating                          0.021759
-home_q4_diff                             0.021061
-away_proxy_avg_pts                       0.020793
-home_def_momentum                        0.019201
-pace_differential                        0.017609
-away_fg_pct                              0.015737
-h2h_home_win_pct                         0.014894
-away_playoff_elevation                   0.014822
-variance_differential                    0.014718
-away_q4_avg                              0.014717
-home_def_vs_away_style                   0.014203
-away_fg3_pct                             0.014134
-home_proxy_avg_pts                       0.013895
+combined_pace                            0.199400
+net_rating_diff                          0.124670
+home_def_rating                          0.097606
+away_avg_points                          0.090488
+away_off_rating                          0.055074
+home_q4_diff                             0.034602
+away_fg_pct                              0.030914
+home_avg_points                          0.026998
+away_fg3_pct                             0.022282
+q4_diff_spread                           0.020722
+away_q4_diff                             0.020505
+variance_differential                    0.020384
+away_consistency                         0.019724
+home_off_vs_away_def                     0.016787
+home_rest_days                           0.015607
+home_fg3_pct                             0.015207
+home_fg_pct                              0.014669
+home_q4_avg                              0.014293
+away_q4_avg                              0.012829
+is_playoff                               0.012676
 
 
 TOP 20 FEATURES (Permutation Importance):
 --------------------------------------------------------------------------------
-combined_pace                            0.052573 (±0.003210)
-net_rating_diff                          0.038650 (±0.003651)
-away_avg_points                          0.024043 (±0.004059)
-home_pace                                0.017971 (±0.001443)
-away_sim_off_rating                      0.017259 (±0.001994)
-h2h_away_avg_score                       0.016136 (±0.001411)
-home_def_rating                          0.014785 (±0.001142)
-away_proxy_avg_pts                       0.007356 (±0.001204)
-h2h_home_win_pct                         0.006972 (±0.001035)
-home_q4_diff                             0.006711 (±0.000879)
-away_playoff_elevation                   0.005880 (±0.000495)
-home_proxy_avg_pts                       0.005761 (±0.000510)
-away_off_rating                          0.005523 (±0.001057)
-away_fg_pct                              0.005008 (±0.000625)
-home_def_vs_away_style                   0.004864 (±0.000536)
-home_rest_days                           0.004822 (±0.000799)
-pace_differential                        0.004711 (±0.000675)
-away_away_avg_pts                        0.004207 (±0.000721)
-variance_differential                    0.003999 (±0.000404)
-away_momentum                            0.003873 (±0.000494)
+combined_pace                            0.096870 (±0.005013)
+net_rating_diff                          0.055088 (±0.004574)
+home_def_rating                          0.035560 (±0.002517)
+away_avg_points                          0.019235 (±0.003032)
+away_off_rating                          0.015483 (±0.001756)
+home_q4_diff                             0.011998 (±0.001253)
+home_avg_points                          0.009248 (±0.001217)
+away_fg_pct                              0.007823 (±0.001023)
+away_q4_diff                             0.006352 (±0.000774)
+away_consistency                         0.006261 (±0.000569)
+home_rest_days                           0.005136 (±0.000773)
+home_off_vs_away_def                     0.004960 (±0.000553)
+is_playoff                               0.004858 (±0.000431)
+away_fg3_pct                             0.004387 (±0.000534)
+variance_differential                    0.004381 (±0.000444)
+q4_diff_spread                           0.004179 (±0.000459)
+away_q4_avg                              0.004039 (±0.000384)
+home_off_rating                          0.003497 (±0.000294)
+home_fg3_pct                             0.003491 (±0.000476)
+series_game_num                          0.003392 (±0.000490)
 
 
 FEATURE GROUP IMPORTANCE:
 --------------------------------------------------------------------------------
 Group                                 Total         Mean    Count               Top Feature
 --------------------------------------------------------------------------------
-Away Team Form                     0.258605     0.018472       14           away_avg_points
-Matchup Features                   0.193610     0.021512        9             combined_pace
-Home Team Form                     0.183577     0.013113       14                 home_pace
-Team Similarity                    0.104407     0.017401        6       away_sim_off_rating
-Head to Head                       0.082187     0.020547        4        h2h_away_avg_score
-Clutch Performance                 0.069609     0.008701        8              home_q4_diff
-Momentum                           0.054590     0.010918        5         home_def_momentum
-Scoring Variance                   0.037969     0.007594        5     variance_differential
-Rest & Schedule                    0.030239     0.006048        5            home_rest_days
-Playoff Elevation                  0.017912     0.005971        3    away_playoff_elevation
-Defensive Matchups                 0.016453     0.004113        4    home_def_vs_away_style
-Playoff Context                    0.009544     0.001193        8           series_game_num
-Shooting Consistency               0.003109     0.001554        2        home_bad_night_pct
-Vegas Context                      0.000000     0.000000        1            has_vegas_odds
+Matchup Features                   0.248395     0.041399        6             combined_pace
+Away Team Form                     0.228605     0.025401        9           away_avg_points
+Home Team Form                     0.188781     0.020976        9           home_def_rating
+Clutch Performance                 0.118658     0.014832        8              home_q4_diff
+Scoring Variance                   0.067450     0.013490        5     variance_differential
+Rest & Schedule                    0.041768     0.008354        5            home_rest_days
+Playoff Context                    0.029178     0.004168        7                is_playoff
+Shooting Consistency               0.007928     0.003964        2        home_bad_night_pct
 
 
 PREDICTION INFLUENCE (Top 15 by Range Impact):
 --------------------------------------------------------------------------------
 Feature                                   Q1->Q4       Impact
 --------------------------------------------------------------------------------
-net_rating_diff                     117.1->109.1        -7.96
-away_avg_points                     109.1->116.8         7.66
-combined_pace                       109.5->117.0         7.47
-home_def_rating                     109.8->117.2         7.34
-home_def_vs_away_style              109.8->117.2         7.34
-h2h_away_avg_score                  109.7->116.8         7.09
-is_elimination                      113.4->106.4        -7.08
-series_momentum                     113.6->106.7        -6.90
-home_pace                           109.9->116.8         6.83
-away_away_avg_pts                   109.7->116.3         6.65
-home_series_wins                    113.6->107.2        -6.43
-series_pressure                     113.6->107.3        -6.37
-away_series_wins                    113.5->107.2        -6.36
-away_off_rating                     109.9->116.2         6.32
-series_game_num                     113.7->107.4        -6.26
+is_elimination                      113.5->102.8       -10.68
+away_avg_points                     108.6->117.3         8.70
+away_series_wins                    113.6->105.2        -8.44
+combined_pace                       109.2->117.2         7.95
+net_rating_diff                     117.2->109.3        -7.84
+series_pressure                     113.6->105.9        -7.74
+home_series_wins                    113.6->106.4        -7.15
+home_def_rating                     109.8->117.0         7.14
+is_playoff                          113.7->106.6        -7.11
+series_game_num                     113.7->106.6        -7.11
+away_off_rating                     110.2->116.7         6.53
+series_wins_diff                    113.5->107.5        -6.01
+away_fg_pct                         110.4->116.2         5.74
+home_win_pct                        116.4->111.0        -5.36
+away_win_pct                        110.8->116.0         5.19
 
 
 ================================================================================
 KEY INSIGHTS
 ================================================================================
 
-Features in Top 10 for BOTH models (2):
-  net_rating_diff                          (Home: #55, Away: #55)
-  combined_pace                            (Home: #52, Away: #52)
+Features in Top 10 for BOTH models (5):
+  combined_pace                            (Home: #33, Away: #33)
+  home_def_rating                          (Home: #3, Away: #3)
+  away_fg3_pct                             (Home: #12, Away: #12)
+  home_avg_points                          (Home: #1, Away: #1)
+  net_rating_diff                          (Home: #36, Away: #36)
 
 
 Features with Biggest Importance Difference:
-  away_avg_points                          Home: 0.006578, Away: 0.085969
-  away_pace                                Home: 0.062404, Away: 0.010206
-  home_def_rating                          Home: 0.005726, Away: 0.051125
-  away_def_rating                          Home: 0.047825, Away: 0.003752
-  h2h_away_avg_score                       Home: 0.010983, Away: 0.051364
-  home_off_rating                          Home: 0.046903, Away: 0.009670
-  away_sim_off_rating                      Home: 0.008316, Away: 0.045034
-  home_avg_points                          Home: 0.040477, Away: 0.006822
-  home_pace                                Home: 0.024790, Away: 0.052569
-  home_fg3_pct                             Home: 0.034222, Away: 0.006485
+  home_def_rating                          Home: 0.023377, Away: 0.097606
+  away_avg_points                          Home: 0.018220, Away: 0.090488
+  away_def_rating                          Home: 0.078918, Away: 0.010213
+  home_off_rating                          Home: 0.071599, Away: 0.011690
+  home_fg3_pct                             Home: 0.049353, Away: 0.015207
+  home_avg_points                          Home: 0.059967, Away: 0.026998
+  away_off_rating                          Home: 0.022607, Away: 0.055074
+  home_fg_pct                              Home: 0.039343, Away: 0.014669
+  net_rating_diff                          Home: 0.104491, Away: 0.124670
+  home_q4_diff                             Home: 0.017087, Away: 0.034602
 
 
 Most Important Feature Groups (Home):
-  Home Team Form                 0.3068
-  Away Team Form                 0.2062
-  Matchup Features               0.1942
-  Team Similarity                0.1235
-  Momentum                       0.0614
+  Home Team Form                 0.2724
+  Matchup Features               0.2473
+  Away Team Form                 0.1968
+  Clutch Performance             0.1124
+  Scoring Variance               0.0656
 
 
 Most Important Feature Groups (Away):
-  Away Team Form                 0.2586
-  Matchup Features               0.1936
-  Home Team Form                 0.1836
-  Team Similarity                0.1044
-  Head to Head                   0.0822
+  Matchup Features               0.2484
+  Away Team Form                 0.2286
+  Home Team Form                 0.1888
+  Clutch Performance             0.1187
+  Scoring Variance               0.0675

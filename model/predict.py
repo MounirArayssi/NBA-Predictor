@@ -1,7 +1,7 @@
 import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
+from datetime import date
 import pandas as pd
 import numpy as np
 import pickle
@@ -128,8 +128,8 @@ def save_predictions(predictions):
     print(f"✅ Predictions saved to {csv_path}")
 
 def get_todays_games():
-    """Get all scheduled games for today."""
-    today = date.today()
+    """Get all scheduled games for today."""    
+    today = date(2026, 4, 24)
     with Session(engine) as session:
         games = session.query(Game).filter(
             Game.game_date == today,
@@ -1101,9 +1101,38 @@ def predict_todays_games():
                 away_pred_team * away_tw +
                 away_player_pts * away_pw
             )
-        else:
-            home_pred_final = round(home_pred_team)
-            away_pred_final = round(away_pred_team)
+            # --- PLAYOFF SCORING COMPRESSION ---
+            if game['season_type'] == 'Playoffs':
+                total = home_pred_final + away_pred_final
+
+                compression_factor = 0.0
+
+                # 1. High-total compression
+                if total > 210:
+                    excess = total - 210
+                    compression_factor += min(0.12, excess / 300)
+
+                # 2. Series progression compression
+                game_num = int(game.get('series_game_num', 1) or 1)
+                home_wins = int(game.get('home_series_wins', 0) or 0)
+                away_wins = int(game.get('away_series_wins', 0) or 0)
+
+                if game_num >= 3:
+                    compression_factor += 0.010
+
+                if game_num >= 4:
+                    compression_factor += 0.010
+
+                # 3. Elimination / high-pressure compression
+                if home_wins == 3 or away_wins == 3:
+                    compression_factor += 0.012
+
+                # Keep this conservative
+                compression_factor = min(compression_factor, 0.14)
+
+                if compression_factor > 0:
+                    home_pred_final = round(home_pred_final * (1 - compression_factor))
+                    away_pred_final = round(away_pred_final * (1 - compression_factor))
 
         # Tiebreaker
         if home_pred_final == away_pred_final:
