@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from data.storage.db import engine
 from data.storage.models import Game, Team, Player, PlayerBoxScore, TeamBoxScore
 from config.settings import NBA_API_DELAY
-
+from data.ingestion.update_series import update_series_scores
 
 def safe_int(val):
     try:
@@ -431,3 +431,12 @@ if __name__ == "__main__":
         backfill_recent_advanced_stats(days=args.days)
     else:
         fetch_all_box_scores()
+
+    print("\n" + "="*60)
+    print("Updating playoff series scores...")
+    print("="*60)
+    
+    try:
+        update_series_scores()
+    except Exception as e:
+        print(f"Warning: Series update failed but box scores were saved: {e}")

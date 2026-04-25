@@ -15,11 +15,25 @@ from data.ingestion.fetch_injuries import fetch_injury_report
 from data.ingestion.fetch_odds import fetch_todays_player_props
 
 
-injury_report = fetch_injury_report()
-all_player_props = fetch_todays_player_props()
-
 # Ensemble weights
 # Dynamic ensemble weights based on star power
+def clamp(value, low, high):
+    """Small helper so calibration code stays readable."""
+    return max(low, min(high, value))
+
+
+def safe_float(value, default=0.0):
+    try:
+        if value is None:
+            return default
+        return float(value)
+    except Exception:
+        return default
+
+
+# Ensemble weights
+# Dynamic ensemble weights based on star power, but without crushing disagreement.
+
 def get_ensemble_weights(
     home_player_preds,
     away_player_preds,
@@ -29,45 +43,41 @@ def get_ensemble_weights(
     away_player_pts,
     is_playoff=False
 ):
-    # Base weights
-    team_w = 0.72
-    player_w = 0.28
+    """
+    Dynamic team/player weights.
 
-    # --- 1. Star-driven adjustment ---
-    stars = sum(
-        1 for p in home_player_preds + away_player_preds
-        if p['usage_rate'] > 0.25
-    )
+    Big philosophy change:
+    - Disagreement should mainly lower confidence, not erase the margin.
+    - The player model matters more in playoffs and star-heavy games.
+    - Totals can be tempered if the player model is way off, but no signal gets nuked.
+    """
+    player_w = 0.31
 
-    player_w += min(stars * 0.03, 0.09)
+    all_players = (home_player_preds or []) + (away_player_preds or [])
+    stars = sum(1 for p in all_players if safe_float(p.get('usage_rate'), 0) > 0.25)
+    alpha_stars = sum(1 for p in all_players if safe_float(p.get('usage_rate'), 0) > 0.31)
 
-    # --- 2. Playoff boost ---
+    player_w += min(stars * 0.025, 0.08)
+    player_w += min(alpha_stars * 0.015, 0.04)
+
     if is_playoff:
-        player_w += 0.05
+        player_w += 0.04
 
-    # --- 3. Disagreement penalty (MOST IMPORTANT) ---
-    team_home_winner = home_team_pts > away_team_pts
-    player_home_winner = home_player_pts > away_player_pts
-
-    if team_home_winner != player_home_winner:
-        player_w *= 0.680  
-    
     team_total = home_team_pts + away_team_pts
     player_total = home_player_pts + away_player_pts
-    total_gap = player_total - team_total
+    total_gap = abs(player_total - team_total)
 
-    if total_gap > 20:
-        player_w *= 0.78
-    elif total_gap > 12:
-        player_w *= 0.08
+    # Temper total outliers, but keep the player model alive.
+    if total_gap >= 28:
+        player_w *= 0.70
+    elif total_gap >= 20:
+        player_w *= 0.80
+    elif total_gap >= 12:
+        player_w *= 0.90
 
-        
-    # --- 4. Clamp weights ---
-    player_w = max(0.15, min(player_w, 0.35))
-    team_w = 1 - player_w
-
-    return round(team_w, 2), round(player_w, 2)
-
+    player_w = clamp(player_w, 0.22, 0.46)
+    team_w = 1.0 - player_w
+    return team_w, player_w
 
 def load_models():
     with open('model/model_home.pkl', 'rb') as f:
@@ -129,11 +139,11 @@ def save_predictions(predictions):
 
 def get_todays_games():
     """Get all scheduled games for today."""    
-    today = date(2026, 4, 24)
+    today = date.today()
     with Session(engine) as session:
         games = session.query(Game).filter(
             Game.game_date == today,
-            Game.status == 'scheduled'
+            Game.is_final == False  # Changed from status == 'scheduled'
         ).all()
 
         result = []
@@ -158,8 +168,8 @@ def get_todays_games():
                 'season_type':       g.season_type,
                 'game_date':         g.game_date,
                 'series_game_num':   g.series_game_num or 1,
-                'home_series_wins':  g.home_series_wins or 0,
-                'away_series_wins':  g.away_series_wins or 0,
+                'home_series_wins':  g.series_home_wins or 0,
+                'away_series_wins':  g.series_away_wins or 0,
                 'vegas_total':       odds.total_line if odds else None,
                 'vegas_spread':      odds.home_spread if odds else None,
                 'vegas_home':        odds.vegas_home_implied if odds else None,
@@ -167,6 +177,7 @@ def get_todays_games():
             })
 
     return result
+
 
 def get_bad_night_pct(team_id, n_games=50):
     """Compute probability of a bad shooting night for a team."""
@@ -906,10 +917,20 @@ def get_key_factors(row, home_pred, away_pred,
     # Injuries
     # -------------------------
     if injury_report:
-        for inj in injury_report:
+        if isinstance(injury_report, dict):
+            injury_items = []
+            for team_abbr, players in injury_report.items():
+                for p in players or []:
+                    item = dict(p)
+                    item.setdefault("team", team_abbr)
+                    injury_items.append(item)
+        else:
+            injury_items = injury_report
+
+        for inj in injury_items:
             try:
                 team = inj.get("team")
-                player = inj.get("player") or inj.get("full_name")
+                player = inj.get("player") or inj.get("full_name") or inj.get("name")
                 status = str(inj.get("status", "")).lower()
                 impact = float(inj.get("impact_score", 0) or 0)
 
@@ -937,363 +958,932 @@ def get_key_factors(row, home_pred, away_pred,
 
 
 def predict_todays_games():
+    """Main prediction workflow"""
+    print_header()
+    
+    model_home, model_away = load_models()
+    games = get_todays_games()
+    
+    if not games:
+        print("No games scheduled today.")
+        return []
+    
+    print(f"Found {len(games)} games today\n")
+    
+    # Fetch shared data once
+    injury_report, all_player_props = fetch_shared_game_data()
+    
+    predictions = []
+    for game in games:
+        prediction = predict_single_game(
+            game, model_home, model_away, 
+            injury_report, all_player_props
+        )
+        if prediction:
+            predictions.append(prediction)
+            print_prediction(prediction, game, injury_report)
+    
+    print_footer(len(predictions))
+    save_predictions(predictions)
+    return predictions
+
+
+def print_header():
+    """Print predictions header"""
     print(f"\n{'='*55}")
     print(f"NBA PREDICTIONS — {date.today().strftime('%B %d, %Y')}")
     print(f"{'='*55}\n")
 
-    model_home, model_away = load_models()
-    games = get_todays_games()
 
-    if not games:
-        print("No games scheduled today.")
-        return []
-
-    print(f"Found {len(games)} games today\n")
-
-    # Fetch injury report and player props once for all games
+def fetch_shared_game_data():
+    """Fetch injury report and player props once for all games"""
     from data.ingestion.fetch_injuries import fetch_injury_report
     from data.ingestion.fetch_odds import fetch_todays_player_props
-    from model.predict_players import predict_team_player_stats
-
+    
     print("Fetching injury report...")
     injury_report = fetch_injury_report()
-
+    
     print("Fetching player props...")
     all_player_props = fetch_todays_player_props()
+    
+    return injury_report, all_player_props
 
-    predictions = []
 
-    for game in games:
-        print(f"\nBuilding features for "
-              f"{game['away_team']} @ {game['home_team']}...")
+def predict_single_game(game, model_home, model_away, injury_report, all_player_props):
+    """Generate prediction for a single game."""
+    print(f"\nBuilding features for {game['away_team']} @ {game['home_team']}...")
 
-        row_dict = build_features_for_upcoming_game(
-            home_team_id     = game['home_team_id'],
-            away_team_id     = game['away_team_id'],
-            game_date        = game['game_date'],
-            season_type      = game['season_type'],
-            series_game_num  = game['series_game_num'],
-            home_series_wins = game['home_series_wins'],
-            away_series_wins = game['away_series_wins'],
-        )
+    row_dict = build_game_features(game)
+    if not row_dict:
+        print("  ⚠️  Could not build features")
+        return None
 
-        if not row_dict:
-            print(f"  ⚠️  Could not build features")
-            continue
+    row_dict['home_team'] = game['home_team']
+    row_dict['away_team'] = game['away_team']
 
-        row_dict['home_team'] = game['home_team']
-        row_dict['away_team'] = game['away_team']
+    home_pred_team, away_pred_team = get_team_predictions(model_home, model_away, row_dict)
 
-        # Build feature vector
-        features = np.array([
-            float(row_dict.get(f, 0) or 0)
-            for f in FEATURE_COLS
-        ]).reshape(1, -1)
+    game_props = match_player_props(all_player_props, game)
+    player_results = get_player_predictions(game, row_dict, injury_report, game_props)
 
-        # Team model predictions
-        home_pred_team = float(model_home.predict(features)[0])
-        away_pred_team = float(model_away.predict(features)[0])
+    home_pred_final, away_pred_final, ensemble_debug = calculate_ensemble_prediction(
+        game,
+        row_dict,
+        home_pred_team,
+        away_pred_team,
+        player_results
+    )
 
-        # Match props to this game
-        game_props_key = next(
-            (k for k in all_player_props
-             if game['away_team'] in k or game['home_team'] in k),
-            None
-        )
-        game_props = all_player_props.get(game_props_key, {})
+    home_pred_final, away_pred_final, calibration_debug = calibrate_final_score(
+        game,
+        row_dict,
+        home_pred_final,
+        away_pred_final,
+        home_pred_team,
+        away_pred_team,
+        player_results
+    )
 
-        # Player model predictions
-        try:
-            home_player_preds, home_player_pts, _, _ = \
-                predict_team_player_stats(
-                    team_id          = game['home_team_id'],
-                    opponent_team_id = game['away_team_id'],
-                    is_home          = True,
-                    is_playoff       = game['season_type'] == 'Playoffs',
-                    team_off_rating  = float(
-                        row_dict.get('home_off_rating', 115)
-                    ),
-                    opp_def_rating   = float(
-                        row_dict.get('away_def_rating', 112)
-                    ),
-                    opp_pace         = float(
-                        row_dict.get('away_pace', 98)
-                    ),
-                    team_pace        = float(
-                        row_dict.get('home_pace', 98)
-                    ),
-                    injury_report    = injury_report,
-                    team_abbr        = game['home_team'],
-                    player_props     = game_props
-                )
-
-            away_player_preds, away_player_pts, _, _ = \
-                predict_team_player_stats(
-                    team_id          = game['away_team_id'],
-                    opponent_team_id = game['home_team_id'],
-                    is_home          = False,
-                    is_playoff       = game['season_type'] == 'Playoffs',
-                    team_off_rating  = float(
-                        row_dict.get('away_off_rating', 113)
-                    ),
-                    opp_def_rating   = float(
-                        row_dict.get('home_def_rating', 114)
-                    ),
-                    opp_pace         = float(
-                        row_dict.get('home_pace', 98)
-                    ),
-                    team_pace        = float(
-                        row_dict.get('away_pace', 98)
-                    ),
-                    injury_report    = injury_report,
-                    team_abbr        = game['away_team'],
-                    player_props     = game_props
-                )
-
-            player_model_available = (
-                home_player_pts > 0 and away_player_pts > 0
-            )
-
-        except Exception as e:
-            print(f"  ⚠️  Player model failed: {e}")
-            home_player_preds      = []
-            away_player_preds      = []
-            home_player_pts        = 0
-            away_player_pts        = 0
-            player_model_available = False
-
-        if player_model_available:
-            home_disagreement = abs(home_pred_team - home_player_pts)
-            away_disagreement = abs(away_pred_team - away_player_pts)
-
-            if home_disagreement > 15 or away_disagreement > 15:
-                home_tw, home_pw = 0.90, 0.10
-                away_tw, away_pw = 0.90, 0.10
-                print(f"  ⚠️  High model disagreement — "
-                      f"trusting team model "
-                      f"(home diff: {home_disagreement:.0f}, "
-                      f"away diff: {away_disagreement:.0f})")
-            else:
-                home_tw, home_pw = get_ensemble_weights(
-    home_player_preds,
-    away_player_preds,
-    home_pred_team,
-    away_pred_team,
-    home_player_pts,
-    away_player_pts,
-    is_playoff=game['season_type'] == 'Playoffs'
-)
-                away_tw, away_pw = get_ensemble_weights(
-    home_player_preds,
-    away_player_preds,
-    home_pred_team,
-    away_pred_team,
-    home_player_pts,
-    away_player_pts,
-    is_playoff=game['season_type'] == 'Playoffs'
-)
-
-            home_pred_final = round(
-                home_pred_team * home_tw +
-                home_player_pts * home_pw
-            )
-            away_pred_final = round(
-                away_pred_team * away_tw +
-                away_player_pts * away_pw
-            )
-            # --- PLAYOFF SCORING COMPRESSION ---
-            if game['season_type'] == 'Playoffs':
-                total = home_pred_final + away_pred_final
-
-                compression_factor = 0.0
-
-                # 1. High-total compression
-                if total > 210:
-                    excess = total - 210
-                    compression_factor += min(0.12, excess / 300)
-
-                # 2. Series progression compression
-                game_num = int(game.get('series_game_num', 1) or 1)
-                home_wins = int(game.get('home_series_wins', 0) or 0)
-                away_wins = int(game.get('away_series_wins', 0) or 0)
-
-                if game_num >= 3:
-                    compression_factor += 0.010
-
-                if game_num >= 4:
-                    compression_factor += 0.010
-
-                # 3. Elimination / high-pressure compression
-                if home_wins == 3 or away_wins == 3:
-                    compression_factor += 0.012
-
-                # Keep this conservative
-                compression_factor = min(compression_factor, 0.14)
-
-                if compression_factor > 0:
-                    home_pred_final = round(home_pred_final * (1 - compression_factor))
-                    away_pred_final = round(away_pred_final * (1 - compression_factor))
-
-        # Tiebreaker
-        if home_pred_final == away_pred_final:
+    if home_pred_final == away_pred_final:
+        edge = get_directional_edge(game, row_dict, home_pred_team, away_pred_team, player_results)
+        if edge < 0:
+            away_pred_final += 1
+        else:
             home_pred_final += 1
 
-        predicted_winner = (
-            game['home_team'] if home_pred_final > away_pred_final
-            else game['away_team']
+    confidence, conf_emoji = calculate_confidence(
+        home_pred_final,
+        away_pred_final,
+        row_dict,
+        home_pred_team=home_pred_team,
+        away_pred_team=away_pred_team,
+        player_results=player_results,
+        debug={**ensemble_debug, **calibration_debug}
+    )
+
+    row_dict['home_team_pred'] = home_pred_team
+    row_dict['away_team_pred'] = away_pred_team
+    row_dict['home_player_pred'] = player_results.get('home_pts', 0)
+    row_dict['away_player_pred'] = player_results.get('away_pts', 0)
+
+    factors = get_key_factors(
+        row_dict,
+        home_pred_final,
+        away_pred_final,
+        home_player_preds=player_results['home_preds'],
+        away_player_preds=player_results['away_preds'],
+        injury_report=injury_report,
+        confidence=confidence
+    )
+
+    return build_prediction_dict(
+        game,
+        home_pred_final,
+        away_pred_final,
+        home_pred_team,
+        away_pred_team,
+        player_results,
+        confidence,
+        conf_emoji,
+        factors,
+        debug={**ensemble_debug, **calibration_debug}
+    )
+
+
+def build_game_features(game):
+    """Build feature vector for a game"""
+    return build_features_for_upcoming_game(
+        home_team_id=game['home_team_id'],
+        away_team_id=game['away_team_id'],
+        game_date=game['game_date'],
+        season_type=game['season_type'],
+        series_game_num=game['series_game_num'],
+        home_series_wins=game['home_series_wins'],
+        away_series_wins=game['away_series_wins'],
+    )
+
+
+def get_team_predictions(model_home, model_away, row_dict):
+    """Get predictions from team models"""
+    features = np.array([
+        float(row_dict.get(f, 0) or 0)
+        for f in FEATURE_COLS
+    ]).reshape(1, -1)
+    
+    home_pred = float(model_home.predict(features)[0])
+    away_pred = float(model_away.predict(features)[0])
+    
+    return home_pred, away_pred
+
+
+def match_player_props(all_player_props, game):
+    """Match player props to current game"""
+    game_props_key = next(
+        (k for k in all_player_props
+         if game['away_team'] in k or game['home_team'] in k),
+        None
+    )
+    return all_player_props.get(game_props_key, {})
+
+
+def get_player_predictions(game, row_dict, injury_report, game_props):
+    """Get predictions from player models for both teams"""
+    from model.predict_players import predict_team_player_stats
+    
+    try:
+        home_preds, home_pts, _, _ = predict_team_player_stats(
+            team_id=game['home_team_id'],
+            opponent_team_id=game['away_team_id'],
+            is_home=True,
+            is_playoff=game['season_type'] == 'Playoffs',
+            team_off_rating=float(row_dict.get('home_off_rating', 115)),
+            opp_def_rating=float(row_dict.get('away_def_rating', 112)),
+            opp_pace=float(row_dict.get('away_pace', 98)),
+            team_pace=float(row_dict.get('home_pace', 98)),
+            injury_report=injury_report,
+            team_abbr=game['home_team'],
+            player_props=game_props
         )
-        margin = abs(home_pred_final - away_pred_final)
+        
+        away_preds, away_pts, _, _ = predict_team_player_stats(
+            team_id=game['away_team_id'],
+            opponent_team_id=game['home_team_id'],
+            is_home=False,
+            is_playoff=game['season_type'] == 'Playoffs',
+            team_off_rating=float(row_dict.get('away_off_rating', 113)),
+            opp_def_rating=float(row_dict.get('home_def_rating', 114)),
+            opp_pace=float(row_dict.get('home_pace', 98)),
+            team_pace=float(row_dict.get('away_pace', 98)),
+            injury_report=injury_report,
+            team_abbr=game['away_team'],
+            player_props=game_props
+        )
+        
+        return {
+            'home_preds': home_preds,
+            'home_pts': home_pts,
+            'away_preds': away_preds,
+            'away_pts': away_pts,
+            'available': home_pts > 0 and away_pts > 0
+        }
+        
+    except Exception as e:
+        print(f"  ⚠️  Player model failed: {e}")
+        return {
+            'home_preds': [],
+            'home_pts': 0,
+            'away_preds': [],
+            'away_pts': 0,
+            'available': False
+        }
 
-        home_win_prob = 1 / (1 + np.exp(-margin / 8))
-        if home_pred_final < away_pred_final:
-            home_win_prob = 1 - home_win_prob
 
-        if margin >= 12:
-            confidence = "HIGH"
-            conf_emoji = "🔒"
-        elif margin >= 6:
+
+def same_sign(a, b):
+    """True when both margins point to the same winner."""
+    return (a > 0 and b > 0) or (a < 0 and b < 0)
+
+
+def sign_or_zero(value):
+    """Return -1, 0, or 1 without numpy edge-case surprises."""
+    value = safe_float(value, 0.0)
+    if value > 0:
+        return 1
+    if value < 0:
+        return -1
+    return 0
+
+
+def get_market_home_margin(game):
+    """
+    Convert stored home_spread to expected home margin.
+
+    In your printed output, a positive home spread means the home team is the
+    underdog. Example: PHX +9.5 means market expects PHX by -9.5, so the
+    expected home margin is -spread.
+    """
+    if game.get('vegas_spread') is None:
+        return None
+    return -safe_float(game.get('vegas_spread'), 0.0)
+
+
+def estimate_player_projection_risk(player_results, team_total=None):
+    """
+    Lightweight risk estimate for the player model.
+
+    This does not require retraining or changes inside predict_team_player_stats.
+    It looks for common reasons player aggregation gets too aggressive:
+    - a very different total than the team model
+    - too much scoring coming from lower-usage / likely bench players
+    - many hot/slump flags, which usually means more volatility
+    """
+    if not player_results or not player_results.get('available'):
+        return {
+            'risk': 1.0,
+            'bench_scoring_share': 0.0,
+            'flagged_players': 0,
+            'player_total_gap': 0.0,
+        }
+
+    all_players = (player_results.get('home_preds') or []) + (player_results.get('away_preds') or [])
+    player_total = safe_float(player_results.get('home_pts'), 0) + safe_float(player_results.get('away_pts'), 0)
+
+    low_usage_pts = 0.0
+    flagged_players = 0
+    for p in all_players:
+        pts = safe_float(p.get('pred_points'), 0)
+        usage = safe_float(p.get('usage_rate'), 0)
+        if usage and usage < 0.18:
+            low_usage_pts += pts
+        if p.get('hot_flag') or p.get('slump_flag') or p.get('returning_from_injury'):
+            flagged_players += 1
+
+    bench_share = (low_usage_pts / player_total) if player_total > 0 else 0.0
+    total_gap = abs(player_total - team_total) if team_total is not None else 0.0
+
+    risk = 0.0
+    if total_gap >= 24:
+        risk += 2.0
+    elif total_gap >= 16:
+        risk += 1.25
+    elif total_gap >= 10:
+        risk += 0.5
+
+    if bench_share >= 0.34:
+        risk += 1.0
+    elif bench_share >= 0.28:
+        risk += 0.5
+
+    if flagged_players >= 6:
+        risk += 0.75
+    elif flagged_players >= 3:
+        risk += 0.35
+
+    return {
+        'risk': round(risk, 3),
+        'bench_scoring_share': round(bench_share, 3),
+        'flagged_players': flagged_players,
+        'player_total_gap': round(total_gap, 2),
+    }
+
+
+def score_team_model_reliability(row_dict, game, team_margin, player_margin, market_margin):
+    """
+    Reliability score for using the team model as the side/margin anchor.
+    This is deterministic arbitration, not noise or an artificial margin floor.
+    """
+    score = 2.0  # Team model is the baseline side/margin anchor.
+
+    abs_team = abs(team_margin)
+    if abs_team >= 8:
+        score += 2.0
+    elif abs_team >= 5:
+        score += 1.25
+    elif abs_team <= 2:
+        score -= 0.75
+
+    net_rating_diff = clamp(safe_float(row_dict.get('net_rating_diff'), 0.0), -12, 12)
+    if abs(net_rating_diff) >= 7 and same_sign(team_margin, net_rating_diff):
+        score += 1.25
+    elif abs(net_rating_diff) >= 4 and same_sign(team_margin, net_rating_diff):
+        score += 0.75
+
+    home_edge = safe_float(row_dict.get('home_off_vs_away_def'), 0.0)
+    away_edge = safe_float(row_dict.get('away_off_vs_home_def'), 0.0)
+    matchup_edge = home_edge - away_edge
+    if abs(matchup_edge) >= 5 and same_sign(team_margin, matchup_edge):
+        score += 0.75
+
+    if market_margin is not None:
+        if same_sign(team_margin, market_margin):
+            score += 1.75
+            if abs(market_margin) >= 5:
+                score += 0.75
+        elif abs(market_margin) >= 4:
+            score -= 0.75
+
+    if not same_sign(team_margin, player_margin) and abs(player_margin) >= 10:
+        score -= 0.35
+
+    return round(score, 3)
+
+
+def score_player_model_reliability(row_dict, game, player_results, team_margin, player_margin, market_margin):
+    """
+    Reliability score for letting the player model override team/market reads.
+    It can win, but it should need evidence when it points opposite the team model.
+    """
+    score = 1.0
+    all_players = (player_results.get('home_preds') or []) + (player_results.get('away_preds') or [])
+
+    stars = sum(1 for p in all_players if safe_float(p.get('usage_rate'), 0) >= 0.27)
+    alpha_stars = sum(1 for p in all_players if safe_float(p.get('usage_rate'), 0) >= 0.32)
+    score += min(stars * 0.30, 1.20)
+    score += min(alpha_stars * 0.35, 0.90)
+
+    if game.get('season_type') == 'Playoffs':
+        score += 0.65
+
+    abs_player = abs(player_margin)
+    if abs_player >= 10:
+        score += 1.25
+    elif abs_player >= 6:
+        score += 0.75
+    elif abs_player <= 2:
+        score -= 0.75
+
+    if market_margin is not None:
+        if same_sign(player_margin, market_margin):
+            score += 1.25
+            if abs(market_margin) >= 5:
+                score += 0.50
+        elif abs(market_margin) >= 4:
+            score -= 0.90
+
+    team_total = safe_float(row_dict.get('_team_total_for_reliability'), 0.0)
+    risk_info = estimate_player_projection_risk(player_results, team_total=team_total if team_total else None)
+    score -= safe_float(risk_info.get('risk'), 0.0) * 0.65
+
+    if market_margin is not None:
+        if not same_sign(player_margin, team_margin) and not same_sign(player_margin, market_margin):
+            score -= 0.75
+
+    return round(score, 3), risk_info
+
+
+def choose_margin_from_arbitration(row_dict, game, team_margin, player_margin, player_results):
+    """
+    Pick a final margin using arbitration.
+
+    Big change from the old version:
+    - Consensus margins can be blended and preserved.
+    - Disagreement margins are NOT directly averaged because that collapses
+      +6 and -15 into fake coin flips.
+    - Disagreement chooses the most reliable signal, then keeps a tempered
+      portion of that signal's edge.
+    """
+    market_margin = get_market_home_margin(game)
+    winner_disagreement = not same_sign(team_margin, player_margin)
+    model_disagreement = abs(team_margin - player_margin)
+
+    team_score = score_team_model_reliability(
+        row_dict, game, team_margin, player_margin, market_margin
+    )
+    player_score, player_risk = score_player_model_reliability(
+        row_dict, game, player_results, team_margin, player_margin, market_margin
+    )
+
+    candidates = [
+        {'source': 'team', 'margin': team_margin, 'score': team_score},
+        {'source': 'player', 'margin': player_margin, 'score': player_score},
+    ]
+    if market_margin is not None:
+        market_score = 1.35
+        if same_sign(market_margin, team_margin):
+            market_score += 0.75
+        if same_sign(market_margin, player_margin):
+            market_score += 0.50
+        if abs(market_margin) >= 6:
+            market_score += 0.40
+        candidates.append({'source': 'market', 'margin': market_margin, 'score': round(market_score, 3)})
+
+    if not winner_disagreement:
+        team_w, player_w = get_ensemble_weights(
+            player_results.get('home_preds') or [],
+            player_results.get('away_preds') or [],
+            safe_float(row_dict.get('_home_pred_team'), 0.0),
+            safe_float(row_dict.get('_away_pred_team'), 0.0),
+            safe_float(player_results.get('home_pts'), 0.0),
+            safe_float(player_results.get('away_pts'), 0.0),
+            is_playoff=game.get('season_type') == 'Playoffs'
+        )
+        raw_margin = team_margin * team_w + player_margin * player_w
+        min_abs = min(abs(team_margin), abs(player_margin))
+        max_abs = max(abs(team_margin), abs(player_margin))
+
+        if min_abs >= 3.5:
+            preserved_abs = max(abs(raw_margin), 0.72 * min_abs + 0.18 * max_abs)
+            margin = sign_or_zero(raw_margin) * preserved_abs
+            method = 'consensus_preserved'
+        else:
+            margin = raw_margin
+            method = 'consensus_blended'
+
+        if game.get('season_type') == 'Playoffs' and abs(margin) >= 3:
+            margin *= 1.04
+
+        debug = {
+            'team_reliability': team_score,
+            'player_reliability': player_score,
+            'player_projection_risk': player_risk.get('risk'),
+            'player_bench_scoring_share': player_risk.get('bench_scoring_share'),
+            'flagged_players': player_risk.get('flagged_players'),
+            'chosen_margin_source': 'consensus',
+            'margin_method': method,
+            'model_disagreement': round(model_disagreement, 2),
+            'winner_disagreement': False,
+        }
+        return clamp(margin, -24, 24), debug
+
+    sorted_candidates = sorted(candidates, key=lambda x: x['score'], reverse=True)
+    best = sorted_candidates[0]
+    second = sorted_candidates[1]
+    reliability_gap = best['score'] - second['score']
+
+    if reliability_gap < 0.65:
+        directional = get_directional_edge(game, row_dict,
+                                          safe_float(row_dict.get('_home_pred_team'), 0.0),
+                                          safe_float(row_dict.get('_away_pred_team'), 0.0),
+                                          player_results)
+        if abs(directional) < 0.75:
+            directional = team_margin if abs(team_margin) >= abs(player_margin) else player_margin
+
+        margin = sign_or_zero(directional) * 2.6
+        method = 'disagreement_true_tossup'
+        chosen_source = 'mixed'
+    else:
+        chosen_source = best['source']
+        chosen_margin = best['margin']
+
+        if chosen_source == 'team':
+            target_abs = 0.78 * abs(chosen_margin)
+        elif chosen_source == 'player':
+            target_abs = 0.66 * abs(chosen_margin)
+        else:
+            target_abs = 0.62 * abs(chosen_margin)
+
+        if market_margin is not None and same_sign(chosen_margin, market_margin):
+            target_abs = max(
+                target_abs,
+                0.75 * abs(chosen_margin),
+                0.70 * abs(market_margin)
+            )
+
+        losing_margin = second['margin']
+        if not same_sign(chosen_margin, losing_margin) and abs(losing_margin) >= 12:
+            target_abs *= 0.90
+
+        target_abs = clamp(target_abs, min(2.0, abs(chosen_margin)), 16.0)
+        margin = sign_or_zero(chosen_margin) * target_abs
+        method = f'disagreement_arbitrated_to_{chosen_source}'
+
+    if game.get('season_type') == 'Playoffs' and abs(margin) >= 3:
+        margin *= 1.04
+
+    debug = {
+        'team_reliability': team_score,
+        'player_reliability': player_score,
+        'player_projection_risk': player_risk.get('risk'),
+        'player_bench_scoring_share': player_risk.get('bench_scoring_share'),
+        'flagged_players': player_risk.get('flagged_players'),
+        'chosen_margin_source': chosen_source,
+        'reliability_gap': round(reliability_gap, 3),
+        'margin_method': method,
+        'model_disagreement': round(model_disagreement, 2),
+        'winner_disagreement': True,
+    }
+    return clamp(margin, -24, 24), debug
+
+
+def blend_game_total(game, team_total, player_total, player_results):
+    """
+    Blend scoring total separately from margin.
+    Totals are allowed to use Vegas more directly because total calibration
+    does not decide the winner.
+    """
+    team_total = safe_float(team_total, 0.0)
+    player_total = safe_float(player_total, 0.0)
+
+    if not player_results.get('available') or player_total <= 0:
+        blended_total = team_total
+        team_w = 1.0
+        player_w = 0.0
+    else:
+        total_gap = abs(player_total - team_total)
+        player_w = 0.30
+        if game.get('season_type') == 'Playoffs':
+            player_w += 0.04
+        if total_gap >= 28:
+            player_w *= 0.65
+        elif total_gap >= 20:
+            player_w *= 0.75
+        elif total_gap >= 12:
+            player_w *= 0.88
+        player_w = clamp(player_w, 0.18, 0.40)
+        team_w = 1.0 - player_w
+        blended_total = team_total * team_w + player_total * player_w
+
+    vegas_total = game.get('vegas_total')
+    has_vegas_total = vegas_total is not None and safe_float(vegas_total, 0) > 0
+    market_total_weight = 0.0
+
+    if has_vegas_total:
+        vegas_total = safe_float(vegas_total)
+        total_gap_vs_market = abs(blended_total - vegas_total)
+        market_total_weight = 0.18 if total_gap_vs_market <= 10 else 0.28
+        blended_total = blended_total * (1 - market_total_weight) + vegas_total * market_total_weight
+
+    total_drag = 0.0
+    if game.get('season_type') == 'Playoffs':
+        game_num = int(game.get('series_game_num', 1) or 1)
+        if game_num >= 3:
+            total_drag += 0.8
+        if game_num >= 5:
+            total_drag += 0.6
+        if int(game.get('home_series_wins', 0) or 0) == 3 or int(game.get('away_series_wins', 0) or 0) == 3:
+            total_drag += 0.6
+        blended_total -= total_drag
+
+    return clamp(blended_total, 185, 255), {
+        'team_weight': round(team_w, 3),
+        'player_weight': round(player_w, 3),
+        'market_total_weight': round(market_total_weight, 3),
+        'total_drag': round(total_drag, 2),
+    }
+
+
+def calculate_ensemble_prediction(game, row_dict, home_pred_team, away_pred_team, player_results):
+    """
+    Final ensemble v2.
+
+    Core design:
+    - Blend/calibrate total separately.
+    - Arbitrate margin instead of averaging opposing margin signals.
+    - Disagreement lowers confidence through debug flags; it does not
+      automatically shrink every game to 1 point.
+    """
+    team_total = float(home_pred_team + away_pred_team)
+    team_margin = float(home_pred_team - away_pred_team)
+
+    row_dict['_home_pred_team'] = float(home_pred_team)
+    row_dict['_away_pred_team'] = float(away_pred_team)
+    row_dict['_team_total_for_reliability'] = team_total
+
+    if not player_results.get('available'):
+        market_margin = get_market_home_margin(game)
+        final_total, total_debug = blend_game_total(
+            game, team_total, 0.0, {'available': False}
+        )
+        final_margin = team_margin
+        home_pred = (final_total + final_margin) / 2
+        away_pred = (final_total - final_margin) / 2
+        debug = {
+            **total_debug,
+            'team_total': round(team_total, 2),
+            'player_total': 0.0,
+            'team_margin': round(team_margin, 2),
+            'player_margin': 0.0,
+            'ensemble_margin': round(final_margin, 2),
+            'model_disagreement': 0.0,
+            'winner_disagreement': False,
+            'margin_method': 'team_only',
+            'chosen_margin_source': 'team',
+            'team_reliability': None,
+            'player_reliability': None,
+            'market_margin': None if market_margin is None else round(market_margin, 2),
+        }
+        return home_pred, away_pred, debug
+
+    player_total = float(player_results.get('home_pts', 0) + player_results.get('away_pts', 0))
+    player_margin = float(player_results.get('home_pts', 0) - player_results.get('away_pts', 0))
+
+    final_total, total_debug = blend_game_total(game, team_total, player_total, player_results)
+    final_margin, margin_debug = choose_margin_from_arbitration(
+        row_dict, game, team_margin, player_margin, player_results
+    )
+
+    market_margin = get_market_home_margin(game)
+
+    home_pred = (final_total + final_margin) / 2
+    away_pred = (final_total - final_margin) / 2
+
+    debug = {
+        **total_debug,
+        **margin_debug,
+        'team_total': round(team_total, 2),
+        'player_total': round(player_total, 2),
+        'team_margin': round(team_margin, 2),
+        'player_margin': round(player_margin, 2),
+        'ensemble_margin': round(final_margin, 2),
+        'market_margin': None if market_margin is None else round(market_margin, 2),
+    }
+
+    return home_pred, away_pred, debug
+
+
+def get_directional_edge(game, row_dict, home_pred_team, away_pred_team, player_results):
+    """
+    Positive = home edge, negative = away edge.
+    Used only for rounding tiebreaks and true toss-up direction.
+    This intentionally favors stable signals when models disagree.
+    """
+    team_margin = float(home_pred_team - away_pred_team)
+    player_margin = 0.0
+    if player_results.get('available'):
+        player_margin = float(player_results.get('home_pts', 0) - player_results.get('away_pts', 0))
+
+    market_margin = get_market_home_margin(game)
+    net_rating_diff = clamp(safe_float(row_dict.get('net_rating_diff'), 0.0), -10, 10)
+
+    if market_margin is not None:
+        edge = 0.47 * team_margin + 0.24 * player_margin + 0.24 * market_margin + 0.05 * net_rating_diff
+    else:
+        edge = 0.58 * team_margin + 0.32 * player_margin + 0.10 * net_rating_diff
+
+    return edge
+
+
+def calibrate_final_score(game, row_dict, home_pred, away_pred, home_pred_team, away_pred_team, player_results):
+    """
+    Final calibration after ensemble v2.
+
+    This is intentionally light because calculate_ensemble_prediction now already:
+    - calibrates total toward Vegas
+    - applies playoff total drag
+    - arbitrates margin
+
+    This function mainly rounds scores and avoids accidental ties.
+    """
+    model_total = float(home_pred + away_pred)
+    model_margin = float(home_pred - away_pred)
+    directional_edge = get_directional_edge(game, row_dict, home_pred_team, away_pred_team, player_results)
+    market_margin = get_market_home_margin(game)
+
+    calibrated_total = clamp(model_total, 185, 255)
+    calibrated_margin = clamp(model_margin, -24, 24)
+
+    if abs(calibrated_margin) < 1.25 and abs(directional_edge) >= 2.25:
+        calibrated_margin = sign_or_zero(directional_edge) * min(3.2, max(2.2, abs(directional_edge) * 0.55))
+
+    if market_margin is not None and same_sign(calibrated_margin, market_margin):
+        if abs(market_margin) >= 7 and abs(calibrated_margin) < 4:
+            calibrated_margin = sign_or_zero(calibrated_margin) * min(6.0, max(4.0, abs(market_margin) * 0.55))
+
+    home_final = round((calibrated_total + calibrated_margin) / 2)
+    away_final = round((calibrated_total - calibrated_margin) / 2)
+
+    if home_final == away_final:
+        if directional_edge < 0:
+            away_final += 1
+        else:
+            home_final += 1
+
+    debug = {
+        'model_total_before_calibration': round(model_total, 2),
+        'model_margin_before_calibration': round(model_margin, 2),
+        'calibrated_total': round(calibrated_total, 2),
+        'calibrated_margin': round(calibrated_margin, 2),
+        'directional_edge': round(directional_edge, 2),
+        'market_margin': None if market_margin is None else round(market_margin, 2),
+    }
+    return home_final, away_final, debug
+
+
+def apply_playoff_compression(home_pred, away_pred, game):
+    """
+    Deprecated compatibility function.
+
+    Kept so imports/tests do not break, but no longer used in predict_single_game.
+    The old version multiplied both teams by the same factor, which crushed margins.
+    """
+    total = float(home_pred + away_pred)
+    margin = float(home_pred - away_pred)
+
+    drag = 0.0
+    game_num = int(game.get('series_game_num', 1) or 1)
+    if game_num >= 3:
+        drag += 1.0
+    if game_num >= 5:
+        drag += 0.8
+
+    total -= drag
+    return round((total + margin) / 2), round((total - margin) / 2)
+
+
+
+def calculate_confidence(home_pred, away_pred, row_dict,
+                         home_pred_team=None, away_pred_team=None,
+                         player_results=None, debug=None):
+    """
+    Confidence is not the same thing as margin.
+
+    A 7-point projected win with team/player disagreement should not be HIGH confidence.
+    A 2-point projected win can be correctly low confidence without forcing every score to be close.
+    """
+    margin = abs(home_pred - away_pred)
+    debug = debug or {}
+
+    model_disagreement = safe_float(debug.get('model_disagreement'), 0.0)
+    winner_disagreement = bool(debug.get('winner_disagreement', False))
+    bad_night_max = max(
+        safe_float(row_dict.get('home_bad_night_pct'), 0.15),
+        safe_float(row_dict.get('away_bad_night_pct'), 0.15)
+    )
+
+    if margin >= 10:
+        confidence = "HIGH"
+        conf_emoji = "🔒"
+    elif margin >= 5:
+        confidence = "MEDIUM"
+        conf_emoji = "📊"
+    else:
+        confidence = "LOW"
+        conf_emoji = "🎲"
+
+    # Disagreement lowers confidence but does not alter the score.
+    if winner_disagreement or model_disagreement >= 12 or bad_night_max > 0.35:
+        if confidence == "HIGH":
             confidence = "MEDIUM"
             conf_emoji = "📊"
-        else:
+        elif confidence == "MEDIUM" and (winner_disagreement or model_disagreement >= 14):
             confidence = "LOW"
             conf_emoji = "🎲"
 
-        # Downgrade confidence for high-variance teams
-        home_volatile = float(
-            row_dict.get('home_bad_night_pct', 0.15)
-        ) > 0.35
-        away_volatile = float(
-            row_dict.get('away_bad_night_pct', 0.15)
-        ) > 0.35
-        if home_volatile or away_volatile:
-            if confidence == "HIGH":
-                confidence = "MEDIUM"
-                conf_emoji = "📊"
-            elif confidence == "MEDIUM":
-                confidence = "LOW"
-                conf_emoji = "🎲"
+    return confidence, conf_emoji
 
-        factors = get_key_factors(
-            row_dict, home_pred_final, away_pred_final,
-            home_player_preds = home_player_preds,
-            away_player_preds = away_player_preds,
-            injury_report     = injury_report,
-            confidence= confidence
-        )
+def build_prediction_dict(game, home_pred, away_pred, home_pred_team, away_pred_team,
+                          player_results, confidence, conf_emoji, factors, debug=None):
+    """Build prediction dictionary with all metadata."""
+    debug = debug or {}
+    margin = abs(home_pred - away_pred)
+    predicted_winner = game['home_team'] if home_pred > away_pred else game['away_team']
 
-        vegas_line = ""
-        if game.get('vegas_total'):
-            veg_total  = float(game['vegas_total'])
-            veg_spread = float(game['vegas_spread'] or 0)
-            vegas_line = (
-                f"Vegas: O/U {veg_total} | "
-                f"Spread: {veg_spread:+.1f} | "
-                f"Implied: {game['home_team']} "
-                f"{float(game['vegas_home']):.0f} — "
-                f"{game['away_team']} "
-                f"{float(game['vegas_away']):.0f}"
-            )
+    win_prob_favorite = 1 / (1 + np.exp(-margin / 9.5))
+    home_win_prob = win_prob_favorite if home_pred > away_pred else 1 - win_prob_favorite
 
-        pred = {
-            'game_id':           game['game_id'],
-            'home_team':         game['home_team'],
-            'away_team':         game['away_team'],
-            'home_pred':         home_pred_final,
-            'away_pred':         away_pred_final,
-            'home_pred_team':    round(home_pred_team),
-            'away_pred_team':    round(away_pred_team),
-            'home_pred_player':  home_player_pts,
-            'away_pred_player':  away_player_pts,
-            'predicted_winner':  predicted_winner,
-            'margin':            round(margin, 1),
-            'home_win_prob':     round(home_win_prob * 100, 1),
-            'away_win_prob':     round((1 - home_win_prob) * 100, 1),
-            'confidence':        confidence,
-            'conf_emoji':        conf_emoji,
-            'factors':           factors,
-            'vegas_line':        vegas_line,
-            'is_playoff':        game['season_type'] == 'Playoffs',
-            'season_type':       game['season_type'],
-            'home_player_preds': home_player_preds,
-            'away_player_preds': away_player_preds,
-        }
-        predictions.append(pred)
+    vegas_line = build_vegas_line(game)
 
-        # Print output
-        playoff_tag = "🏆 PLAYOFFS" if pred['is_playoff'] else "🏀 NBA"
-        print(f"\n{playoff_tag} | {conf_emoji} {confidence} CONFIDENCE")
-        print(f"{game['away_team']} @ {game['home_team']}")
-        print(f"Prediction: {game['home_team']} {home_pred_final} "
-              f"— {game['away_team']} {away_pred_final}")
+    return {
+        'game_id': game['game_id'],
+        'home_team': game['home_team'],
+        'away_team': game['away_team'],
+        'home_pred': home_pred,
+        'away_pred': away_pred,
+        'home_pred_team': round(home_pred_team),
+        'away_pred_team': round(away_pred_team),
+        'home_pred_player': player_results['home_pts'],
+        'away_pred_player': player_results['away_pts'],
+        'predicted_winner': predicted_winner,
+        'margin': round(margin, 1),
+        'home_win_prob': round(home_win_prob * 100, 1),
+        'away_win_prob': round((1 - home_win_prob) * 100, 1),
+        'confidence': confidence,
+        'conf_emoji': conf_emoji,
+        'factors': factors,
+        'vegas_line': vegas_line,
+        'is_playoff': game['season_type'] == 'Playoffs',
+        'season_type': game['season_type'],
+        'home_player_preds': player_results['home_preds'],
+        'away_player_preds': player_results['away_preds'],
+        'series_home_wins': game.get('home_series_wins'),
+        'series_away_wins': game.get('away_series_wins'),
+        'debug': debug,
+    }
 
-        if player_model_available:
-            print(f"  Team model:   "
-                  f"{game['home_team']} {round(home_pred_team)} — "
-                  f"{game['away_team']} {round(away_pred_team)}")
-            print(f"  Player model: "
-                  f"{game['home_team']} {home_player_pts} — "
-                  f"{game['away_team']} {away_player_pts}")
 
-        win_pct = (
-            pred['home_win_prob']
-            if predicted_winner == game['home_team']
-            else pred['away_win_prob']
-        )
-        print(f"Winner: {predicted_winner} ({win_pct}%)")
+def build_vegas_line(game):
+    """Format Vegas line string"""
+    if not game.get('vegas_total'):
+        return ""
+    
+    return (
+        f"Vegas: O/U {float(game['vegas_total'])} | "
+        f"Spread: {float(game['vegas_spread'] or 0):+.1f} | "
+        f"Implied: {game['home_team']} {float(game['vegas_home']):.0f} — "
+        f"{game['away_team']} {float(game['vegas_away']):.0f}"
+    )
 
-        if vegas_line:
-            print(f"{vegas_line}")
 
-        if factors:
-            print("Key factors:")
-            for f in factors:
-                print(f"  → {f}")
 
-        if home_player_preds:
-            print(f"\n  {game['home_team']} key players:")
-            for p in home_player_preds[:8]:
-                rti   = " ⚠️RTI" if p.get('returning_from_injury') else ""
-                slump = " 📉"     if p.get('slump_flag')            else ""
-                hot   = " 🔥"     if p.get('hot_flag')              else ""
-                print(f"    {p['full_name']:<22} "
-                      f"{p['pred_points']:.0f}pts "
-                      f"{p['pred_rebounds']:.0f}reb "
-                      f"{p['pred_assists']:.0f}ast"
-                      f"{rti}{slump}{hot}")
+def print_prediction(pred, game, injury_report):
+    """Print formatted prediction output."""
+    playoff_tag = "🏆 PLAYOFFS" if pred['is_playoff'] else "🏀 NBA"
+    print(f"\n{playoff_tag} | {pred['conf_emoji']} {pred['confidence']} CONFIDENCE")
 
-        if away_player_preds:
-            print(f"\n  {game['away_team']} key players:")
-            for p in away_player_preds[:8]:
-                rti   = " ⚠️RTI" if p.get('returning_from_injury') else ""
-                slump = " 📉"     if p.get('slump_flag')            else ""
-                hot   = " 🔥"     if p.get('hot_flag')              else ""
-                print(f"    {p['full_name']:<22} "
-                      f"{p['pred_points']:.0f}pts "
-                      f"{p['pred_rebounds']:.0f}reb "
-                      f"{p['pred_assists']:.0f}ast"
-                      f"{rti}{slump}{hot}")
+    if pred['is_playoff'] and pred['series_home_wins'] is not None:
+        home_wins = int(pred['series_home_wins'])
+        away_wins = int(pred['series_away_wins'])
 
-        # Injuries
-        for team_abbr in [game['home_team'], game['away_team']]:
-            team_injuries = injury_report.get(team_abbr, [])
-            key = [
-                p for p in team_injuries
-                if p['status'] in ['Out', 'Doubtful']
-            ]
-            if key:
-                print(f"\n  ⚠️  {team_abbr} injuries:")
-                for p in key:
-                    detail = f" ({p['type']})" if p['type'] else ""
-                    print(f"    ❌ {p['name']}{detail}")
+        if home_wins == away_wins:
+            series_text = f"📊 Series tied {home_wins}-{away_wins}"
+        elif home_wins > away_wins:
+            series_text = f"📊 Series: {game['home_team']} leads {home_wins}-{away_wins}"
+        else:
+            series_text = f"📊 Series: {game['away_team']} leads {away_wins}-{home_wins}"
 
-        print()
+        print(series_text)
 
+    print(f"{game['away_team']} @ {game['home_team']}")
+    print(f"Prediction: {game['home_team']} {pred['home_pred']} — "
+          f"{game['away_team']} {pred['away_pred']}")
+
+    if pred['home_pred_player'] > 0:
+        print(f"  Team model:   {game['home_team']} {pred['home_pred_team']} — "
+              f"{game['away_team']} {pred['away_pred_team']}")
+        print(f"  Player model: {game['home_team']} {pred['home_pred_player']} — "
+              f"{game['away_team']} {pred['away_pred_player']}")
+
+    if os.environ.get("NBA_PREDICT_DEBUG", "0") == "1":
+        dbg = pred.get('debug', {}) or {}
+        print("  Debug:")
+        print(f"    weights: team={dbg.get('team_weight')} player={dbg.get('player_weight')} | method={dbg.get('margin_method')}")
+        print(f"    margins: team={dbg.get('team_margin')} player={dbg.get('player_margin')} ensemble={dbg.get('ensemble_margin')} final={dbg.get('calibrated_margin')}")
+        print(f"    totals: team={dbg.get('team_total')} player={dbg.get('player_total')} final={dbg.get('calibrated_total')}")
+        print(f"    edge={dbg.get('directional_edge')} market_margin={dbg.get('market_margin')} disagreement={dbg.get('model_disagreement')}")
+
+    win_pct = pred['home_win_prob'] if pred['predicted_winner'] == game['home_team'] else pred['away_win_prob']
+    print(f"Winner: {pred['predicted_winner']} ({win_pct}%)")
+
+    if pred['vegas_line']:
+        print(f"{pred['vegas_line']}")
+
+    if pred['factors']:
+        print("Key factors:")
+        for f in pred['factors']:
+            print(f"  → {f}")
+
+    print_player_predictions(game['home_team'], pred['home_player_preds'])
+    print_player_predictions(game['away_team'], pred['away_player_preds'])
+
+    print_injuries(game['home_team'], injury_report)
+    print_injuries(game['away_team'], injury_report)
+
+    print()
+
+def print_player_predictions(team_abbr, player_preds):
+    """Print player predictions for a team"""
+    if not player_preds:
+        return
+    
+    print(f"\n  {team_abbr} key players:")
+    for p in player_preds[:8]:
+        rti = " ⚠️RTI" if p.get('returning_from_injury') else ""
+        slump = " 📉" if p.get('slump_flag') else ""
+        hot = " 🔥" if p.get('hot_flag') else ""
+        print(f"    {p['full_name']:<22} "
+              f"{p['pred_points']:.0f}pts "
+              f"{p['pred_rebounds']:.0f}reb "
+              f"{p['pred_assists']:.0f}ast"
+              f"{rti}{slump}{hot}")
+
+
+def print_injuries(team_abbr, injury_report):
+    """Print injury report for a team"""
+    team_injuries = injury_report.get(team_abbr, [])
+    key_injuries = [p for p in team_injuries if p['status'] in ['Out', 'Doubtful']]
+    
+    if key_injuries:
+        print(f"\n  ⚠️  {team_abbr} injuries:")
+        for p in key_injuries:
+            detail = f" ({p['type']})" if p['type'] else ""
+            print(f"    ❌ {p['name']}{detail}")
+
+
+def print_footer(count):
+    """Print predictions footer"""
     print(f"\n{'='*55}")
-    print(f"Generated {len(predictions)} predictions")
+    print(f"Generated {count} predictions")
     print(f"{'='*55}\n")
-    save_predictions(predictions)
-    return predictions
-
 
 if __name__ == "__main__":
     predictions = predict_todays_games()

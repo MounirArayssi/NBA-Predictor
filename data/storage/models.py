@@ -64,6 +64,9 @@ class Game(Base):
     status          = Column(String(20), default="scheduled")
     created_at      = Column(DateTime, default=func.now())
     updated_at      = Column(DateTime, default=func.now())
+    series_id = Column(String(50), nullable=True)
+    series_home_wins = Column(Integer, nullable=True)
+    series_away_wins = Column(Integer, nullable=True)
 
 
 class PlayerGameStatus(Base):
