@@ -197,6 +197,19 @@ class Prediction(Base):
     away_score_error    = Column(Numeric(6, 2))
     total_score_error   = Column(Numeric(6, 2))
     evaluated_at        = Column(DateTime)
+    is_official = Column(Boolean, default=False)
+    prediction_type = Column(String(30), default="daily")
+    lock_reason = Column(String(100))
+    model_margin = Column(Numeric(6, 2))
+    model_total = Column(Numeric(6, 2))
+    vegas_spread = Column(Numeric(6, 2))
+    vegas_total = Column(Numeric(6, 2))
+    spread_edge = Column(Numeric(6, 2))
+    total_edge = Column(Numeric(6, 2))
+    actual_margin = Column(Numeric(6, 2))
+    actual_total = Column(Numeric(6, 2))
+    margin_error = Column(Numeric(6, 2))
+    spread_error = Column(Numeric(6, 2))
 
 
 

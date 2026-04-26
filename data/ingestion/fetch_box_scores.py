@@ -49,9 +49,12 @@ def sync_game_scores(session, game):
     away_bs = session.query(TeamBoxScore).filter_by(
         game_id=game.game_id, is_home=False
     ).first()
+
     if home_bs and away_bs:
         game.home_score = home_bs.points
         game.away_score = away_bs.points
+        game.is_final = True
+        game.status = "final"
         session.commit()
 
 

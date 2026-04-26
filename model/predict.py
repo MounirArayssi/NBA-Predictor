@@ -87,56 +87,209 @@ def load_models():
     return model_home, model_away
 
 def save_predictions(predictions):
-    """Save predictions to database and CSV."""
+    """
+    Save every prediction snapshot to the database.
+
+    Official prediction rule:
+    - First prediction for a game/model_version on game day becomes official.
+    - A later prediction within 1 hour before tipoff can replace the previous official one.
+    - Predictions after tipoff are never official.
+    - CSV logging is kept as a backup/debug log.
+    """
     if not predictions:
         return
 
-    from sqlalchemy.orm import Session
-    from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, Date
-    from data.storage.db import engine
-    from data.storage.models import Base
-    from datetime import datetime
-
-    # Save to CSV log
-    import csv
     import os
+    import csv
+    from datetime import datetime, timezone, timedelta, date
+    from sqlalchemy.orm import Session
+    from data.storage.db import engine
+    from data.storage.models import Prediction, Game, Team
 
-    os.makedirs('logs', exist_ok=True)
-    csv_path = 'logs/predictions_log.csv'
+    MODEL_VERSION = os.environ.get("NBA_MODEL_VERSION", "v1")
+
+    def confidence_to_score(conf):
+        mapping = {
+            "LOW": 0.35,
+            "MEDIUM": 0.60,
+            "HIGH": 0.82,
+        }
+        return mapping.get(str(conf).upper(), 0.50)
+
+    def safe_float(value, default=None):
+        try:
+            if value is None or value == "":
+                return default
+            return float(value)
+        except Exception:
+            return default
+
+    now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    saved_count = 0
+    official_count = 0
+
+    with Session(engine) as session:
+        for pred in predictions:
+            game = session.query(Game).filter_by(
+                game_id=pred["game_id"]
+            ).first()
+
+            if not game:
+                print(f"⚠️ Skipping DB save — game_id {pred.get('game_id')} not found")
+                continue
+
+            home_team = session.query(Team).filter_by(
+                abbreviation=pred["home_team"]
+            ).first()
+
+            away_team = session.query(Team).filter_by(
+                abbreviation=pred["away_team"]
+            ).first()
+
+            predicted_winner_team = home_team if pred["predicted_winner"] == pred["home_team"] else away_team
+
+            home_pred = safe_float(pred.get("home_pred"), 0)
+            away_pred = safe_float(pred.get("away_pred"), 0)
+
+            model_margin = home_pred - away_pred
+            model_total = home_pred + away_pred
+
+            debug = pred.get("debug", {}) or {}
+
+            vegas_spread = safe_float(debug.get("market_margin"))
+            vegas_total = safe_float(pred.get("vegas_total"))
+
+            # Fallback: if vegas_total was not added to prediction dict,
+            # this can be filled later when we add cleaner Vegas fields.
+            spread_edge = None
+            if vegas_spread is not None:
+                spread_edge = model_margin - vegas_spread
+
+            total_edge = None
+            if vegas_total is not None:
+                total_edge = model_total - vegas_total
+
+            tipoff = game.tipoff_time_utc
+
+            existing_official = session.query(Prediction).filter(
+                Prediction.game_id == game.game_id,
+                Prediction.model_version == MODEL_VERSION,
+                Prediction.is_official == True
+            ).order_by(Prediction.predicted_at.desc()).first()
+
+            is_before_tipoff = True
+            is_within_lock_window = False
+
+            if tipoff:
+                is_before_tipoff = now_utc < tipoff
+                is_within_lock_window = (
+                    tipoff - timedelta(hours=1)
+                    <= now_utc
+                    < tipoff
+                )
+
+            is_official = False
+            lock_reason = "snapshot_only"
+            prediction_type = "debug"
+
+            if is_before_tipoff:
+                if existing_official is None:
+                    is_official = True
+                    lock_reason = "first_game_day_prediction"
+                    prediction_type = "daily"
+                elif is_within_lock_window:
+                    existing_official.is_official = False
+                    is_official = True
+                    lock_reason = "pre_tipoff_lock_window_override"
+                    prediction_type = "pre_tip"
+                else:
+                    lock_reason = "non_official_rerun"
+                    prediction_type = "rerun"
+            else:
+                lock_reason = "after_tipoff_not_official"
+                prediction_type = "post_tip"
+
+            db_pred = Prediction(
+                game_id=game.game_id,
+                model_version=MODEL_VERSION,
+                predicted_at=now_utc,
+
+                is_official=is_official,
+                prediction_type=prediction_type,
+                lock_reason=lock_reason,
+
+                home_score_predicted=home_pred,
+                away_score_predicted=away_pred,
+
+                predicted_winner_id=predicted_winner_team.team_id if predicted_winner_team else None,
+                home_win_probability=safe_float(pred.get("home_win_prob"), 50) / 100,
+                confidence_score=confidence_to_score(pred.get("confidence")),
+                uncertainty_flag=(pred.get("confidence") == "LOW"),
+
+                key_factors=pred.get("factors", []),
+
+                model_margin=model_margin,
+                model_total=model_total,
+                vegas_spread=vegas_spread,
+                vegas_total=vegas_total,
+                spread_edge=spread_edge,
+                total_edge=total_edge,
+            )
+
+            session.add(db_pred)
+            saved_count += 1
+
+            if is_official:
+                official_count += 1
+
+        session.commit()
+
+    print(f"✅ Saved {saved_count} predictions to database")
+    print(f"🔒 Marked {official_count} predictions as official")
+
+    # Optional backup CSV log
+    os.makedirs("logs", exist_ok=True)
+    csv_path = "logs/predictions_log.csv"
     file_exists = os.path.exists(csv_path)
 
-    with open(csv_path, 'a', newline='') as f:
+    with open(csv_path, "a", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=[
-            'date', 'home_team', 'away_team',
-            'home_pred', 'away_pred',
-            'predicted_winner', 'margin', 'confidence',
-            'home_pred_team', 'away_pred_team',
-            'home_pred_player', 'away_pred_player',
-            'is_playoff', 'season_type'
+            "date", "saved_at", "model_version",
+            "game_id", "home_team", "away_team",
+            "home_pred", "away_pred",
+            "predicted_winner", "margin", "confidence",
+            "home_pred_team", "away_pred_team",
+            "home_pred_player", "away_pred_player",
+            "is_playoff", "season_type"
         ])
+
         if not file_exists:
             writer.writeheader()
 
         for pred in predictions:
             writer.writerow({
-                'date':              date.today().isoformat(),
-                'home_team':         pred['home_team'],
-                'away_team':         pred['away_team'],
-                'home_pred':         pred['home_pred'],
-                'away_pred':         pred['away_pred'],
-                'predicted_winner':  pred['predicted_winner'],
-                'margin':            pred['margin'],
-                'confidence':        pred['confidence'],
-                'home_pred_team':    pred.get('home_pred_team', ''),
-                'away_pred_team':    pred.get('away_pred_team', ''),
-                'home_pred_player':  pred.get('home_pred_player', ''),
-                'away_pred_player':  pred.get('away_pred_player', ''),
-                'is_playoff':        pred['is_playoff'],
-                'season_type':       pred['season_type'],
+                "date": date.today().isoformat(),
+                "saved_at": now_utc.isoformat(),
+                "model_version": MODEL_VERSION,
+                "game_id": pred.get("game_id"),
+                "home_team": pred.get("home_team"),
+                "away_team": pred.get("away_team"),
+                "home_pred": pred.get("home_pred"),
+                "away_pred": pred.get("away_pred"),
+                "predicted_winner": pred.get("predicted_winner"),
+                "margin": pred.get("margin"),
+                "confidence": pred.get("confidence"),
+                "home_pred_team": pred.get("home_pred_team", ""),
+                "away_pred_team": pred.get("away_pred_team", ""),
+                "home_pred_player": pred.get("home_pred_player", ""),
+                "away_pred_player": pred.get("away_pred_player", ""),
+                "is_playoff": pred.get("is_playoff"),
+                "season_type": pred.get("season_type"),
             })
 
-    print(f"✅ Predictions saved to {csv_path}")
-
+    print(f"📝 Backup CSV updated at {csv_path}")
+    
 def get_todays_games():
     """Get all scheduled games for today."""    
     today = date.today()
@@ -1792,7 +1945,6 @@ def build_vegas_line(game):
         f"Implied: {game['home_team']} {float(game['vegas_home']):.0f} — "
         f"{game['away_team']} {float(game['vegas_away']):.0f}"
     )
-
 
 
 def print_prediction(pred, game, injury_report):
