@@ -1,0 +1,97 @@
+[
+  {
+    "prediction": {
+      "home_team": "Lakers",
+      "away_team": "Nuggets",
+      "home_pred": 108.4,
+      "away_pred": 114.9,
+      "predicted_winner": "Nuggets",
+      "margin": 6.5,
+      "confidence": "HIGH",
+      "is_playoff": true,
+      "factors": [
+        "Series tied 1-1",
+        "Game 3 in Los Angeles"
+      ],
+      "home_player_preds": [
+        {
+          "full_name": "LeBron James",
+          "pred_points": 27.2,
+          "hot_flag": false,
+          "slump_flag": false
+        },
+        {
+          "full_name": "Anthony Davis",
+          "pred_points": 24.8,
+          "hot_flag": false,
+          "slump_flag": false
+        }
+      ],
+      "away_player_preds": [
+        {
+          "full_name": "Nikola Jokic",
+          "pred_points": 29.4,
+          "hot_flag": true,
+          "slump_flag": false
+        },
+        {
+          "full_name": "Jamal Murray",
+          "pred_points": 22.1,
+          "hot_flag": false,
+          "slump_flag": false
+        }
+      ]
+    },
+    "tweet": "ran the model. Lakers fans look away \ud83d\udc40\n\ud83c\udfc6 Nuggets 115 \u2014 Lakers 108\nNikola Jokic goes 29pts \ud83d\udd25\n#NBAPlayoffs",
+    "posted": true,
+    "dry_run": false,
+    "timestamp": "2026-04-27T13:51:13.971009"
+  },
+  {
+    "prediction": {
+      "home_team": "Celtics",
+      "away_team": "Heat",
+      "home_pred": 112.1,
+      "away_pred": 104.7,
+      "predicted_winner": "Celtics",
+      "margin": 7.4,
+      "confidence": "MEDIUM",
+      "is_playoff": false,
+      "factors": [
+        "Boston rest advantage"
+      ],
+      "home_player_preds": [
+        {
+          "full_name": "Jayson Tatum",
+          "pred_points": 28.6,
+          "hot_flag": true,
+          "slump_flag": false
+        },
+        {
+          "full_name": "Jaylen Brown",
+          "pred_points": 24.5,
+          "hot_flag": false,
+          "slump_flag": false
+        }
+      ],
+      "away_player_preds": [
+        {
+          "full_name": "Jimmy Butler",
+          "pred_points": 23.3,
+          "hot_flag": false,
+          "slump_flag": false
+        },
+        {
+          "full_name": "Bam Adebayo",
+          "pred_points": 19.2,
+          "hot_flag": false,
+          "slump_flag": false
+        }
+      ]
+    },
+    "tweet": "good morning to everyone except Heat fans \ud83d\ude42\nCeltics wins tonight \u2014 Celtics 112 Heat 105\nJayson Tatum goes 29pts \ud83d\udd25\n#NBA",
+    "posted": true,
+    "dry_run": false,
+    "timestamp": "2026-04-27T13:51:30.111251"
+  }
+]

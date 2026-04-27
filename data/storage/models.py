@@ -314,6 +314,7 @@ class PlayerRollingStats(Base):
     as_of_date       = Column(Date, nullable=False)
     window           = Column(Integer, nullable=False)
     season           = Column(String(10))
+    season_type = Column(String(20), default='Regular Season')  
     avg_points       = Column(Numeric(6, 2))
     avg_minutes      = Column(Numeric(5, 2))
     avg_usage_rate   = Column(Numeric(5, 4))

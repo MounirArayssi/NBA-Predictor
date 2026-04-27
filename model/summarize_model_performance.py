@@ -1,3 +1,11 @@
+"""
+Summarize model performance with playoff-appropriate margin buckets.
+
+Playoff game classification:
+- Close games: ≤5 pts (one possession games, truly competitive)
+- Competitive games: 6-15 pts (standard playoff margin)
+- Blowouts: 16+ pts (rare, dominant performances)
+"""
 import sys
 import os
 
@@ -25,13 +33,9 @@ def fmt(value):
     return f"{value:.2f}" if value is not None else "N/A"
 
 
-def summarize_model_performance(model_version=None):
+def summarize_playoff_performance(model_version=None):
     """
-    Summarize evaluated official prediction performance.
-
-    Uses only:
-    - official predictions
-    - already evaluated predictions
+    Summarize evaluated official prediction performance using playoff-appropriate buckets.
     """
 
     with Session(engine) as session:
@@ -73,9 +77,9 @@ def summarize_model_performance(model_version=None):
     predicted_total_diffs = []
     predicted_margin_diffs = []
 
-    close_games = []
-    medium_games = []
-    blowout_games = []
+    close_games = []        # ≤5 pts
+    competitive_games = []  # 6-15 pts
+    blowout_games = []      # 16+ pts
 
     for p, g in rows:
         pred_home = float(p.home_score_predicted or 0)
@@ -94,15 +98,15 @@ def summarize_model_performance(model_version=None):
 
         abs_actual_margin = abs(actual_margin)
 
-        if abs_actual_margin <= 3:
+        if abs_actual_margin <= 5:
             close_games.append((p, g))
-        elif abs_actual_margin <= 8:
-            medium_games.append((p, g))
+        elif abs_actual_margin <= 15:
+            competitive_games.append((p, g))
         else:
             blowout_games.append((p, g))
 
     print("\n" + "=" * 55)
-    print("MODEL PERFORMANCE SUMMARY")
+    print("MODEL PERFORMANCE SUMMARY (Playoff Buckets)")
     print("=" * 55)
 
     if model_version:
@@ -132,10 +136,10 @@ def summarize_model_performance(model_version=None):
         else:
             print("  → Model total is perfectly neutral so far")
 
-    print("\nBy actual margin:")
-    print_bucket("Close games ≤3", close_games)
-    print_bucket("Medium games 4–8", medium_games)
-    print_bucket("Blowouts 9+", blowout_games)
+    print("\nBy actual margin (playoff-appropriate):")
+    print_bucket("Close games ≤5", close_games)
+    print_bucket("Competitive games 6–15", competitive_games)
+    print_bucket("Blowouts 16+", blowout_games)
 
     print("\n" + "=" * 55 + "\n")
 
@@ -167,4 +171,4 @@ def print_bucket(label, rows):
 
 
 if __name__ == "__main__":
-    summarize_model_performance()
+    summarize_playoff_performance()

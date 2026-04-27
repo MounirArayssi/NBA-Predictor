@@ -96,6 +96,107 @@ def get_playoff_performance_factor(player_id, team_id,
 
     return 1.0, False, False
 
+def get_last_game_boost(player_id, team_id, avg_points, season='2025-26'):
+    """Disabled - relying on blending and efficiency factors only."""
+    return 1.0, None
+
+def get_blended_playoff_stats(player, team_id, is_playoff):
+    """
+    Blend regular season and playoff stats based on playoff sample size.
+    More playoff games = more weight on playoff data.
+    """
+    if not is_playoff:
+        return player  # No blending needed for regular season
+    
+    # Count playoff games for this player
+    query = text("""
+        SELECT COUNT(*) as playoff_games
+        FROM player_box_scores pbs
+        JOIN games g ON pbs.game_id = g.game_id
+        WHERE pbs.player_id = :player_id
+        AND pbs.team_id = :team_id
+        AND g.season_type = 'Playoffs'
+        AND g.season = '2025-26'
+        AND g.is_final = TRUE
+        AND pbs.minutes_played >= 5
+    """)
+    
+    with engine.connect() as conn:
+        result = conn.execute(query, {
+            'player_id': int(player['player_id']),
+            'team_id': int(team_id)
+        }).fetchone()
+    
+    playoff_games_count = result[0] if result else 0
+    
+    # Determine blend weight based on sample size
+    if playoff_games_count >= 7:
+        playoff_weight = 0.72  # Lots of data, trust playoffs
+        reg_weight = 0.28
+    elif playoff_games_count >= 5:
+        playoff_weight = 0.550  # Decent sample, mostly playoffs
+        reg_weight = 0.45
+    elif playoff_games_count >= 3:
+        playoff_weight = 0.45  # Limited sample, 55/45 split
+        reg_weight = 0.55
+    else:
+        playoff_weight = 0.30  # Very limited, lean on regular season
+        reg_weight = 0.7
+    
+    # Get regular season L10 stats
+    reg_query = text("""
+        SELECT 
+            avg_points,
+            avg_rebounds,
+            avg_assists,
+            avg_usage_rate,
+            avg_true_shooting
+        FROM player_rolling_stats
+        WHERE player_id = :player_id
+        AND team_id = :team_id
+        AND "window" = 10
+        AND season_type = 'Regular Season'
+        ORDER BY as_of_date DESC
+        LIMIT 1
+    """)
+    
+    with engine.connect() as conn:
+        reg_result = conn.execute(reg_query, {
+            'player_id': int(player['player_id']),
+            'team_id': int(team_id)
+        }).fetchone()
+    
+    if not reg_result:
+        # No regular season data, just use playoff stats
+        return player
+    
+    reg_points, reg_reb, reg_ast, reg_usage, reg_ts = reg_result
+    
+    # Current values from query are playoff stats
+    playoff_points = float(player.get('player_avg_points_l10', 0) or 0)
+    playoff_reb = float(player.get('player_avg_reb_l10', 0) or 0)
+    playoff_ast = float(player.get('player_avg_ast_l10', 0) or 0)
+    
+    # Blend the stats
+    blended_points = (
+        playoff_points * playoff_weight + 
+        float(reg_points or 0) * reg_weight
+    )
+    blended_reb = (
+        playoff_reb * playoff_weight + 
+        float(reg_reb or 0) * reg_weight
+    )
+    blended_ast = (
+        playoff_ast * playoff_weight + 
+        float(reg_ast or 0) * reg_weight
+    )
+    
+    # Update player dict
+    player['player_avg_points_l10'] = blended_points
+    player['player_avg_reb_l10'] = blended_reb
+    player['player_avg_ast_l10'] = blended_ast
+        
+    return player
 
 def load_player_models():
     with open('model/player_models.pkl', 'rb') as f:
@@ -143,8 +244,8 @@ def get_team_roster(team_id, game_date=None, is_playoff=False):
     Filters to current season only.
     """
     limit = 9 if is_playoff else 12
-    min_minutes = 16 if is_playoff else 15
-    min_games = 8 if is_playoff else 7
+    min_minutes = 10 if is_playoff else 15
+    min_games = 3 if is_playoff else 7
 
     query = text("""
         SELECT
@@ -196,48 +297,34 @@ def get_team_roster(team_id, game_date=None, is_playoff=False):
                     WHERE g2.season = '2025-26'
                       AND g2.is_final = TRUE
               )
-              AND (
-                    :is_playoff = false
-                    OR EXISTS (
-                        SELECT 1
-                        FROM player_box_scores pbs3
-                        JOIN games g3 
-                            ON pbs3.game_id = g3.game_id
-                        WHERE pbs3.player_id = pbs.player_id
-                          AND pbs3.team_id = :team_id
-                          AND g3.season_type = 'Playoffs'
-                          AND g3.season = '2025-26'
-                          AND pbs3.minutes_played >= 3
-                    )
-              )
             GROUP BY pbs.player_id
             HAVING COUNT(*) >= :min_games
         ) recent 
             ON recent.player_id = p.player_id
 
-        JOIN player_rolling_stats prs
-            ON prs.player_id = p.player_id
-           AND prs.team_id = :team_id
-           AND prs."window" = 10
-           AND prs.as_of_date = (
-                SELECT MAX(as_of_date)
-                FROM player_rolling_stats
-                WHERE player_id = p.player_id
-                  AND team_id = :team_id
-                  AND "window" = 10
-           )
+JOIN player_rolling_stats prs
+    ON prs.player_id = p.player_id
+   AND prs.team_id = :team_id
+   AND prs."window" = 10
+   AND prs.as_of_date = (
+        SELECT MAX(as_of_date)
+        FROM player_rolling_stats
+        WHERE player_id = p.player_id
+          AND team_id = :team_id
+          AND "window" = 10
+   )
 
-        JOIN player_rolling_stats prs5
-            ON prs5.player_id = p.player_id
-           AND prs5.team_id = :team_id
-           AND prs5."window" = 5
-           AND prs5.as_of_date = (
-                SELECT MAX(as_of_date)
-                FROM player_rolling_stats
-                WHERE player_id = p.player_id
-                  AND team_id = :team_id
-                  AND "window" = 5
-           )
+JOIN player_rolling_stats prs5
+    ON prs5.player_id = p.player_id
+   AND prs5.team_id = :team_id
+   AND prs5."window" = 5
+   AND prs5.as_of_date = (
+        SELECT MAX(as_of_date)
+        FROM player_rolling_stats
+        WHERE player_id = p.player_id
+          AND team_id = :team_id
+          AND "window" = 5
+   )
 
         WHERE prs.avg_minutes >= :min_minutes
           AND prs.avg_points >= 6
@@ -246,7 +333,6 @@ def get_team_roster(team_id, game_date=None, is_playoff=False):
         ORDER BY prs.avg_minutes DESC
         LIMIT :limit
     """)
-
     with engine.connect() as conn:
         result = conn.execute(query, {
             "team_id": int(team_id),
@@ -260,6 +346,7 @@ def get_team_roster(team_id, game_date=None, is_playoff=False):
             result.fetchall(),
             columns=result.keys()
         )
+
 
     return roster
 
@@ -383,13 +470,13 @@ def predict_team_player_stats(team_id, opponent_team_id,
             ].astype(float).sum()
 
                 if lost_usage >= 0.28:
-                    replacement_rate = 0.48
+                    replacement_rate = 0.43
                 elif lost_usage >= 0.22:
-                    replacement_rate = 0.53
+                    replacement_rate = 0.50
                 elif lost_usage >= 0.16:
-                    replacement_rate = 0.67
+                    replacement_rate = 0.64
                 else:
-                    replacement_rate = 0.76
+                    replacement_rate = 0.74
 
                 familiarity_factor = get_injury_familiarity_factor(injured_rows)
 
@@ -474,50 +561,57 @@ def predict_team_player_stats(team_id, opponent_team_id,
             return [], 0, 0, 0
 
         # If playoff injuries shorten rotation, bump remaining baseline minutes
-        if is_playoff and len(roster) < 7:
-            absent_factor = 1 + (0.15 * (7 - len(roster)))
-            roster['player_avg_min_l10'] = (
-            roster['player_avg_min_l10'].astype(float) * absent_factor
-            )
+    if is_playoff and len(roster) < 7:
+        absent_factor = 1 + (0.15 * (7 - len(roster)))
+        roster['player_avg_min_l10'] = (
+        roster['player_avg_min_l10'].astype(float) * absent_factor
+        )
 
         # Add game context features
-        roster['is_home'] = int(is_home)
-        roster['is_playoff'] = int(is_playoff)
-        roster['opp_def_rating'] = float(opp_def_rating)
-        roster['opp_pace'] = float(opp_pace)
-        roster['team_off_rating'] = float(team_off_rating)
-        roster['pace_factor'] = float(opp_pace) / 98.0
-        roster['off_environment'] = float(team_off_rating) - float(opp_def_rating)
+    roster['is_home'] = int(is_home)
+    roster['is_playoff'] = int(is_playoff)
+    roster['opp_def_rating'] = float(opp_def_rating)
+    roster['opp_pace'] = float(opp_pace)
+    roster['team_off_rating'] = float(team_off_rating)
+    roster['pace_factor'] = float(opp_pace) / 98.0
+    roster['off_environment'] = float(team_off_rating) - float(opp_def_rating)
 
-        roster['usage_rate_clean'] = roster['player_avg_usage_l10'].fillna(0.20)
+    roster['usage_rate_clean'] = roster['player_avg_usage_l10'].fillna(0.20)
 
-        roster['points_momentum'] = (
-        roster['player_avg_points_l5'].astype(float) -
-        roster['player_avg_points_l10'].astype(float)
+    roster['points_momentum'] = (
+    roster['player_avg_points_l5'].astype(float) -
+    roster['player_avg_points_l10'].astype(float)
         ).fillna(0)
 
-        roster['usage_momentum'] = (
-        roster['player_avg_usage_l5'].astype(float) -
-        roster['player_avg_usage_l10'].astype(float)
+    roster['usage_momentum'] = (
+    roster['player_avg_usage_l5'].astype(float) -
+    roster['player_avg_usage_l10'].astype(float)
         ).fillna(0)
 
-        roster['ts_momentum'] = (
-        roster['player_avg_ts_l5'].astype(float) -
-        roster['player_avg_ts_l10'].astype(float)
+    roster['ts_momentum'] = (
+    roster['player_avg_ts_l5'].astype(float) -
+    roster['player_avg_ts_l10'].astype(float)
         ).fillna(0)
 
-        roster['player_avg_efg_l10']        = roster.get('player_avg_efg_l10', pd.Series(0.50, index=roster.index)).fillna(0.50)
-        roster['player_avg_oreb_pct_l10']   = roster.get('player_avg_oreb_pct_l10', pd.Series(0.05, index=roster.index)).fillna(0.05)
-        roster['player_avg_dreb_pct_l10']   = roster.get('player_avg_dreb_pct_l10', pd.Series(0.15, index=roster.index)).fillna(0.15)
-        roster['player_avg_ast_pct_l10']    = roster.get('player_avg_ast_pct_l10', pd.Series(0.15, index=roster.index)).fillna(0.15)
-        roster['player_avg_off_rating_l10'] = roster.get('player_avg_off_rating_l10', pd.Series(110.0, index=roster.index)).fillna(110.0)
-        roster['player_avg_net_rating_l10'] = roster.get('player_avg_net_rating_l10', pd.Series(0.0, index=roster.index)).fillna(0.0)
+    roster['player_avg_efg_l10']        = roster.get('player_avg_efg_l10', pd.Series(0.50, index=roster.index)).fillna(0.50)
+    roster['player_avg_oreb_pct_l10']   = roster.get('player_avg_oreb_pct_l10', pd.Series(0.05, index=roster.index)).fillna(0.05)
+    roster['player_avg_dreb_pct_l10']   = roster.get('player_avg_dreb_pct_l10', pd.Series(0.15, index=roster.index)).fillna(0.15)
+    roster['player_avg_ast_pct_l10']    = roster.get('player_avg_ast_pct_l10', pd.Series(0.15, index=roster.index)).fillna(0.15)
+    roster['player_avg_off_rating_l10'] = roster.get('player_avg_off_rating_l10', pd.Series(110.0, index=roster.index)).fillna(110.0)
+    roster['player_avg_net_rating_l10'] = roster.get('player_avg_net_rating_l10', pd.Series(0.0, index=roster.index)).fillna(0.0)
         
         
-        roster['game_date'] = pd.Timestamp(game_date)
-        roster = roster.fillna(0)
+    roster['game_date'] = pd.Timestamp(game_date)
+    roster = roster.fillna(0)
+    roster['game_date'] = pd.Timestamp(game_date)
+    roster = roster.fillna(0)
 
-        X = roster[PLAYER_FEATURE_COLS].values
+    # Check if roster is empty
+    if roster.empty:
+        print(f"  ⚠️  No players found for team {team_id}")
+        return [], 0, 0, 0
+
+    X = roster[PLAYER_FEATURE_COLS].values
 
     # Determine top 4 usage players once
     top_4_names = set(
@@ -529,6 +623,7 @@ def predict_team_player_stats(team_id, opponent_team_id,
     all_players = []
 
     for i, (_, player) in enumerate(roster.iterrows()):
+        player = get_blended_playoff_stats(player, team_id, is_playoff)
         usage = float(player.get('player_avg_usage_l10', 0) or 0)
         minutes = float(player.get('player_avg_min_l10', 0) or 0)
 
@@ -554,6 +649,7 @@ def predict_team_player_stats(team_id, opponent_team_id,
         playoff_flag = False
 
         if is_playoff:
+        # 1. Series-level efficiency factor (existing)
             factor, slump_flag, hot_flag = get_playoff_performance_factor(
                 int(player['player_id']),
                 team_id,
@@ -568,8 +664,27 @@ def predict_team_player_stats(team_id, opponent_team_id,
                 pred_reb *= (1 + (factor - 1) * 0.4)
                 pred_ast *= (1 + (factor - 1) * 0.4)
                 playoff_flag = True
+    
+            # 2. Last-game momentum boost (NEW)
+            last_game_factor, last_pts = get_last_game_boost(
+                int(player['player_id']),
+                team_id,
+                avg_points=float(player.get('player_avg_points_l10', pred_pts) or pred_pts)
+            )
+    
+            if last_game_factor != 1.0:
+                pred_pts *= last_game_factor
+                pred_reb *= (1 + (last_game_factor - 1) * 0.5)
+                pred_ast *= (1 + (last_game_factor - 1) * 0.5)
+        
+                # Override emoji if last game was hot but series trend wasn't
+                if last_game_factor > 1.0 and not hot_flag:
+                    hot_flag = True  # Show 🔥 emoji
+                elif last_game_factor < 1.0 and not slump_flag:
+                    slump_flag = True  # Show 📉 emoji
 
         else:
+            # Regular season momentum (unchanged)
             l5_pts = float(player.get('player_avg_points_l5', pred_pts) or pred_pts)
             l10_pts = float(player.get('player_avg_points_l10', pred_pts) or pred_pts)
             momentum = l5_pts - l10_pts
@@ -643,10 +758,10 @@ def predict_team_player_stats(team_id, opponent_team_id,
         minutes = float(p.get('avg_minutes', 0) or 0)
         pred_pts = float(p.get('pred_points', 0) or 0)
 
-    if minutes < 24 and pred_pts > baseline_pts * 1.35:
-        p['pred_points'] = round(baseline_pts * 0.65 + pred_pts * 0.35, 1)
-    elif minutes < 30 and pred_pts > baseline_pts * 1.50:
-        p['pred_points'] = round(baseline_pts * 0.75 + pred_pts * 0.25, 1)
+        if minutes < 24 and pred_pts > baseline_pts * 1.35:
+            p['pred_points'] = round(baseline_pts * 0.65 + pred_pts * 0.35, 1)
+        elif minutes < 30 and pred_pts > baseline_pts * 1.50:
+            p['pred_points'] = round(baseline_pts * 0.75 + pred_pts * 0.25, 1)
 
     if not all_players:
         return [], 0, 0, 0
@@ -665,8 +780,11 @@ def predict_team_player_stats(team_id, opponent_team_id,
 
     upper_bound = expected_points + 10
 
-    # if is_playoff:
-    #     expected_points *= 0.965
+    if is_playoff:
+        if is_home:
+            expected_points *= 0.95
+        else:
+            expected_points *= 0.89
 
     # 🔼 Upper clamp (already exists)
     if team_points > upper_bound:
@@ -679,9 +797,9 @@ def predict_team_player_stats(team_id, opponent_team_id,
 
     # 🔽 NEW: Lower bound correction
     if is_playoff and team_points < expected_points - 10:
-        scale = (expected_points - 6) / max(team_points, 1)
+        scale = (expected_points - 8) / max(team_points, 1)
 
-        scale = min(scale, 1.1)
+        scale = min(scale, 1.07)
 
         for p in rotation:
             usage = float(p.get("usage_rate", 0) or 0)
@@ -689,9 +807,9 @@ def predict_team_player_stats(team_id, opponent_team_id,
 
             # Non-primary scorers get less of the team-level correction
             if usage < 0.20 and baseline < 19:
-                player_scale = 1 + ((scale - 1) * 0.35)
+                player_scale = 1 + ((scale - 1) * 0.30)
             elif usage < 0.23 and baseline < 21:
-                player_scale = 1 + ((scale - 1) * 0.55)
+                player_scale = 1 + ((scale - 1) * 0.48)
             else:
                 player_scale = scale
 

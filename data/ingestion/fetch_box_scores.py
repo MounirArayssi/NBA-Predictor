@@ -296,8 +296,12 @@ def fetch_all_box_scores():
             PlayerBoxScore.game_id
         ).distinct()
 
+        # Fetch box scores for games that:
+        # 1. Are marked final OR have scores (completed games)
+        # 2. Don't already have box scores
         games = session.query(Game).filter(
-            Game.is_final == True,
+            (Game.is_final == True) | 
+            ((Game.home_score != None) & (Game.away_score != None)),
             Game.game_id.notin_(games_with_scores)
         ).order_by(Game.game_date).all()
 
