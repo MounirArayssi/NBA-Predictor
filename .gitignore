@@ -1,7 +1,27 @@
 .env
+.env.*
+!.env.example
+
 .venv/
+venv/
 __pycache__/
 *.pyc
+
 logs/
 *.log
 *.sql
+*.db
+*.sqlite
+*.sqlite3
+
+# Local model/data artifacts, optional but recommended if you do not want them public
+*.pkl
+*.joblib
+*.parquet
+*.csv
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
