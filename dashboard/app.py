@@ -21,15 +21,6 @@ except ImportError:
     PLOTLY_AVAILABLE = False
 
 
-st.write("DATABASE_URL secret exists:", "DATABASE_URL" in st.secrets)
-
-try:
-    from data.storage.db import DATABASE_URL
-    st.write("DATABASE_URL loaded:", bool(DATABASE_URL))
-    st.write("DATABASE_URL uses Neon:", "neon.tech" in str(DATABASE_URL))
-except Exception as e:
-    st.error(f"DB config load failed: {e}")
-
 # -----------------------------
 # Page Configuration
 # -----------------------------
