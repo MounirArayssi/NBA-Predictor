@@ -15,30 +15,44 @@ from data.storage.models import Base
 
 def get_database_url():
     """
-    Works both locally and on Streamlit Cloud.
-
-    Priority:
+    Database URL priority:
     1. Streamlit Cloud secrets
-    2. Environment variable DATABASE_URL
-    3. config.settings DATABASE_URL fallback
+    2. Local environment variable DATABASE_URL
+    3. config.settings fallback only outside Streamlit
     """
+
+    # Streamlit Cloud secrets
     try:
         import streamlit as st
+
         if "DATABASE_URL" in st.secrets:
             return st.secrets["DATABASE_URL"]
+
+        # If running inside Streamlit and secret is missing, stop fallback.
+        if hasattr(st, "runtime") and st.runtime.exists():
+            raise RuntimeError(
+                "DATABASE_URL is missing from Streamlit secrets."
+            )
+    except RuntimeError:
+        raise
     except Exception:
         pass
 
+    # Local env variable
     env_url = os.getenv("DATABASE_URL")
     if env_url:
         return env_url
 
+    # Local fallback only
     try:
         from config.settings import DATABASE_URL
-        return DATABASE_URL
-    except Exception:
-        return None
 
+        if DATABASE_URL:
+            return DATABASE_URL
+    except Exception:
+        pass
+
+    return None
 
 DATABASE_URL = get_database_url()
 
