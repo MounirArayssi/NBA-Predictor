@@ -25,42 +25,7 @@ A machine-learning system that predicts NBA game scores, winners, and individual
 17. [Sports Prediction Disclaimer](#sports-prediction-disclaimer)
 18. [Author](#author)
 
----
-Review this NBA prediction project and write a comprehensive README.md for a public GitHub repo.
 
-Be efficient and evidence-based:
-- Start by inspecting the directory tree.
-- Prioritize files related to data loading, cleaning, feature engineering, model training, evaluation, prediction, configuration, dependencies, tests, and any app/API entry points.
-- Use the actual codebase as the source of truth.
-- Do not claim unsupported metrics, APIs, dashboards, databases, automations, or deployment features unless they are present in the repo.
-- If a detail is unclear, mark it as a TODO instead of guessing.
-
-Write README.md with:
-1. Project overview
-2. Motivation and goals
-3. Key features
-4. Tech stack
-5. Repository structure
-6. End-to-end workflow
-7. Data sources and data pipeline
-8. Feature engineering
-9. Modeling approach
-10. Evaluation strategy and metrics
-11. Setup instructions
-12. Usage examples for training, evaluation, and prediction
-13. Example output if supported by code
-14. Testing instructions if tests exist
-15. Design decisions, especially around avoiding data leakage
-16. Limitations
-17. Future improvements
-18. Sports prediction disclaimer
-19. Author placeholders
-
-Also include a final short report listing:
-- The files you inspected
-- The main commands discovered
-- Assumptions made
-- TODOs for me to verify
 ## Project Overview
 
 NBA Game Predictor is a full-stack sports analytics project that:
@@ -415,7 +380,7 @@ Evaluation is triggered via `model/evaluate_predictions.py` once games are marke
 ### 1. Clone the repo
 
 ```bash
-git clone https://github.com/<your-username>/NBA-Predictor.git
+git clone https://github.com/MounirArayssi/NBA-Predictor.git
 cd NBA-Predictor
 ```
 
@@ -647,63 +612,6 @@ The author(s) accept no liability for any decisions made based on these predicti
 
 **Mounir Arayssi**
 
-- GitHub: <!-- TODO: add your GitHub profile URL -->
-- Twitter/X: <!-- TODO: add handle if desired -->
-
 ---
 
-## Appendix: Inspection Report
 
-### Files inspected
-
-| File | Role |
-|---|---|
-| `model/train.py` | Team model training, chronological split, evaluation |
-| `model/train_players.py` | Player stat model training |
-| `model/predict.py` | Prediction orchestrator, ensemble, calibration, confidence |
-| `model/predict_players.py` | Player predictions, injury redistribution |
-| `model/evaluate_predictions.py` | Post-game scoring |
-| `data/ingestion/build_features.py` | Full feature engineering pipeline |
-| `data/ingestion/fetch_games.py` | NBA API schedule ingest |
-| `data/ingestion/fetch_box_scores.py` | NBA API box score ingest |
-| `data/ingestion/fetch_injuries.py` | ESPN injury ingest |
-| `data/ingestion/fetch_odds.py` | The Odds API ingest |
-| `data/ingestion/compute_rolling_stats.py` | Team rolling windows |
-| `data/ingestion/compute_player_rolling_stats.py` | Player rolling windows |
-| `data/ingestion/compute_playoff_factors.py` | Playoff efficiency adjustments |
-| `data/storage/db.py` | SQLAlchemy engine setup |
-| `data/storage/models.py` | ORM schema |
-| `pipeline/run_daily.py` | Daily orchestration CLI |
-| `dashboard/app.py` | Streamlit dashboard |
-| `twitter/bot.py` | Twitter integration |
-| `config/settings.py` | Season, rate-limit, API base URL config |
-| `requirements.txt` | Python dependencies |
-| `analysis/team_model_analysis.txt` | Logged model metrics |
-| `analysis/player_points_analysis.txt` | Logged player model metrics |
-
-### Main commands discovered
-
-```bash
-python pipeline/run_daily.py [--skip-retrain] [--post-twitter] [--predict-only]
-python model/train.py
-python model/train_players.py
-python model/predict.py
-python model/evaluate_predictions.py
-streamlit run dashboard/app.py
-python twitter/test_connection.py
-```
-
-### Assumptions made
-
-- Performance figures (72.4% winner accuracy, 9.78 MAE) were read from `analysis/team_model_analysis.txt` and `analysis/player_points_analysis.txt`; they represent the most recent logged evaluation run and may not reflect the current model pkl files.
-- The `.env` variable names were inferred from `config/settings.py` and `data/storage/db.py`; exact names should be verified against your working `.env`.
-- Database auto-creation via `Base.metadata.create_all(engine)` was inferred from the SQLAlchemy pattern in `db.py`; a separate migration script may be needed if the schema has evolved.
-
-### TODOs for you to verify
-
-- [ ] Add your GitHub profile URL and Twitter handle to the Author section.
-- [ ] Confirm whether a `~/.streamlit/secrets.toml` file is required instead of / in addition to `.env` for the database URL (the git log mentions "Read database URL from Streamlit secrets").
-- [ ] Verify the exact `.env` variable names against your working configuration.
-- [ ] Confirm whether `model/player_models.pkl` is committed to the repo or generated at runtime only.
-- [ ] Add any cron / GitHub Actions automation details if they live outside this repo.
-- [ ] Update the performance figures after the next evaluation run if the current pkl models differ from the logged values.
