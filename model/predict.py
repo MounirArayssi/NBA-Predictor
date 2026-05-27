@@ -86,7 +86,7 @@ def load_models():
         model_away = pickle.load(f)
     return model_home, model_away
 
-def save_predictions(predictions):
+def save_predictions(predictions, is_backfill=False):
     """
     Save every prediction snapshot to the database.
 
@@ -94,6 +94,7 @@ def save_predictions(predictions):
     - First prediction for a game/model_version on game day becomes official.
     - A later prediction within 1 hour before tipoff can replace the previous official one.
     - Predictions after tipoff are never official.
+    - When is_backfill=True all predictions are marked official regardless of tipoff time.
     - CSV logging is kept as a backup/debug log.
     """
     if not predictions:
@@ -193,7 +194,16 @@ def save_predictions(predictions):
             lock_reason = "snapshot_only"
             prediction_type = "debug"
 
-            if is_before_tipoff:
+            if is_backfill:
+                # Backfill: mark as official pre-game simulation unless one already exists
+                if existing_official is None:
+                    is_official = True
+                    lock_reason = "backfill"
+                    prediction_type = "backfill"
+                else:
+                    lock_reason = "backfill_duplicate"
+                    prediction_type = "backfill"
+            elif is_before_tipoff:
                 if existing_official is None:
                     is_official = True
                     lock_reason = "first_game_day_prediction"
@@ -290,14 +300,14 @@ def save_predictions(predictions):
 
     print(f"📝 Backup CSV updated at {csv_path}")
     
-def get_todays_games():
-    """Get all scheduled games for today."""    
-    today = date.today()
+def get_todays_games(game_date=None, include_final=False):
+    """Get all scheduled games for a given date (defaults to today)."""
+    today = game_date or date.today()
     with Session(engine) as session:
-        games = session.query(Game).filter(
-            Game.game_date == today,
-            Game.is_final == False  # Changed from status == 'scheduled'
-        ).all()
+        q = session.query(Game).filter(Game.game_date == today)
+        if not include_final:
+            q = q.filter(Game.is_final == False)
+        games = q.all()
 
         result = []
         for g in games:
@@ -483,13 +493,14 @@ def build_features_for_upcoming_game(home_team_id, away_team_id,
 
     row_dict = dict(row._mapping)
     row_dict['game_date'] = pd.Timestamp(game_date)
-
+    home_rest = get_rest_days(home_team_id, game_date)
+    away_rest = get_rest_days(away_team_id, game_date)
     # Rest days
-    row_dict['home_rest_days']    = 2
-    row_dict['away_rest_days']    = 2
-    row_dict['rest_advantage']    = 0
-    row_dict['home_back_to_back'] = 0
-    row_dict['away_back_to_back'] = 0
+    row_dict['home_rest_days']    = home_rest
+    row_dict['away_rest_days']    = away_rest
+    row_dict['rest_advantage']    = home_rest - away_rest
+    row_dict['home_back_to_back'] = 1 if home_rest <= 1 else 0
+    row_dict['away_back_to_back'] = 1 if away_rest <= 1 else 0
 
     # H2H defaults
     row_dict['h2h_home_avg_score'] = row_dict.get('home_avg_points', 112)
@@ -615,10 +626,10 @@ def build_features_for_upcoming_game(home_team_id, away_team_id,
     if season_type == 'Playoffs':
         row_dict['home_avg_points'] = float(
             row_dict['home_avg_points']
-        ) * 0.90
+        ) * 0.97
         row_dict['away_avg_points'] = float(
             row_dict['away_avg_points']
-        ) * 0.90
+        ) * 0.95
         row_dict['implied_total'] = (
             row_dict['home_avg_points'] +
             row_dict['away_avg_points']
@@ -1109,42 +1120,204 @@ def get_key_factors(row, home_pred, away_pred,
 
     return [text for score, text in scored[:max_factors]]
 
+def get_rest_days(team_id, game_date):
+    q = text("""
+        SELECT MAX(game_date)
+        FROM games
+        WHERE is_final = TRUE
+          AND game_date < :game_date
+          AND (home_team_id = :team_id OR away_team_id = :team_id)
+    """)
 
-def predict_todays_games():
-    """Main prediction workflow"""
-    print_header()
-    
+    with engine.connect() as conn:
+        last_game_date = conn.execute(q, {
+            "team_id": int(team_id),
+            "game_date": str(game_date),
+        }).scalar()
+
+    if not last_game_date:
+        return 3
+
+    return max(0, min(5, (pd.Timestamp(game_date).date() - last_game_date).days))
+
+
+def calculate_ensemble_prediction(game, row_dict, home_pred_team, away_pred_team, player_results):
+    """
+    Final ensemble v2.
+
+    Core design:
+    - Blend/calibrate total separately.
+    - Arbitrate margin instead of averaging opposing margin signals.
+    - Disagreement lowers confidence through debug flags; it does not
+      automatically shrink every game to 1 point.
+    """
+    team_total = float(home_pred_team + away_pred_team)
+    team_margin = float(home_pred_team - away_pred_team)
+
+    row_dict['_home_pred_team'] = float(home_pred_team)
+    row_dict['_away_pred_team'] = float(away_pred_team)
+    row_dict['_team_total_for_reliability'] = team_total
+
+    if not player_results.get('available'):
+        market_margin = get_market_home_margin(game)
+        final_total, total_debug = blend_game_total(
+            game, team_total, 0.0, {'available': False}
+        )
+        final_margin = team_margin
+        home_pred = (final_total + final_margin) / 2
+        away_pred = (final_total - final_margin) / 2
+        debug = {
+            **total_debug,
+            'team_total': round(team_total, 2),
+            'player_total': 0.0,
+            'team_margin': round(team_margin, 2),
+            'player_margin': 0.0,
+            'ensemble_margin': round(final_margin, 2),
+            'model_disagreement': 0.0,
+            'winner_disagreement': False,
+            'margin_method': 'team_only',
+            'chosen_margin_source': 'team',
+            'team_reliability': None,
+            'player_reliability': None,
+            'market_margin': None if market_margin is None else round(market_margin, 2),
+        }
+        return home_pred, away_pred, debug
+
+    player_total = float(player_results.get('home_pts', 0) + player_results.get('away_pts', 0))
+    player_margin = float(player_results.get('home_pts', 0) - player_results.get('away_pts', 0))
+
+    final_total, total_debug = blend_game_total(game, team_total, player_total, player_results)
+    final_margin, margin_debug = choose_margin_from_arbitration(
+        row_dict, game, team_margin, player_margin, player_results
+    )
+
+    market_margin = get_market_home_margin(game)
+
+    home_pred = (final_total + final_margin) / 2
+    away_pred = (final_total - final_margin) / 2
+
+    debug = {
+        **total_debug,
+        **margin_debug,
+        'team_total': round(team_total, 2),
+        'player_total': round(player_total, 2),
+        'team_margin': round(team_margin, 2),
+        'player_margin': round(player_margin, 2),
+        'ensemble_margin': round(final_margin, 2),
+        'market_margin': None if market_margin is None else round(market_margin, 2),
+    }
+
+    return home_pred, away_pred, debug
+
+
+def get_directional_edge(game, row_dict, home_pred_team, away_pred_team, player_results):
+    """
+    Positive = home edge, negative = away edge.
+    Used only for rounding tiebreaks and true toss-up direction.
+    This intentionally favors stable signals when models disagree.
+    """
+    team_margin = float(home_pred_team - away_pred_team)
+    player_margin = 0.0
+    if player_results.get('available'):
+        player_margin = float(player_results.get('home_pts', 0) - player_results.get('away_pts', 0))
+
+    market_margin = get_market_home_margin(game)
+    net_rating_diff = clamp(safe_float(row_dict.get('net_rating_diff'), 0.0), -10, 10)
+
+    if market_margin is not None:
+        edge = 0.47 * team_margin + 0.24 * player_margin + 0.24 * market_margin + 0.05 * net_rating_diff
+    else:
+        edge = 0.58 * team_margin + 0.32 * player_margin + 0.10 * net_rating_diff
+
+    return edge
+
+
+def calibrate_final_score(game, row_dict, home_pred, away_pred, home_pred_team, away_pred_team, player_results):
+    """
+    Final calibration after ensemble v2.
+
+    This is intentionally light because calculate_ensemble_prediction now already:
+    - calibrates total toward Vegas
+    - applies playoff total drag
+    - arbitrates margin
+
+    This function mainly rounds scores and avoids accidental ties.
+    """
+    model_total = float(home_pred + away_pred)
+    model_margin = float(home_pred - away_pred)
+    directional_edge = get_directional_edge(game, row_dict, home_pred_team, away_pred_team, player_results)
+    market_margin = get_market_home_margin(game)
+
+    calibrated_total = clamp(model_total, 185, 255)
+    calibrated_margin = clamp(model_margin, -24, 24)
+
+    if abs(calibrated_margin) < 1.25 and abs(directional_edge) >= 2.25:
+        calibrated_margin = sign_or_zero(directional_edge) * min(3.2, max(2.2, abs(directional_edge) * 0.55))
+
+    if market_margin is not None and same_sign(calibrated_margin, market_margin):
+        if abs(market_margin) >= 7 and abs(calibrated_margin) < 4:
+            calibrated_margin = sign_or_zero(calibrated_margin) * min(6.0, max(4.0, abs(market_margin) * 0.55))
+
+    home_final = round((calibrated_total + calibrated_margin) / 2)
+    away_final = round((calibrated_total - calibrated_margin) / 2)
+
+    if home_final == away_final:
+        if directional_edge < 0:
+            away_final += 1
+        else:
+            home_final += 1
+
+    debug = {
+        'model_total_before_calibration': round(model_total, 2),
+        'model_margin_before_calibration': round(model_margin, 2),
+        'calibrated_total': round(calibrated_total, 2),
+        'calibrated_margin': round(calibrated_margin, 2),
+        'directional_edge': round(directional_edge, 2),
+        'market_margin': None if market_margin is None else round(market_margin, 2),
+    }
+    return home_final, away_final, debug
+
+
+
+def predict_todays_games(prediction_date=None):
+    """Main prediction workflow. Pass prediction_date (date obj) to backfill a past date."""
+    is_backfill = prediction_date is not None
+    print_header(prediction_date)
+
     model_home, model_away = load_models()
-    games = get_todays_games()
-    
+    games = get_todays_games(game_date=prediction_date, include_final=is_backfill)
+
     if not games:
-        print("No games scheduled today.")
+        target = prediction_date or date.today()
+        print(f"No games found for {target}.")
         return []
-    
-    print(f"Found {len(games)} games today\n")
-    
+
+    target = prediction_date or date.today()
+    print(f"Found {len(games)} games for {target}\n")
+
     # Fetch shared data once
     injury_report, all_player_props = fetch_shared_game_data()
-    
+
     predictions = []
     for game in games:
         prediction = predict_single_game(
-            game, model_home, model_away, 
+            game, model_home, model_away,
             injury_report, all_player_props
         )
         if prediction:
             predictions.append(prediction)
             print_prediction(prediction, game, injury_report)
-    
+
     print_footer(len(predictions))
-    save_predictions(predictions)
+    save_predictions(predictions, is_backfill=is_backfill)
     return predictions
 
 
-def print_header():
+def print_header(prediction_date=None):
     """Print predictions header"""
+    target = prediction_date or date.today()
     print(f"\n{'='*55}")
-    print(f"NBA PREDICTIONS — {date.today().strftime('%B %d, %Y')}")
+    print(f"NBA PREDICTIONS — {target.strftime('%B %d, %Y')}")
     print(f"{'='*55}\n")
 
 
@@ -1312,21 +1485,30 @@ def get_player_predictions(game, row_dict, injury_report, game_props):
             player_props=game_props
         )
         
+        home_available = (
+            home_pts is not None
+            and len(home_preds or []) >= 5
+        )
+
+        away_available = (
+            away_pts is not None
+            and len(away_preds or []) >= 5
+        )
         return {
             'home_preds': home_preds,
             'home_pts': home_pts,
             'away_preds': away_preds,
             'away_pts': away_pts,
-            'available': home_pts > 0 and away_pts > 0
+            'available': home_available and away_available,
         }
         
     except Exception as e:
         print(f"  ⚠️  Player model failed: {e}")
         return {
             'home_preds': [],
-            'home_pts': 0,
+            'home_pts': None,
             'away_preds': [],
-            'away_pts': 0,
+            'away_pts': None,
             'available': False
         }
 
@@ -1694,142 +1876,6 @@ def blend_game_total(game, team_total, player_total, player_results):
         'total_drag': round(total_drag, 2),
     }
 
-
-def calculate_ensemble_prediction(game, row_dict, home_pred_team, away_pred_team, player_results):
-    """
-    Final ensemble v2.
-
-    Core design:
-    - Blend/calibrate total separately.
-    - Arbitrate margin instead of averaging opposing margin signals.
-    - Disagreement lowers confidence through debug flags; it does not
-      automatically shrink every game to 1 point.
-    """
-    team_total = float(home_pred_team + away_pred_team)
-    team_margin = float(home_pred_team - away_pred_team)
-
-    row_dict['_home_pred_team'] = float(home_pred_team)
-    row_dict['_away_pred_team'] = float(away_pred_team)
-    row_dict['_team_total_for_reliability'] = team_total
-
-    if not player_results.get('available'):
-        market_margin = get_market_home_margin(game)
-        final_total, total_debug = blend_game_total(
-            game, team_total, 0.0, {'available': False}
-        )
-        final_margin = team_margin
-        home_pred = (final_total + final_margin) / 2
-        away_pred = (final_total - final_margin) / 2
-        debug = {
-            **total_debug,
-            'team_total': round(team_total, 2),
-            'player_total': 0.0,
-            'team_margin': round(team_margin, 2),
-            'player_margin': 0.0,
-            'ensemble_margin': round(final_margin, 2),
-            'model_disagreement': 0.0,
-            'winner_disagreement': False,
-            'margin_method': 'team_only',
-            'chosen_margin_source': 'team',
-            'team_reliability': None,
-            'player_reliability': None,
-            'market_margin': None if market_margin is None else round(market_margin, 2),
-        }
-        return home_pred, away_pred, debug
-
-    player_total = float(player_results.get('home_pts', 0) + player_results.get('away_pts', 0))
-    player_margin = float(player_results.get('home_pts', 0) - player_results.get('away_pts', 0))
-
-    final_total, total_debug = blend_game_total(game, team_total, player_total, player_results)
-    final_margin, margin_debug = choose_margin_from_arbitration(
-        row_dict, game, team_margin, player_margin, player_results
-    )
-
-    market_margin = get_market_home_margin(game)
-
-    home_pred = (final_total + final_margin) / 2
-    away_pred = (final_total - final_margin) / 2
-
-    debug = {
-        **total_debug,
-        **margin_debug,
-        'team_total': round(team_total, 2),
-        'player_total': round(player_total, 2),
-        'team_margin': round(team_margin, 2),
-        'player_margin': round(player_margin, 2),
-        'ensemble_margin': round(final_margin, 2),
-        'market_margin': None if market_margin is None else round(market_margin, 2),
-    }
-
-    return home_pred, away_pred, debug
-
-
-def get_directional_edge(game, row_dict, home_pred_team, away_pred_team, player_results):
-    """
-    Positive = home edge, negative = away edge.
-    Used only for rounding tiebreaks and true toss-up direction.
-    This intentionally favors stable signals when models disagree.
-    """
-    team_margin = float(home_pred_team - away_pred_team)
-    player_margin = 0.0
-    if player_results.get('available'):
-        player_margin = float(player_results.get('home_pts', 0) - player_results.get('away_pts', 0))
-
-    market_margin = get_market_home_margin(game)
-    net_rating_diff = clamp(safe_float(row_dict.get('net_rating_diff'), 0.0), -10, 10)
-
-    if market_margin is not None:
-        edge = 0.47 * team_margin + 0.24 * player_margin + 0.24 * market_margin + 0.05 * net_rating_diff
-    else:
-        edge = 0.58 * team_margin + 0.32 * player_margin + 0.10 * net_rating_diff
-
-    return edge
-
-
-def calibrate_final_score(game, row_dict, home_pred, away_pred, home_pred_team, away_pred_team, player_results):
-    """
-    Final calibration after ensemble v2.
-
-    This is intentionally light because calculate_ensemble_prediction now already:
-    - calibrates total toward Vegas
-    - applies playoff total drag
-    - arbitrates margin
-
-    This function mainly rounds scores and avoids accidental ties.
-    """
-    model_total = float(home_pred + away_pred)
-    model_margin = float(home_pred - away_pred)
-    directional_edge = get_directional_edge(game, row_dict, home_pred_team, away_pred_team, player_results)
-    market_margin = get_market_home_margin(game)
-
-    calibrated_total = clamp(model_total, 185, 255)
-    calibrated_margin = clamp(model_margin, -24, 24)
-
-    if abs(calibrated_margin) < 1.25 and abs(directional_edge) >= 2.25:
-        calibrated_margin = sign_or_zero(directional_edge) * min(3.2, max(2.2, abs(directional_edge) * 0.55))
-
-    if market_margin is not None and same_sign(calibrated_margin, market_margin):
-        if abs(market_margin) >= 7 and abs(calibrated_margin) < 4:
-            calibrated_margin = sign_or_zero(calibrated_margin) * min(6.0, max(4.0, abs(market_margin) * 0.55))
-
-    home_final = round((calibrated_total + calibrated_margin) / 2)
-    away_final = round((calibrated_total - calibrated_margin) / 2)
-
-    if home_final == away_final:
-        if directional_edge < 0:
-            away_final += 1
-        else:
-            home_final += 1
-
-    debug = {
-        'model_total_before_calibration': round(model_total, 2),
-        'model_margin_before_calibration': round(model_margin, 2),
-        'calibrated_total': round(calibrated_total, 2),
-        'calibrated_margin': round(calibrated_margin, 2),
-        'directional_edge': round(directional_edge, 2),
-        'market_margin': None if market_margin is None else round(market_margin, 2),
-    }
-    return home_final, away_final, debug
 
 
 def apply_playoff_compression(home_pred, away_pred, game):
