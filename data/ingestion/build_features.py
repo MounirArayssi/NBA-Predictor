@@ -35,6 +35,7 @@ def build_feature_dataset(window=10):
             h.win_pct                 AS home_win_pct,
             h.home_avg_points         AS home_home_avg_pts,
             h.home_avg_points_allowed AS home_home_avg_pts_allowed,
+            h.avg_ft_rate             AS home_ft_rate,
 
             -- Away team rolling stats
             a.avg_points              AS away_avg_points,
@@ -47,6 +48,7 @@ def build_feature_dataset(window=10):
             a.win_pct                 AS away_win_pct,
             a.away_avg_points         AS away_away_avg_pts,
             a.away_avg_points_allowed AS away_away_avg_pts_allowed,
+            a.avg_ft_rate             AS away_ft_rate,
 
             -- Matchup features
             ABS(h.avg_pace - a.avg_pace) AS pace_differential,
@@ -137,6 +139,8 @@ def build_feature_dataset(window=10):
     df = add_style_defensive_matchup(df)
     df = add_shooting_consistency(df)
     df = add_quarter_features(df)
+    df = add_series_form_features(df)
+    df = add_advanced_rolling_features(df)
     return df
 
 
@@ -1090,6 +1094,130 @@ def add_shooting_consistency(df):
     )
 
     return df
+def add_advanced_rolling_features(df):
+    """
+    Rolling averages of oreb_pct, tov_pct, efg_pct from box scores (last 10 games).
+    All three columns are 100% populated in team_box_scores.
+    """
+    print("  Computing advanced rolling features (oreb/tov/efg)...")
+
+    query = text("""
+        SELECT tbs.team_id, g.game_date, tbs.oreb_pct, tbs.tov_pct, tbs.efg_pct
+        FROM team_box_scores tbs
+        JOIN games g ON tbs.game_id = g.game_id
+        WHERE g.is_final = TRUE
+        AND tbs.oreb_pct IS NOT NULL
+        ORDER BY tbs.team_id, g.game_date
+    """)
+
+    adv_df = pd.read_sql(query, engine)
+    adv_df['game_date'] = pd.to_datetime(adv_df['game_date'])
+    df['game_date'] = pd.to_datetime(df['game_date'])
+
+    home_oreb, away_oreb = [], []
+    home_tov,  away_tov  = [], []
+    home_efg,  away_efg  = [], []
+
+    LEAGUE_OREB = 0.29
+    LEAGUE_TOV  = 14.1
+    LEAGUE_EFG  = 0.545
+
+    for _, row in df.iterrows():
+        game_date = row['game_date']
+        home_id   = row['home_team_id']
+        away_id   = row['away_team_id']
+
+        for team_id, o_list, t_list, e_list in [
+            (home_id, home_oreb, home_tov, home_efg),
+            (away_id, away_oreb, away_tov, away_efg),
+        ]:
+            recent = adv_df[
+                (adv_df['team_id'] == team_id) &
+                (adv_df['game_date'] < game_date)
+            ].tail(10)
+
+            if len(recent) < 3:
+                o_list.append(LEAGUE_OREB)
+                t_list.append(LEAGUE_TOV)
+                e_list.append(LEAGUE_EFG)
+            else:
+                o_list.append(float(recent['oreb_pct'].mean()))
+                t_list.append(float(recent['tov_pct'].mean()))
+                e_list.append(float(recent['efg_pct'].mean()))
+
+    df['home_oreb_pct'] = home_oreb
+    df['away_oreb_pct'] = away_oreb
+    df['home_tov_pct']  = home_tov
+    df['away_tov_pct']  = away_tov
+    df['home_efg_pct']  = home_efg
+    df['away_efg_pct']  = away_efg
+
+    return df
+
+
+def add_series_form_features(df):
+    """
+    For each playoff game, compute the avg scores from games already
+    played in this series. Game 1 falls back to rolling avg.
+    Regular-season rows get their rolling avg as a neutral fill.
+    """
+    print("  Computing in-series form features...")
+
+    df = df.sort_values('game_date').copy()
+    series_history = {}
+    in_series_home = []
+    in_series_away = []
+
+    for _, row in df.iterrows():
+        home_id = int(row['home_team_id'])
+        away_id = int(row['away_team_id'])
+
+        if row['season_type'] != 'Playoffs':
+            in_series_home.append(float(row['home_avg_points']))
+            in_series_away.append(float(row['away_avg_points']))
+            continue
+
+        season = row['season']
+        key = (season, tuple(sorted([home_id, away_id])))
+        history = series_history.get(key, [])
+
+        if history:
+            home_scores = []
+            away_scores = []
+            for g in history:
+                if g['home_id'] == home_id:
+                    home_scores.append(g['home_score'])
+                    away_scores.append(g['away_score'])
+                else:
+                    home_scores.append(g['away_score'])
+                    away_scores.append(g['home_score'])
+            in_series_home.append(sum(home_scores) / len(home_scores))
+            in_series_away.append(sum(away_scores) / len(away_scores))
+        else:
+            in_series_home.append(float(row['home_avg_points']))
+            in_series_away.append(float(row['away_avg_points']))
+
+        if key not in series_history:
+            series_history[key] = []
+        series_history[key].append({
+            'home_id': home_id,
+            'away_id': away_id,
+            'home_score': float(row['home_score']),
+            'away_score': float(row['away_score']),
+        })
+
+    df['in_series_home_avg_pts'] = in_series_home
+    df['in_series_away_avg_pts'] = in_series_away
+    df['in_series_total_avg'] = (
+        df['in_series_home_avg_pts'] + df['in_series_away_avg_pts']
+    )
+    df['in_series_margin'] = (
+        df['in_series_home_avg_pts'] - df['in_series_away_avg_pts']
+    )
+
+    return df
+
+
 if __name__ == "__main__":
     df = build_feature_dataset(window=10)
 

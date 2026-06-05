@@ -23,8 +23,12 @@ FEATURE_COLS = [
     'home_def_rating',
     'home_fg_pct',
     'home_fg3_pct',
-    'home_3pt_rate',
     'home_win_pct',
+
+    # Home/away location splits — how each team scores specifically at home vs on road
+    # (home_avg_points_allowed not populated in rolling stats, so only scoring splits used)
+    'home_home_avg_pts',
+    'away_away_avg_pts',
 
     # Away team form
     'away_avg_points',
@@ -32,8 +36,19 @@ FEATURE_COLS = [
     'away_def_rating',
     'away_fg_pct',
     'away_fg3_pct',
-    'away_3pt_rate',
     'away_win_pct',
+
+    # Free throw rate (direct scoring path, matters in physical playoff games)
+    'home_ft_rate',
+    'away_ft_rate',
+
+    # Advanced efficiency (oreb creates possessions, tov kills them, efg = true shooting proxy)
+    'home_oreb_pct',
+    'away_oreb_pct',
+    'home_tov_pct',
+    'away_tov_pct',
+    'home_efg_pct',
+    'away_efg_pct',
 
     # Matchup context
     'home_rest_days',
@@ -42,14 +57,10 @@ FEATURE_COLS = [
     'home_back_to_back',
     'away_back_to_back',
 
-    # Playoff context
-    'is_playoff',
-    'series_game_num',
+    # Playoff context (series_game_num, away_series_wins, is_playoff removed — zero importance)
     'home_series_wins',
-    'away_series_wins',
     'is_elimination',
     'series_pressure',
-
 
     # Scoring variance
     'home_scoring_std',
@@ -58,9 +69,7 @@ FEATURE_COLS = [
     'away_consistency',
     'variance_differential',
 
-    # Matchup interactions
-    'home_3pt_matchup',
-    'away_3pt_matchup',
+    # Matchup interactions (3pt_matchup removed — zero importance)
     'combined_pace',
     'home_off_vs_away_def',
     'away_off_vs_home_def',
@@ -80,17 +89,24 @@ FEATURE_COLS = [
     'away_clutch',
     'clutch_diff',
     'q4_diff_spread',
-    
 
+    # In-series form (playoff calibration)
+    'in_series_home_avg_pts',
+    'in_series_away_avg_pts',
+    'in_series_total_avg',
+    'in_series_margin',
 ]
 
 TARGET_HOME = 'home_score'
 TARGET_AWAY = 'away_score'
+TARGET_MARGIN = 'margin'
 
 
 def load_and_prepare_data(window=10):
     print("Loading feature dataset...")
     df = build_feature_dataset(window=window)
+
+    df[TARGET_MARGIN] = df[TARGET_HOME] - df[TARGET_AWAY]
 
     # Drop rows with missing features
     before = len(df)
@@ -112,9 +128,9 @@ def chronological_split(df, test_ratio=0.2):
     test  = df.iloc[split_idx:].copy()
 
     print(f"Train: {len(train)} games "
-          f"({train['game_date'].min()} → {train['game_date'].max()})")
+          f"({train['game_date'].min()} -> {train['game_date'].max()})")
     print(f"Test:  {len(test)} games "
-          f"({test['game_date'].min()} → {test['game_date'].max()})")
+          f"({test['game_date'].min()} -> {test['game_date'].max()})")
 
     return train, test
 
@@ -129,6 +145,11 @@ def train_model(train, target_col):
     days_ago = (max_date - pd.to_datetime(train['game_date'])).dt.days
     sample_weights = np.exp(-days_ago / 550)
 
+    # Playoff games are only ~6% of training data but are what we predict in the postseason.
+    # 3x multiplier brings their effective share from ~6% to ~16%.
+    is_playoff = (train['season_type'] == 'Playoffs').astype(float)
+    sample_weights = sample_weights * (1.0 + 2.0 * is_playoff)
+
     model = GradientBoostingRegressor(
         n_estimators=150,
         learning_rate=0.04,
@@ -139,6 +160,28 @@ def train_model(train, target_col):
         random_state=42
     )
 
+    model.fit(X_train, y_train, sample_weight=sample_weights)
+    return model
+
+
+def train_margin_model(train):
+    """Train a model that directly predicts home_score - away_score."""
+    X_train = train[FEATURE_COLS]
+    y_train = train[TARGET_MARGIN]
+
+    max_date = pd.to_datetime(train['game_date']).max()
+    days_ago = (max_date - pd.to_datetime(train['game_date'])).dt.days
+    sample_weights = np.exp(-days_ago / 550)
+
+    model = GradientBoostingRegressor(
+        n_estimators=150,
+        learning_rate=0.04,
+        max_depth=3,
+        min_samples_leaf=15,
+        subsample=0.7,
+        max_features=0.8,
+        random_state=42
+    )
     model.fit(X_train, y_train, sample_weight=sample_weights)
     return model
 
@@ -198,8 +241,8 @@ def evaluate_model(model_home, model_away, test):
     for i, (_, row) in enumerate(regular.iterrows()):
         pred_h = int(np.round(reg_preds_home[i]))
         pred_a = int(np.round(reg_preds_away[i]))
-        correct = "✅" if (pred_h > pred_a) == \
-                         (row['home_score'] > row['away_score']) else "❌"
+        correct = "[OK]" if (pred_h > pred_a) == \
+                         (row['home_score'] > row['away_score']) else "[X]"
         print(f"  {correct} {row['away_team']} @ {row['home_team']} | "
               f"Pred: {pred_h}-{pred_a} | "
               f"Actual: {int(row['home_score'])}-{int(row['away_score'])}")
@@ -208,8 +251,8 @@ def evaluate_model(model_home, model_away, test):
     for i, (_, row) in enumerate(playoffs.iterrows()):
         pred_h = int(np.round(play_preds_home[i]))
         pred_a = int(np.round(play_preds_away[i]))
-        correct = "✅" if (pred_h > pred_a) == \
-                         (row['home_score'] > row['away_score']) else "❌"
+        correct = "[OK]" if (pred_h > pred_a) == \
+                         (row['home_score'] > row['away_score']) else "[X]"
         print(f"  {correct} {row['away_team']} @ {row['home_team']} | "
               f"Pred: {pred_h}-{pred_a} | "
               f"Actual: {int(row['home_score'])}-{int(row['away_score'])}")
@@ -257,7 +300,7 @@ def plot_feature_importance(model_home, model_away):
     plt.savefig(
         'model/feature_importance.png', dpi=150, bbox_inches='tight'
     )
-    print("\n✅ Feature importance saved to model/feature_importance.png")
+    print("\n[OK] Feature importance saved to model/feature_importance.png")
 
 
 def plot_predictions_vs_actual(results, test):
@@ -286,10 +329,10 @@ def plot_predictions_vs_actual(results, test):
     plt.savefig(
         'model/predictions_vs_actual.png', dpi=150, bbox_inches='tight'
     )
-    print("✅ Predictions vs actual saved to model/predictions_vs_actual.png")
+    print("[OK] Predictions vs actual saved to model/predictions_vs_actual.png")
 
 
-def save_models(model_home, model_away):
+def save_models(model_home, model_away, model_margin=None):
     """Save trained models to disk."""
     os.makedirs('model', exist_ok=True)
 
@@ -299,10 +342,14 @@ def save_models(model_home, model_away):
     with open('model/model_away.pkl', 'wb') as f:
         pickle.dump(model_away, f)
 
+    if model_margin is not None:
+        with open('model/model_margin.pkl', 'wb') as f:
+            pickle.dump(model_margin, f)
+
     with open('model/feature_cols.pkl', 'wb') as f:
         pickle.dump(FEATURE_COLS, f)
 
-    print("✅ Models saved to model/")
+    print("[OK] Models saved to model/")
 
 def check_overfitting(model_home, model_away, train, test):
     """Compare train vs test performance to detect overfitting."""
@@ -341,6 +388,8 @@ if __name__ == "__main__":
     model_home = train_model(train, TARGET_HOME)
     print("Training away score model...")
     model_away = train_model(train, TARGET_AWAY)
+    print("Training direct margin model...")
+    model_margin = train_margin_model(train)
 
     # Evaluate
     print("\nEvaluating...")
@@ -351,6 +400,6 @@ if __name__ == "__main__":
     plot_predictions_vs_actual(results, test)
 
     # Save
-    save_models(model_home, model_away)
+    save_models(model_home, model_away, model_margin)
     check_overfitting(model_home, model_away, train, test)
-    print("\n✅ Training complete")
+    print("\n[OK] Training complete")

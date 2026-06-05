@@ -130,14 +130,14 @@ def summarize_playoff_performance(model_version=None):
 
     if total_bias is not None:
         if total_bias > 0:
-            print("  → Model is scoring games too high on average")
+            print("  -> Model is scoring games too high on average")
         elif total_bias < 0:
-            print("  → Model is scoring games too low on average")
+            print("  -> Model is scoring games too low on average")
         else:
-            print("  → Model total is perfectly neutral so far")
+            print("  -> Model total is perfectly neutral so far")
 
     print("\nBy actual margin (playoff-appropriate):")
-    print_bucket("Close games ≤5", close_games)
+    print_bucket("Close games <=5", close_games)
     print_bucket("Competitive games 6–15", competitive_games)
     print_bucket("Blowouts 16+", blowout_games)
 

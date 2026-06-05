@@ -133,11 +133,17 @@ def fetch_upcoming_games(season=CURRENT_SEASON, days_ahead=8):
                         print(f"    Skipping {game_id} — already exists")
                         continue
 
+                    home_id = row['HOME_TEAM_ID']
+                    away_id = row['VISITOR_TEAM_ID']
+                    if pd.isna(home_id) or pd.isna(away_id) or home_id is None or away_id is None:
+                        print(f"    ⚠️  Skipping {game_id} — team IDs not yet available (TBD)")
+                        continue
+
                     home_team = session.query(Team).filter_by(
-                        nba_team_id=int(row['HOME_TEAM_ID'])
+                        nba_team_id=int(home_id)
                     ).first()
                     away_team = session.query(Team).filter_by(
-                        nba_team_id=int(row['VISITOR_TEAM_ID'])
+                        nba_team_id=int(away_id)
                     ).first()
 
                     if not home_team or not away_team:

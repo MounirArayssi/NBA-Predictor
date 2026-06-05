@@ -206,14 +206,14 @@ def compute_player_playoff_factors():
         'full_name_reg', 'avg_points_reg', 'avg_points_ply',
         'playoff_elevation', 'games_played_ply', 'sample_weight'
     ]]
-    print(top.to_string(index=False))
+    print(top.to_string(index=False).encode('ascii', errors='replace').decode('ascii'))
 
     print("\n  Top 15 playoff decliners:")
     bottom = merged.nsmallest(15, 'playoff_elevation')[[
         'full_name_reg', 'avg_points_reg', 'avg_points_ply',
         'playoff_elevation', 'games_played_ply', 'sample_weight'
     ]]
-    print(bottom.to_string(index=False))
+    print(bottom.to_string(index=False).encode('ascii', errors='replace').decode('ascii'))
 
     # Show Jokic
     jokic = merged[merged['player_id'] == 237]
@@ -388,7 +388,7 @@ def compute_team_playoff_elevation(factor_dict,
     ]).sort_values('elevation', ascending=False)
 
     print("\n  Team playoff elevation (-1.5 to +3 cap) | coverage = % roster with history")
-    print(elevation_df.to_string(index=False))
+    print(elevation_df.to_string(index=False).encode('ascii', errors='replace').decode('ascii'))
 
     return team_elevations
 

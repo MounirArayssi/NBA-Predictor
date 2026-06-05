@@ -202,12 +202,13 @@ def report_db_coverage(start: date, end: date):
 def predict_for_date(target: date, injury_report, all_player_props):
     """Generate and save predictions for a single past date."""
     from model.predict import (
-        load_models, get_todays_games, predict_single_game,
+        load_models, load_calibration_model, get_todays_games, predict_single_game,
         print_prediction, print_footer, save_predictions, print_header
     )
 
     print_header(target)
-    model_home, model_away = load_models()
+    model_home, model_away, model_margin = load_models()
+    calibration_model = load_calibration_model()
     games = get_todays_games(game_date=target, include_final=True)
 
     if not games:
@@ -217,7 +218,10 @@ def predict_for_date(target: date, injury_report, all_player_props):
     log.info(f"  {len(games)} games found for {target}")
     predictions = []
     for game in games:
-        pred = predict_single_game(game, model_home, model_away, injury_report, all_player_props)
+        pred = predict_single_game(
+            game, model_home, model_away, injury_report, all_player_props,
+            model_margin=model_margin, calibration_model=calibration_model,
+        )
         if pred:
             predictions.append(pred)
             print_prediction(pred, game, injury_report)

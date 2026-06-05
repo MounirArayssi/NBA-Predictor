@@ -84,7 +84,22 @@ def load_models():
         model_home = pickle.load(f)
     with open('model/model_away.pkl', 'rb') as f:
         model_away = pickle.load(f)
-    return model_home, model_away
+
+    model_margin = None
+    margin_path = 'model/model_margin.pkl'
+    if os.path.exists(margin_path):
+        with open(margin_path, 'rb') as f:
+            model_margin = pickle.load(f)
+
+    return model_home, model_away, model_margin
+
+
+def load_calibration_model():
+    cal_path = 'model/model_calibration.pkl'
+    if os.path.exists(cal_path):
+        with open(cal_path, 'rb') as f:
+            return pickle.load(f)
+    return None
 
 def save_predictions(predictions, is_backfill=False):
     """
@@ -158,7 +173,7 @@ def save_predictions(predictions, is_backfill=False):
 
             debug = pred.get("debug", {}) or {}
 
-            vegas_spread = safe_float(debug.get("market_margin"))
+            vegas_spread = safe_float(pred.get("vegas_spread"))
             vegas_total = safe_float(pred.get("vegas_total"))
 
             # Fallback: if vegas_total was not added to prediction dict,
@@ -342,6 +357,109 @@ def get_todays_games(game_date=None, include_final=False):
     return result
 
 
+def get_advanced_rolling_stats(team_id, game_date, n=10):
+    """Rolling oreb_pct, tov_pct, efg_pct for a team (last n final games)."""
+    q = text("""
+        SELECT tbs.oreb_pct, tbs.tov_pct, tbs.efg_pct
+        FROM team_box_scores tbs
+        JOIN games g ON tbs.game_id = g.game_id
+        WHERE tbs.team_id = :team_id
+        AND g.is_final = TRUE
+        AND g.game_date < :game_date
+        AND tbs.oreb_pct IS NOT NULL
+        ORDER BY g.game_date DESC
+        LIMIT :n
+    """)
+    with engine.connect() as conn:
+        rows = conn.execute(q, {
+            'team_id': int(team_id),
+            'game_date': str(game_date),
+            'n': n,
+        }).fetchall()
+
+    if len(rows) < 3:
+        return 0.29, 14.1, 0.545
+
+    oreb = [float(r[0]) for r in rows if r[0] is not None]
+    tov  = [float(r[1]) for r in rows if r[1] is not None]
+    efg  = [float(r[2]) for r in rows if r[2] is not None]
+
+    return (
+        sum(oreb) / len(oreb) if oreb else 0.29,
+        sum(tov)  / len(tov)  if tov  else 14.1,
+        sum(efg)  / len(efg)  if efg  else 0.545,
+    )
+
+
+def get_scoring_stats(team_id, game_date, n=10):
+    """Return scoring std for a team from their last n final games."""
+    q = text("""
+        SELECT tbs.points
+        FROM team_box_scores tbs
+        JOIN games g ON tbs.game_id = g.game_id
+        WHERE tbs.team_id = :team_id
+        AND g.is_final = TRUE
+        AND g.game_date < :game_date
+        ORDER BY g.game_date DESC
+        LIMIT :n
+    """)
+    with engine.connect() as conn:
+        rows = conn.execute(q, {
+            'team_id': int(team_id),
+            'game_date': str(game_date),
+            'n': n,
+        }).fetchall()
+    if len(rows) < 5:
+        return 12.0
+    pts = [float(r[0]) for r in rows]
+    return float(np.std(pts)) if len(pts) > 1 else 12.0
+
+
+def get_in_series_stats(home_team_id, away_team_id, game_date, season_type):
+    """
+    Return (avg_home_pts, avg_away_pts) from prior games in this playoff series.
+    Returns (None, None) for regular season or Game 1 of a series.
+    """
+    if season_type != 'Playoffs':
+        return None, None
+
+    q = text("""
+        SELECT home_team_id, away_team_id, home_score, away_score
+        FROM games
+        WHERE is_final = TRUE
+        AND season_type = 'Playoffs'
+        AND game_date < :game_date
+        AND (
+            (home_team_id = :home_id AND away_team_id = :away_id)
+            OR  (home_team_id = :away_id AND away_team_id = :home_id)
+        )
+        ORDER BY game_date ASC
+    """)
+    with engine.connect() as conn:
+        rows = conn.execute(q, {
+            'home_id': int(home_team_id),
+            'away_id': int(away_team_id),
+            'game_date': str(game_date),
+        }).fetchall()
+
+    if not rows:
+        return None, None
+
+    home_scores, away_scores = [], []
+    for r in rows:
+        if int(r[0]) == int(home_team_id):
+            home_scores.append(float(r[2]))
+            away_scores.append(float(r[3]))
+        else:
+            home_scores.append(float(r[3]))
+            away_scores.append(float(r[2]))
+
+    return (
+        sum(home_scores) / len(home_scores),
+        sum(away_scores) / len(away_scores),
+    )
+
+
 def get_bad_night_pct(team_id, n_games=50):
     """Compute probability of a bad shooting night for a team."""
     from scipy import stats as scipy_stats
@@ -408,6 +526,7 @@ def build_features_for_upcoming_game(home_team_id, away_team_id,
             h.win_pct                 AS home_win_pct,
             h.home_avg_points         AS home_home_avg_pts,
             h.home_avg_points_allowed AS home_home_avg_pts_allowed,
+            h.avg_ft_rate             AS home_ft_rate,
 
             -- Away rolling stats (most recent)
             a.avg_points              AS away_avg_points,
@@ -420,6 +539,7 @@ def build_features_for_upcoming_game(home_team_id, away_team_id,
             a.win_pct                 AS away_win_pct,
             a.away_avg_points         AS away_away_avg_pts,
             a.away_avg_points_allowed AS away_away_avg_pts_allowed,
+            a.avg_ft_rate             AS away_ft_rate,
 
             ABS(h.avg_pace - a.avg_pace) AS pace_differential,
 
@@ -603,12 +723,14 @@ def build_features_for_upcoming_game(home_team_id, away_team_id,
     # Home court strength default
     row_dict['home_court_strength']   = 0.0
 
-    # Scoring variance defaults
-    row_dict['home_scoring_std']      = 12.0
-    row_dict['away_scoring_std']      = 12.0
-    row_dict['home_consistency']      = 1 / (1 + 12.0)
-    row_dict['away_consistency']      = 1 / (1 + 12.0)
-    row_dict['variance_differential'] = 0.0
+    # Scoring variance — compute from real game data
+    home_std = get_scoring_stats(home_team_id, game_date)
+    away_std = get_scoring_stats(away_team_id, game_date)
+    row_dict['home_scoring_std']      = home_std
+    row_dict['away_scoring_std']      = away_std
+    row_dict['home_consistency']      = 1 / (1 + home_std)
+    row_dict['away_consistency']      = 1 / (1 + away_std)
+    row_dict['variance_differential'] = home_std - away_std
 
     # Style defensive matchup defaults
     row_dict['home_def_vs_away_style'] = row_dict.get('home_def_rating', 112)
@@ -621,6 +743,27 @@ def build_features_for_upcoming_game(home_team_id, away_team_id,
     away_bad = get_bad_night_pct(away_team_id)
     row_dict['home_bad_night_pct'] = home_bad
     row_dict['away_bad_night_pct'] = away_bad
+
+    # Advanced rolling stats (oreb, tov, efg)
+    home_oreb, home_tov, home_efg = get_advanced_rolling_stats(home_team_id, game_date)
+    away_oreb, away_tov, away_efg = get_advanced_rolling_stats(away_team_id, game_date)
+    row_dict['home_oreb_pct'] = home_oreb
+    row_dict['away_oreb_pct'] = away_oreb
+    row_dict['home_tov_pct']  = home_tov
+    row_dict['away_tov_pct']  = away_tov
+    row_dict['home_efg_pct']  = home_efg
+    row_dict['away_efg_pct']  = away_efg
+
+    # In-series form features
+    in_series_home_avg, in_series_away_avg = get_in_series_stats(
+        home_team_id, away_team_id, game_date, season_type
+    )
+    home_roll = float(row_dict.get('home_avg_points', 112))
+    away_roll = float(row_dict.get('away_avg_points', 110))
+    row_dict['in_series_home_avg_pts'] = in_series_home_avg if in_series_home_avg is not None else home_roll
+    row_dict['in_series_away_avg_pts'] = in_series_away_avg if in_series_away_avg is not None else away_roll
+    row_dict['in_series_total_avg'] = row_dict['in_series_home_avg_pts'] + row_dict['in_series_away_avg_pts']
+    row_dict['in_series_margin'] = row_dict['in_series_home_avg_pts'] - row_dict['in_series_away_avg_pts']
 
     # Playoff pace penalty
     if season_type == 'Playoffs':
@@ -1141,7 +1284,7 @@ def get_rest_days(team_id, game_date):
     return max(0, min(5, (pd.Timestamp(game_date).date() - last_game_date).days))
 
 
-def calculate_ensemble_prediction(game, row_dict, home_pred_team, away_pred_team, player_results):
+def calculate_ensemble_prediction(game, row_dict, home_pred_team, away_pred_team, player_results, direct_margin_pred=None):
     """
     Final ensemble v2.
 
@@ -1150,9 +1293,16 @@ def calculate_ensemble_prediction(game, row_dict, home_pred_team, away_pred_team
     - Arbitrate margin instead of averaging opposing margin signals.
     - Disagreement lowers confidence through debug flags; it does not
       automatically shrink every game to 1 point.
+    - direct_margin_pred (from the margin model) is blended into team_margin
+      at 30% weight — it reduces compounding errors from separate home/away models.
     """
     team_total = float(home_pred_team + away_pred_team)
-    team_margin = float(home_pred_team - away_pred_team)
+    raw_team_margin = float(home_pred_team - away_pred_team)
+
+    if direct_margin_pred is not None:
+        team_margin = 0.70 * raw_team_margin + 0.30 * float(direct_margin_pred)
+    else:
+        team_margin = raw_team_margin
 
     row_dict['_home_pred_team'] = float(home_pred_team)
     row_dict['_away_pred_team'] = float(away_pred_team)
@@ -1284,7 +1434,8 @@ def predict_todays_games(prediction_date=None):
     is_backfill = prediction_date is not None
     print_header(prediction_date)
 
-    model_home, model_away = load_models()
+    model_home, model_away, model_margin = load_models()
+    calibration_model = load_calibration_model()
     games = get_todays_games(game_date=prediction_date, include_final=is_backfill)
 
     if not games:
@@ -1302,7 +1453,9 @@ def predict_todays_games(prediction_date=None):
     for game in games:
         prediction = predict_single_game(
             game, model_home, model_away,
-            injury_report, all_player_props
+            injury_report, all_player_props,
+            model_margin=model_margin,
+            calibration_model=calibration_model,
         )
         if prediction:
             predictions.append(prediction)
@@ -1335,7 +1488,7 @@ def fetch_shared_game_data():
     return injury_report, all_player_props
 
 
-def predict_single_game(game, model_home, model_away, injury_report, all_player_props):
+def predict_single_game(game, model_home, model_away, injury_report, all_player_props, model_margin=None, calibration_model=None):
     """Generate prediction for a single game."""
     print(f"\nBuilding features for {game['away_team']} @ {game['home_team']}...")
 
@@ -1347,7 +1500,9 @@ def predict_single_game(game, model_home, model_away, injury_report, all_player_
     row_dict['home_team'] = game['home_team']
     row_dict['away_team'] = game['away_team']
 
-    home_pred_team, away_pred_team = get_team_predictions(model_home, model_away, row_dict)
+    home_pred_team, away_pred_team, direct_margin_pred = get_team_predictions(
+        model_home, model_away, row_dict, model_margin
+    )
 
     game_props = match_player_props(all_player_props, game)
     player_results = get_player_predictions(game, row_dict, injury_report, game_props)
@@ -1357,7 +1512,8 @@ def predict_single_game(game, model_home, model_away, injury_report, all_player_
         row_dict,
         home_pred_team,
         away_pred_team,
-        player_results
+        player_results,
+        direct_margin_pred,
     )
 
     home_pred_final, away_pred_final, calibration_debug = calibrate_final_score(
@@ -1412,7 +1568,8 @@ def predict_single_game(game, model_home, model_away, injury_report, all_player_
         confidence,
         conf_emoji,
         factors,
-        debug={**ensemble_debug, **calibration_debug}
+        debug={**ensemble_debug, **calibration_debug},
+        calibration_model=calibration_model,
     )
 
 
@@ -1429,17 +1586,21 @@ def build_game_features(game):
     )
 
 
-def get_team_predictions(model_home, model_away, row_dict):
-    """Get predictions from team models"""
+def get_team_predictions(model_home, model_away, row_dict, model_margin=None):
+    """Get predictions from team models (and optionally the direct margin model)."""
     features = np.array([
         float(row_dict.get(f, 0) or 0)
         for f in FEATURE_COLS
     ]).reshape(1, -1)
-    
+
     home_pred = float(model_home.predict(features)[0])
     away_pred = float(model_away.predict(features)[0])
-    
-    return home_pred, away_pred
+
+    direct_margin = None
+    if model_margin is not None:
+        direct_margin = float(model_margin.predict(features)[0])
+
+    return home_pred, away_pred, direct_margin
 
 
 def match_player_props(all_player_props, game):
@@ -1860,6 +2021,7 @@ def blend_game_total(game, team_total, player_total, player_results):
 
     total_drag = 0.0
     if game.get('season_type') == 'Playoffs':
+        total_drag += 3.5  # base calibration: model runs ~3.4 pts hot on playoff totals
         game_num = int(game.get('series_game_num', 1) or 1)
         if game_num >= 3:
             total_drag += 0.8
@@ -1941,14 +2103,17 @@ def calculate_confidence(home_pred, away_pred, row_dict,
     return confidence, conf_emoji
 
 def build_prediction_dict(game, home_pred, away_pred, home_pred_team, away_pred_team,
-                          player_results, confidence, conf_emoji, factors, debug=None):
+                          player_results, confidence, conf_emoji, factors, debug=None,
+                          calibration_model=None):
     """Build prediction dictionary with all metadata."""
+    from model.calibrate import predict_win_probability
+
     debug = debug or {}
     margin = abs(home_pred - away_pred)
     predicted_winner = game['home_team'] if home_pred > away_pred else game['away_team']
 
-    win_prob_favorite = 1 / (1 + np.exp(-margin / 9.5))
-    home_win_prob = win_prob_favorite if home_pred > away_pred else 1 - win_prob_favorite
+    home_margin = float(home_pred - away_pred)
+    home_win_prob = predict_win_probability(home_margin, calibration_model)
 
     vegas_line = build_vegas_line(game)
 
@@ -1976,6 +2141,8 @@ def build_prediction_dict(game, home_pred, away_pred, home_pred_team, away_pred_
         'away_player_preds': player_results['away_preds'],
         'series_home_wins': game.get('home_series_wins'),
         'series_away_wins': game.get('away_series_wins'),
+        'vegas_total': game.get('vegas_total'),
+        'vegas_spread': game.get('vegas_spread'),
         'debug': debug,
     }
 
