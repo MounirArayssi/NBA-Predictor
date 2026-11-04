@@ -37,11 +37,25 @@ def fetch_and_store_games(season=CURRENT_SEASON, season_type="Playoffs"):
                 nba_game_id=game_id
             ).first()
 
-            if existing:
-                print(f"  Skipping game {game_id} — already exists")
-                continue
-
             game_rows = games_df[games_df['GAME_ID'] == game_id]
+
+            if existing:
+                # Games inserted earlier as 'scheduled' (via fetch_upcoming_games)
+                # still need their final scores filled in
+                if not existing.is_final and len(game_rows) >= 2 \
+                        and game_rows['PTS'].notna().all():
+                    home_team = session.get(Team, existing.home_team_id)
+                    for _, row in game_rows.iterrows():
+                        if int(row['TEAM_ID']) == home_team.nba_team_id:
+                            existing.home_score = int(row['PTS'])
+                        else:
+                            existing.away_score = int(row['PTS'])
+                    existing.is_final = True
+                    existing.status   = 'final'
+                    print(f"  Updated final score for game {game_id}")
+                else:
+                    print(f"  Skipping game {game_id} — already exists")
+                continue
 
             if len(game_rows) < 2:
                 print(f"  Skipping game {game_id} — incomplete data")
@@ -150,14 +164,20 @@ def fetch_upcoming_games(season=CURRENT_SEASON, days_ahead=8):
                         print(f"    ⚠️  Team not found for game {game_id}")
                         continue
 
-                    # Determine season type
-                    game_id_prefix = game_id[:4]
-                    if game_id_prefix == '0042':
-                        season_type = 'Playoffs'
-                    elif game_id_prefix == '0022':
+                    # Determine season type from the NBA game-ID prefix:
+                    # 001x = Preseason, 002x = Regular Season, 004x = Playoffs,
+                    # 005x = Play-In, 003x = All-Star.
+                    game_id_prefix = game_id[:3]
+                    if game_id_prefix == '001':
+                        season_type = 'Preseason'
+                    elif game_id_prefix == '002':
                         season_type = 'Regular Season'
-                    else:
+                    elif game_id_prefix == '004':
                         season_type = 'Playoffs'
+                    elif game_id_prefix == '005':
+                        season_type = 'Play-In'
+                    else:
+                        season_type = 'Regular Season'
 
                     game = Game(
                         nba_game_id  = game_id,
@@ -187,7 +207,7 @@ def fetch_upcoming_games(season=CURRENT_SEASON, days_ahead=8):
 
 if __name__ == "__main__":
     # Fetch historical games
-    seasons = ["2025-26", "2024-25", "2023-24"]
+    seasons = ["2026-27", "2025-26", "2024-25", "2023-24"]
     for season in seasons:
         fetch_and_store_games(season=season, season_type="Regular Season")
         fetch_and_store_games(season=season, season_type="Playoffs")

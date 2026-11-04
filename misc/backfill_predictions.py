@@ -107,6 +107,7 @@ def _update_series():
     from sqlalchemy import text
     from sqlalchemy.orm import Session
     from data.storage.db import engine
+    from config.settings import CURRENT_SEASON
     query = text("""
         WITH ordered_series AS (
             SELECT
@@ -127,7 +128,7 @@ def _update_series():
                 ) AS game_num
             FROM games g
             WHERE g.season_type = 'Playoffs'
-            AND g.season = '2025-26'
+            AND g.season = :season
         ),
         series_wins AS (
             SELECT
@@ -167,7 +168,7 @@ def _update_series():
         WHERE games.game_id = sw.game_id
     """)
     with Session(engine) as session:
-        session.execute(query)
+        session.execute(query, {"season": CURRENT_SEASON})
         session.commit()
 
 

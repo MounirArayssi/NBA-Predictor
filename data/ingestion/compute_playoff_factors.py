@@ -292,12 +292,21 @@ def compute_team_playoff_elevation(factor_dict,
                                    away_won_last=False,
                                    is_elimination=False,
                                    home_series_wins=0,
-                                   away_series_wins=0):
+                                   away_series_wins=0,
+                                   season=None):
     """
     Aggregate player playoff factors to team level.
     Applies series context adjustments on top of base elevation.
     Conservative scaling (0.2) and asymmetric cap (-1.5 to +3).
+
+    Picks up the most recent season that actually has playoff data. Early
+    in a new season (before that season's own playoffs exist), CURRENT_SEASON
+    has nothing to query yet, so this falls back to PREVIOUS_SEASON rather
+    than silently returning an empty roster (which would zero out the
+    elevation feature for every team).
     """
+    from config.settings import CURRENT_SEASON, PREVIOUS_SEASON
+
     print("\nComputing team playoff elevation scores...")
 
     query = text("""
@@ -312,7 +321,7 @@ def compute_team_playoff_elevation(factor_dict,
         FROM player_box_scores pbs
         JOIN teams t ON pbs.team_id = t.team_id
         JOIN games g ON pbs.game_id = g.game_id
-        WHERE g.season = '2025-26'
+        WHERE g.season = :season
         AND pbs.minutes_played >= 15
         AND pbs.usage_rate IS NOT NULL
         GROUP BY pbs.player_id, pbs.team_id, t.abbreviation
@@ -321,7 +330,13 @@ def compute_team_playoff_elevation(factor_dict,
         AND AVG(pbs.minutes_played) >= 9.5
     """)
 
-    roster_df = pd.read_sql(query, engine)
+    season = season or CURRENT_SEASON
+    roster_df = pd.read_sql(query, engine, params={"season": season})
+
+    if roster_df.empty and season != PREVIOUS_SEASON:
+        print(f"  No playoff data for {season} yet — falling back to {PREVIOUS_SEASON}")
+        season = PREVIOUS_SEASON
+        roster_df = pd.read_sql(query, engine, params={"season": season})
 
     team_elevations = {}
     team_coverage   = {}

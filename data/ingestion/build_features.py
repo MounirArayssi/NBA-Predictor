@@ -141,7 +141,118 @@ def build_feature_dataset(window=10):
     df = add_quarter_features(df)
     df = add_series_form_features(df)
     df = add_advanced_rolling_features(df)
+    df = add_availability_features(df)
     return df
+
+
+# Availability — rotation players absent from a game.
+# Rotation = played >= ROT_MIN_GAMES of the team's last ROT_WINDOW games at >= ROT_MIN_MINUTES avg.
+ROT_WINDOW = 10
+ROT_MIN_GAMES = 3
+ROT_MIN_MINUTES = 15
+
+
+def _load_played_box_scores(before_date=None):
+    query = """
+        SELECT b.game_id, b.team_id, b.player_id, b.minutes_played, b.points,
+               g.game_date, p.full_name
+        FROM player_box_scores b
+        JOIN games g USING (game_id)
+        JOIN players p USING (player_id)
+        WHERE g.is_final = TRUE AND b.minutes_played > 0
+    """
+    params = {}
+    if before_date is not None:
+        query += " AND g.game_date < :before_date"
+        params['before_date'] = str(before_date)
+    box = pd.read_sql(text(query), engine, params=params)
+    box['game_date'] = pd.to_datetime(box['game_date'])
+    return box
+
+
+def _rotation(window):
+    agg = window.groupby('player_id').agg(
+        gp=('game_id', 'nunique'), mins=('minutes_played', 'mean'),
+        pts=('points', 'mean'), full_name=('full_name', 'last'))
+    return agg[(agg.gp >= ROT_MIN_GAMES) & (agg.mins >= ROT_MIN_MINUTES)]
+
+
+def _still_on_team(players, team_id, last_team_by_date, as_of):
+    """Drop players who have since appeared for another team (traded/released)."""
+    if players.empty:
+        return players
+    prior = last_team_by_date[
+        last_team_by_date.player_id.isin(players.index) &
+        (last_team_by_date.game_date < as_of)]
+    latest = prior.groupby('player_id')['team_id'].last()
+    return players[latest.reindex(players.index).eq(team_id).values]
+
+
+def compute_availability():
+    """
+    Historical availability from box scores: for every team-game, the minutes and
+    points per game of rotation players who did not play.
+    """
+    box = _load_played_box_scores()
+    last_team_by_date = box.sort_values('game_date')[['player_id', 'game_date', 'team_id']]
+
+    rows = []
+    for team_id, tb in box.groupby('team_id'):
+        games = tb[['game_id', 'game_date']].drop_duplicates().sort_values('game_date')
+        by_game = {gid: g for gid, g in tb.groupby('game_id')}
+        gids = games['game_id'].tolist()
+        dates = games['game_date'].tolist()
+        for i, gid in enumerate(gids):
+            if i == 0:
+                rows.append((gid, team_id, 0.0, 0.0))
+                continue
+            window = pd.concat([by_game[g] for g in gids[max(0, i - ROT_WINDOW):i]])
+            rot = _rotation(window)
+            absent = rot[~rot.index.isin(by_game[gid]['player_id'])]
+            absent = _still_on_team(absent, team_id, last_team_by_date, dates[i])
+            rows.append((gid, team_id, float(absent['mins'].astype(float).sum()),
+                         float(absent['pts'].sum())))
+    return pd.DataFrame(rows, columns=['game_id', 'team_id', 'missing_min', 'missing_pts'])
+
+
+def add_availability_features(df):
+    print("  Computing availability (missing rotation players)...")
+    avail = compute_availability()
+    for side in ('home', 'away'):
+        a = avail.rename(columns={'team_id': f'{side}_team_id',
+                                  'missing_min': f'{side}_missing_min',
+                                  'missing_pts': f'{side}_missing_pts'})
+        df = df.merge(a, on=['game_id', f'{side}_team_id'], how='left')
+    return df
+
+
+def normalize_player_name(name):
+    import unicodedata
+    name = unicodedata.normalize('NFKD', str(name)).encode('ascii', 'ignore').decode()
+    return ' '.join(name.lower().replace('.', '').split())
+
+
+def compute_live_availability(team_id, game_date, out_names):
+    """
+    Availability for an unplayed game: rotation players (same definition as training)
+    who are listed Out on the injury report.
+    Returns (missing_min, missing_pts, missing_player_names).
+    """
+    box = _load_played_box_scores(before_date=game_date)
+    tb = box[box.team_id == team_id]
+    if tb.empty or not out_names:
+        return 0.0, 0.0, []
+
+    recent = (tb[['game_id', 'game_date']].drop_duplicates()
+              .sort_values('game_date').tail(ROT_WINDOW)['game_id'])
+    rot = _rotation(tb[tb.game_id.isin(recent)])
+    last_team_by_date = box.sort_values('game_date')[['player_id', 'game_date', 'team_id']]
+    rot = _still_on_team(rot, team_id, last_team_by_date, pd.Timestamp(game_date))
+
+    out = {normalize_player_name(n) for n in out_names}
+    absent = rot[rot['full_name'].map(normalize_player_name).isin(out)]
+    return (float(absent['mins'].astype(float).sum()), float(absent['pts'].sum()),
+            absent['full_name'].tolist())
 
 
 def add_rest_days(df):
@@ -711,6 +822,7 @@ def add_home_court_strength(df):
     print("  Computing home court strength...")
 
     from sqlalchemy import text
+    from config.settings import CURRENT_SEASON, PREVIOUS_SEASON
 
     query = text("""
         SELECT
@@ -725,12 +837,15 @@ def add_home_court_strength(df):
             ON tbs_away.game_id = g.game_id
             AND tbs_away.team_id = g.away_team_id
         WHERE g.is_final = TRUE
-        AND g.season IN ('2024-25', '2025-26')
+        AND g.season IN (:current_season, :previous_season)
         GROUP BY g.home_team_id
         HAVING COUNT(*) >= 20
     """)
 
-    home_margins = pd.read_sql(query, engine)
+    home_margins = pd.read_sql(query, engine, params={
+        "current_season": CURRENT_SEASON,
+        "previous_season": PREVIOUS_SEASON,
+    })
 
     # League average home margin
     league_avg_margin = float(home_margins['avg_home_margin'].mean())
@@ -1155,10 +1270,21 @@ def add_advanced_rolling_features(df):
     return df
 
 
+# Weight (in games) the rolling average gets when blended with in-series form.
+# A 1-2 game series average is mostly noise, so it's shrunk toward the rolling avg.
+SERIES_SHRINK_K = 3
+
+
+def shrink_series_avg(series_avg, n_games, rolling_avg):
+    """Blend an n-game in-series average with the team's rolling average."""
+    return (n_games * series_avg + SERIES_SHRINK_K * rolling_avg) / (n_games + SERIES_SHRINK_K)
+
+
 def add_series_form_features(df):
     """
     For each playoff game, compute the avg scores from games already
-    played in this series. Game 1 falls back to rolling avg.
+    played in this series, shrunk toward the rolling avg by series length.
+    Game 1 falls back to rolling avg.
     Regular-season rows get their rolling avg as a neutral fill.
     """
     print("  Computing in-series form features...")
@@ -1191,8 +1317,11 @@ def add_series_form_features(df):
                 else:
                     home_scores.append(g['away_score'])
                     away_scores.append(g['home_score'])
-            in_series_home.append(sum(home_scores) / len(home_scores))
-            in_series_away.append(sum(away_scores) / len(away_scores))
+            n = len(home_scores)
+            in_series_home.append(shrink_series_avg(
+                sum(home_scores) / n, n, float(row['home_avg_points'])))
+            in_series_away.append(shrink_series_avg(
+                sum(away_scores) / n, n, float(row['away_avg_points'])))
         else:
             in_series_home.append(float(row['home_avg_points']))
             in_series_away.append(float(row['away_avg_points']))

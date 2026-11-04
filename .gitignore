@@ -24,10 +24,15 @@ logs/
 .DS_Store
 Thumbs.db
 .vscode/
-.idea/\
+.idea/
 
 
 .claude
 
 model/*.png
 visuals/*.png
+backups/
+
+# Twitter bot (kept local only)
+twitter/
+tweet_results_*.json

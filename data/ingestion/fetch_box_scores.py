@@ -42,6 +42,22 @@ def parse_minutes(min_str):
         return None
 
 
+def create_player_from_box_row(session, row):
+    """Add a player seen in a box score but missing from the roster-based players table."""
+    first = str(row.get('firstName') or '').strip()
+    last  = str(row.get('familyName') or '').strip()
+    player = Player(
+        nba_player_id = int(row['personId']),
+        full_name     = f"{first} {last}".strip() or str(row.get('nameI')),
+        first_name    = first or None,
+        last_name     = last or None,
+        is_active     = False,   # fetch_players reactivates if on a current roster
+    )
+    session.add(player)
+    session.flush()
+    return player
+
+
 def sync_game_scores(session, game):
     home_bs = session.query(TeamBoxScore).filter_by(
         game_id=game.game_id, is_home=True
@@ -134,8 +150,13 @@ def fetch_box_scores_for_game(session, game):
             nba_team_id=int(row['teamId'])
         ).first()
 
-        if not player or not team:
+        if not team:
             continue
+
+        # players only holds current-season rosters, so anyone who has since
+        # left the league would otherwise be silently dropped from the box score
+        if not player:
+            player = create_player_from_box_row(session, row)
 
         existing = session.query(PlayerBoxScore).filter_by(
             game_id=game.game_id,

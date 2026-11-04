@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from data.storage.db import engine
 from data.storage.models import Team
 from model.train_players import PLAYER_FEATURE_COLS
+from config.settings import CURRENT_SEASON
 
 def get_player_weights(usage_rate):
     """Stars get more weight in team total, role players less."""
@@ -21,11 +22,14 @@ def get_player_weights(usage_rate):
 
 def get_playoff_performance_factor(player_id, team_id,
                                     reg_usage, reg_points,
-                                    season='2025-26'):
+                                    season=CURRENT_SEASON, game_date=None):
     """
     Compare playoff efficiency to regular season efficiency.
     Uses points-per-usage as the metric so usage changes
     don't falsely trigger slump detection.
+
+    Only looks at series games strictly before `game_date`, so backfilling
+    an earlier game in a series doesn't see how later games went.
     """
     query = text("""
         SELECT
@@ -42,6 +46,7 @@ def get_playoff_performance_factor(player_id, team_id,
         AND g.season        = :season
         AND g.is_final      = TRUE
         AND pbs.minutes_played >= 10
+        AND (:game_date IS NULL OR g.game_date < :game_date)
         ORDER BY g.game_date DESC
         LIMIT 4
     """)
@@ -50,7 +55,8 @@ def get_playoff_performance_factor(player_id, team_id,
         result = conn.execute(query, {
             'player_id': int(player_id),
             'team_id':   int(team_id),
-            'season':    season
+            'season':    season,
+            'game_date': str(game_date) if game_date else None,
         }).fetchall()
 
     if not result:
@@ -96,18 +102,21 @@ def get_playoff_performance_factor(player_id, team_id,
 
     return 1.0, False, False
 
-def get_last_game_boost(player_id, team_id, avg_points, season='2025-26'):
+def get_last_game_boost(player_id, team_id, avg_points, season=CURRENT_SEASON):
     """Disabled - relying on blending and efficiency factors only."""
     return 1.0, None
 
-def get_blended_playoff_stats(player, team_id, is_playoff):
+def get_blended_playoff_stats(player, team_id, is_playoff, game_date=None, season=CURRENT_SEASON):
     """
     Blend regular season and playoff stats based on playoff sample size.
     More playoff games = more weight on playoff data.
+
+    Bounded to games before `game_date` so backfilling an earlier game in a
+    series doesn't count playoff games that happen later in the series.
     """
     if not is_playoff:
         return player  # No blending needed for regular season
-    
+
     # Count playoff games for this player
     query = text("""
         SELECT COUNT(*) as playoff_games
@@ -116,15 +125,18 @@ def get_blended_playoff_stats(player, team_id, is_playoff):
         WHERE pbs.player_id = :player_id
         AND pbs.team_id = :team_id
         AND g.season_type = 'Playoffs'
-        AND g.season = '2025-26'
+        AND g.season = :season
         AND g.is_final = TRUE
         AND pbs.minutes_played >= 5
+        AND (:game_date IS NULL OR g.game_date < :game_date)
     """)
-    
+
     with engine.connect() as conn:
         result = conn.execute(query, {
             'player_id': int(player['player_id']),
-            'team_id': int(team_id)
+            'team_id': int(team_id),
+            'game_date': str(game_date) if game_date else None,
+            'season': season,
         }).fetchone()
     
     playoff_games_count = result[0] if result else 0
@@ -145,7 +157,7 @@ def get_blended_playoff_stats(player, team_id, is_playoff):
     
     # Get regular season L10 stats
     reg_query = text("""
-        SELECT 
+        SELECT
             avg_points,
             avg_rebounds,
             avg_assists,
@@ -156,14 +168,16 @@ def get_blended_playoff_stats(player, team_id, is_playoff):
         AND team_id = :team_id
         AND "window" = 10
         AND season_type = 'Regular Season'
+        AND (:game_date IS NULL OR as_of_date <= :game_date)
         ORDER BY as_of_date DESC
         LIMIT 1
     """)
-    
+
     with engine.connect() as conn:
         reg_result = conn.execute(reg_query, {
             'player_id': int(player['player_id']),
-            'team_id': int(team_id)
+            'team_id': int(team_id),
+            'game_date': str(game_date) if game_date else None,
         }).fetchone()
     
     if not reg_result:
@@ -202,14 +216,17 @@ def load_player_models():
     with open('model/player_models.pkl', 'rb') as f:
         return pickle.load(f)
 
-def get_playoff_series_minutes(team_id, season='2025-26'):
+def get_playoff_series_minutes(team_id, season=CURRENT_SEASON, game_date=None):
     """
     Get each player's actual minutes from games already
     played in this playoff series.
     Returns dict: {player_id: avg_playoff_minutes}
+
+    Bounded to games before `game_date` so backfilling an earlier game in a
+    series doesn't average in minutes from games later in that series.
     """
     query = text("""
-        SELECT 
+        SELECT
             pbs.player_id,
             AVG(pbs.minutes_played) as playoff_avg_minutes,
             COUNT(*) as games_played
@@ -220,13 +237,15 @@ def get_playoff_series_minutes(team_id, season='2025-26'):
         AND g.season        = :season
         AND g.is_final      = TRUE
         AND pbs.minutes_played >= 1
+        AND (:game_date IS NULL OR g.game_date < :game_date)
         GROUP BY pbs.player_id
     """)
 
     with engine.connect() as conn:
         result = conn.execute(query, {
             'team_id': int(team_id),
-            'season':  season
+            'season':  season,
+            'game_date': str(game_date) if game_date else None,
         })
         df = pd.DataFrame(result.fetchall(), columns=result.keys())
 
@@ -238,11 +257,19 @@ def get_playoff_series_minutes(team_id, season='2025-26'):
         df['playoff_avg_minutes'].astype(float)
     ))
 
-def get_team_roster(team_id, game_date=None, is_playoff=False):
+def get_team_roster(team_id, game_date=None, is_playoff=False, season=CURRENT_SEASON):
     """
     Get current rotation players for a team.
     Filters to current season only.
+
+    `game_date` bounds every lookup to data available as of that date, so
+    backfilling a past game doesn't see rolling stats or recent-games counts
+    computed from games that hadn't been played yet at prediction time.
     """
+    from datetime import date as date_cls
+    if game_date is None:
+        game_date = date_cls.today()
+
     limit = 9 if is_playoff else 12
     min_minutes = 10 if is_playoff else 15
     min_games = 3 if is_playoff else 7
@@ -286,20 +313,22 @@ def get_team_roster(team_id, game_date=None, is_playoff=False):
                 pbs.player_id,
                 COUNT(*) AS recent_games
             FROM player_box_scores pbs
-            JOIN games g 
+            JOIN games g
                 ON pbs.game_id = g.game_id
             WHERE pbs.team_id = :team_id
-              AND g.season = '2025-26'
+              AND g.season = :season
               AND pbs.minutes_played >= 10
+              AND g.game_date <= :game_date
               AND g.game_date >= (
                     SELECT MAX(g2.game_date) - INTERVAL '65 days'
                     FROM games g2
-                    WHERE g2.season = '2025-26'
+                    WHERE g2.season = :season
                       AND g2.is_final = TRUE
+                      AND g2.game_date <= :game_date
               )
             GROUP BY pbs.player_id
             HAVING COUNT(*) >= :min_games
-        ) recent 
+        ) recent
             ON recent.player_id = p.player_id
 
 JOIN player_rolling_stats prs
@@ -312,6 +341,7 @@ JOIN player_rolling_stats prs
         WHERE player_id = p.player_id
           AND team_id = :team_id
           AND "window" = 10
+          AND as_of_date <= :game_date
    )
 
 JOIN player_rolling_stats prs5
@@ -324,6 +354,7 @@ JOIN player_rolling_stats prs5
         WHERE player_id = p.player_id
           AND team_id = :team_id
           AND "window" = 5
+          AND as_of_date <= :game_date
    )
 
         WHERE prs.avg_minutes >= :min_minutes
@@ -336,6 +367,8 @@ JOIN player_rolling_stats prs5
     with engine.connect() as conn:
         result = conn.execute(query, {
             "team_id": int(team_id),
+            "game_date": str(game_date),
+            "season": season,
             "limit": limit,
             "min_minutes": min_minutes,
             "min_games": min_games,
@@ -407,23 +440,32 @@ def predict_team_player_stats(team_id, opponent_team_id,
                                game_date=None,
                                injury_report=None,
                                team_abbr=None,
-                               player_props=None):
+                               player_props=None,
+                               season=None):
     """
     Predict stat lines for all rotation players on a team.
     Returns player predictions and team totals.
+
+    `season` should be the season the game actually belongs to (e.g. from
+    the game row in the DB). Defaults to CURRENT_SEASON only when the
+    caller doesn't know it (live "today" predictions), so backfilling a
+    past season still looks at that season's own data.
     """
     if game_date is None:
         game_date = date.today()
+
+    if season is None:
+        season = CURRENT_SEASON
 
     if player_props is None:
         player_props = {}
 
     models = load_player_models()
-    roster = get_team_roster(team_id, game_date, is_playoff=is_playoff)
+    roster = get_team_roster(team_id, game_date, is_playoff=is_playoff, season=season)
 
     playoff_minutes_map = {}
     if is_playoff:
-        playoff_minutes_map = get_playoff_series_minutes(team_id)
+        playoff_minutes_map = get_playoff_series_minutes(team_id, season=season, game_date=game_date)
 
     if roster.empty:
         return [], 0, 0, 0
@@ -623,7 +665,7 @@ def predict_team_player_stats(team_id, opponent_team_id,
     all_players = []
 
     for i, (_, player) in enumerate(roster.iterrows()):
-        player = get_blended_playoff_stats(player, team_id, is_playoff)
+        player = get_blended_playoff_stats(player, team_id, is_playoff, game_date=game_date, season=season)
         usage = float(player.get('player_avg_usage_l10', 0) or 0)
         minutes = float(player.get('player_avg_min_l10', 0) or 0)
 
@@ -654,7 +696,9 @@ def predict_team_player_stats(team_id, opponent_team_id,
                 int(player['player_id']),
                 team_id,
                 reg_usage=float(player.get('player_avg_usage_l10', 0.15) or 0.15),
-                reg_points=float(player.get('player_avg_points_l10', pred_pts) or pred_pts)
+                reg_points=float(player.get('player_avg_points_l10', pred_pts) or pred_pts),
+                game_date=game_date,
+                season=season,
             )
 
             factor = float(factor)

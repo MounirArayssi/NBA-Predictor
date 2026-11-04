@@ -11,6 +11,7 @@ from sqlalchemy import text
 from data.storage.db import engine
 from data.storage.models import Game, Team, GameOdds
 from model.train import FEATURE_COLS
+from data.ingestion.build_features import shrink_series_avg, compute_live_availability
 from data.ingestion.fetch_injuries import fetch_injury_report
 from data.ingestion.fetch_odds import fetch_todays_player_props
 
@@ -343,11 +344,12 @@ def get_todays_games(game_date=None, include_final=False):
                 'away_team':         away.abbreviation if away else '???',
                 'home_team_id':      g.home_team_id,
                 'away_team_id':      g.away_team_id,
+                'season':            g.season,
                 'season_type':       g.season_type,
                 'game_date':         g.game_date,
                 'series_game_num':   g.series_game_num or 1,
-                'home_series_wins':  g.series_home_wins or 0,
-                'away_series_wins':  g.series_away_wins or 0,
+                'home_series_wins':  g.home_series_wins or 0,
+                'away_series_wins':  g.away_series_wins or 0,
                 'vegas_total':       odds.total_line if odds else None,
                 'vegas_spread':      odds.home_spread if odds else None,
                 'vegas_home':        odds.vegas_home_implied if odds else None,
@@ -417,11 +419,12 @@ def get_scoring_stats(team_id, game_date, n=10):
 
 def get_in_series_stats(home_team_id, away_team_id, game_date, season_type):
     """
-    Return (avg_home_pts, avg_away_pts) from prior games in this playoff series.
-    Returns (None, None) for regular season or Game 1 of a series.
+    Return (avg_home_pts, avg_away_pts, n_games) from prior games in this
+    playoff series (current season only).
+    Returns (None, None, 0) for regular season or Game 1 of a series.
     """
     if season_type != 'Playoffs':
-        return None, None
+        return None, None, 0
 
     q = text("""
         SELECT home_team_id, away_team_id, home_score, away_score
@@ -429,6 +432,11 @@ def get_in_series_stats(home_team_id, away_team_id, game_date, season_type):
         WHERE is_final = TRUE
         AND season_type = 'Playoffs'
         AND game_date < :game_date
+        AND season = (
+            SELECT season FROM games
+            WHERE game_date <= :game_date
+            ORDER BY game_date DESC LIMIT 1
+        )
         AND (
             (home_team_id = :home_id AND away_team_id = :away_id)
             OR  (home_team_id = :away_id AND away_team_id = :home_id)
@@ -443,7 +451,7 @@ def get_in_series_stats(home_team_id, away_team_id, game_date, season_type):
         }).fetchall()
 
     if not rows:
-        return None, None
+        return None, None, 0
 
     home_scores, away_scores = [], []
     for r in rows:
@@ -457,11 +465,16 @@ def get_in_series_stats(home_team_id, away_team_id, game_date, season_type):
     return (
         sum(home_scores) / len(home_scores),
         sum(away_scores) / len(away_scores),
+        len(home_scores),
     )
 
 
-def get_bad_night_pct(team_id, n_games=50):
-    """Compute probability of a bad shooting night for a team."""
+def get_bad_night_pct(team_id, game_date=None, n_games=50):
+    """Compute probability of a bad shooting night for a team.
+
+    Bounded to games before `game_date` so backfilled predictions don't see
+    shooting data from games that hadn't happened yet at prediction time.
+    """
     from scipy import stats as scipy_stats
 
     q = text("""
@@ -471,6 +484,7 @@ def get_bad_night_pct(team_id, n_games=50):
         WHERE tbs.team_id = :team_id
         AND g.is_final = TRUE
         AND tbs.fg_pct IS NOT NULL
+        AND (:game_date IS NULL OR g.game_date < :game_date)
         ORDER BY g.game_date DESC
         LIMIT :n
     """)
@@ -478,6 +492,7 @@ def get_bad_night_pct(team_id, n_games=50):
     with engine.connect() as conn:
         result = conn.execute(q, {
             'team_id': int(team_id),
+            'game_date': str(game_date) if game_date else None,
             'n': n_games
         }).fetchall()
 
@@ -567,6 +582,7 @@ def build_features_for_upcoming_game(home_team_id, away_team_id,
             AND h.as_of_date = (
                 SELECT MAX(as_of_date) FROM team_rolling_stats
                 WHERE team_id = :home_team_id AND "window" = 10
+                AND as_of_date <= :game_date
             )
 
         JOIN team_rolling_stats a ON a.team_id = :away_team_id
@@ -574,6 +590,7 @@ def build_features_for_upcoming_game(home_team_id, away_team_id,
             AND a.as_of_date = (
                 SELECT MAX(as_of_date) FROM team_rolling_stats
                 WHERE team_id = :away_team_id AND "window" = 10
+                AND as_of_date <= :game_date
             )
 
         JOIN team_rolling_stats h7 ON h7.team_id = :home_team_id
@@ -581,6 +598,7 @@ def build_features_for_upcoming_game(home_team_id, away_team_id,
             AND h7.as_of_date = (
                 SELECT MAX(as_of_date) FROM team_rolling_stats
                 WHERE team_id = :home_team_id AND "window" = 7
+                AND as_of_date <= :game_date
             )
 
         JOIN team_rolling_stats a7 ON a7.team_id = :away_team_id
@@ -588,6 +606,7 @@ def build_features_for_upcoming_game(home_team_id, away_team_id,
             AND a7.as_of_date = (
                 SELECT MAX(as_of_date) FROM team_rolling_stats
                 WHERE team_id = :away_team_id AND "window" = 7
+                AND as_of_date <= :game_date
             )
 
         LEFT JOIN games g2
@@ -739,8 +758,8 @@ def build_features_for_upcoming_game(home_team_id, away_team_id,
     row_dict['away_def_style_edge']    = 0.0
 
     # Compute real bad night probability
-    home_bad = get_bad_night_pct(home_team_id)
-    away_bad = get_bad_night_pct(away_team_id)
+    home_bad = get_bad_night_pct(home_team_id, game_date)
+    away_bad = get_bad_night_pct(away_team_id, game_date)
     row_dict['home_bad_night_pct'] = home_bad
     row_dict['away_bad_night_pct'] = away_bad
 
@@ -755,13 +774,19 @@ def build_features_for_upcoming_game(home_team_id, away_team_id,
     row_dict['away_efg_pct']  = away_efg
 
     # In-series form features
-    in_series_home_avg, in_series_away_avg = get_in_series_stats(
+    in_series_home_avg, in_series_away_avg, n_series = get_in_series_stats(
         home_team_id, away_team_id, game_date, season_type
     )
     home_roll = float(row_dict.get('home_avg_points', 112))
     away_roll = float(row_dict.get('away_avg_points', 110))
-    row_dict['in_series_home_avg_pts'] = in_series_home_avg if in_series_home_avg is not None else home_roll
-    row_dict['in_series_away_avg_pts'] = in_series_away_avg if in_series_away_avg is not None else away_roll
+    row_dict['in_series_home_avg_pts'] = (
+        shrink_series_avg(in_series_home_avg, n_series, home_roll)
+        if in_series_home_avg is not None else home_roll
+    )
+    row_dict['in_series_away_avg_pts'] = (
+        shrink_series_avg(in_series_away_avg, n_series, away_roll)
+        if in_series_away_avg is not None else away_roll
+    )
     row_dict['in_series_total_avg'] = row_dict['in_series_home_avg_pts'] + row_dict['in_series_away_avg_pts']
     row_dict['in_series_margin'] = row_dict['in_series_home_avg_pts'] - row_dict['in_series_away_avg_pts']
 
@@ -1499,6 +1524,7 @@ def predict_single_game(game, model_home, model_away, injury_report, all_player_
 
     row_dict['home_team'] = game['home_team']
     row_dict['away_team'] = game['away_team']
+    add_live_availability(row_dict, game, injury_report)
 
     home_pred_team, away_pred_team, direct_margin_pred = get_team_predictions(
         model_home, model_away, row_dict, model_margin
@@ -1586,6 +1612,23 @@ def build_game_features(game):
     )
 
 
+def add_live_availability(row_dict, game, injury_report):
+    """Fill the team model's availability features from the injury report."""
+    for side in ('home', 'away'):
+        out_names = [
+            p['name'] for p in (injury_report or {}).get(game[f'{side}_team'], [])
+            if p['status'] in ['Out', 'Doubtful']
+        ]
+        missing_min, missing_pts, names = compute_live_availability(
+            game[f'{side}_team_id'], game['game_date'], out_names
+        )
+        row_dict[f'{side}_missing_min'] = missing_min
+        row_dict[f'{side}_missing_pts'] = missing_pts
+        if names:
+            print(f"  📉 {game[f'{side}_team']} missing {missing_pts:.1f} pts/g "
+                  f"of rotation scoring: {', '.join(names)}")
+
+
 def get_team_predictions(model_home, model_away, row_dict, model_margin=None):
     """Get predictions from team models (and optionally the direct margin model)."""
     features = np.array([
@@ -1629,9 +1672,10 @@ def get_player_predictions(game, row_dict, injury_report, game_props):
             team_pace=float(row_dict.get('home_pace', 98)),
             injury_report=injury_report,
             team_abbr=game['home_team'],
-            player_props=game_props
+            player_props=game_props,
+            season=game.get('season'),
         )
-        
+
         away_preds, away_pts, _, _ = predict_team_player_stats(
             team_id=game['away_team_id'],
             opponent_team_id=game['home_team_id'],
@@ -1643,9 +1687,10 @@ def get_player_predictions(game, row_dict, injury_report, game_props):
             team_pace=float(row_dict.get('away_pace', 98)),
             injury_report=injury_report,
             team_abbr=game['away_team'],
-            player_props=game_props
+            player_props=game_props,
+            season=game.get('season'),
         )
-        
+
         home_available = (
             home_pts is not None
             and len(home_preds or []) >= 5

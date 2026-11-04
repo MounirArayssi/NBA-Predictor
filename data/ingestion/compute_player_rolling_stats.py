@@ -11,6 +11,7 @@ from sqlalchemy import Column, Integer, Numeric, Date, DateTime, String, Foreign
 from sqlalchemy.sql import func
 from data.storage.db import engine
 from data.storage.models import Base, PlayerRollingStats
+from config.settings import CURRENT_SEASON
 
 def compute_player_rolling_stats(window=10):
     """
@@ -204,7 +205,7 @@ def compute_player_rolling_stats(window=10):
     print(f"✅ Player rolling stats complete — {records_added} records added")
 
 
-def compute_playoff_rolling_stats(window=5, season='2025-26'):
+def compute_playoff_rolling_stats(window=5, season=CURRENT_SEASON):
     """
     Compute rolling stats using ONLY playoff games.
     This prevents regular season data from diluting playoff breakouts.

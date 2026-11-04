@@ -62,12 +62,9 @@ FEATURE_COLS = [
     'is_elimination',
     'series_pressure',
 
-    # Scoring variance
+    # Scoring variance (consistency / variance_differential removed — rescaled copies of std)
     'home_scoring_std',
     'away_scoring_std',
-    'home_consistency',
-    'away_consistency',
-    'variance_differential',
 
     # Matchup interactions (3pt_matchup removed — zero importance)
     'combined_pace',
@@ -75,26 +72,20 @@ FEATURE_COLS = [
     'away_off_vs_home_def',
     'net_rating_diff',
 
-    # Shooting consistency
-    'home_bad_night_pct',
-    'away_bad_night_pct',
-
-    'series_wins_diff',
-
-    'home_q4_avg',
-    'away_q4_avg',
-    'home_q4_diff',
-    'away_q4_diff',
-    'home_clutch',
-    'away_clutch',
-    'clutch_diff',
-    'q4_diff_spread',
+    # bad_night_pct, series_wins_diff, Q4/clutch splits removed — redundant or noise,
+    # no change in walk-forward CV (model/experiment.py)
 
     # In-series form (playoff calibration)
     'in_series_home_avg_pts',
     'in_series_away_avg_pts',
     'in_series_total_avg',
     'in_series_margin',
+
+    # Availability — points per game of rotation players not playing
+    # (box scores in training, injury report at prediction time).
+    # Missing minutes added nothing on top in walk-forward CV.
+    'home_missing_pts',
+    'away_missing_pts',
 ]
 
 TARGET_HOME = 'home_score'
@@ -184,6 +175,16 @@ def train_margin_model(train):
     )
     model.fit(X_train, y_train, sample_weight=sample_weights)
     return model
+
+
+def train_production_models(df):
+    """Fit home, away and margin models on the full dataset."""
+    if TARGET_MARGIN not in df.columns:
+        df = df.assign(**{TARGET_MARGIN: df[TARGET_HOME] - df[TARGET_AWAY]})
+    model_home = train_model(df, TARGET_HOME)
+    model_away = train_model(df, TARGET_AWAY)
+    model_margin = train_margin_model(df)
+    return model_home, model_away, model_margin
 
 
 def evaluate_model(model_home, model_away, test):
@@ -398,8 +399,11 @@ if __name__ == "__main__":
     # Plots
     plot_feature_importance(model_home, model_away)
     plot_predictions_vs_actual(results, test)
-
-    # Save
-    save_models(model_home, model_away, model_margin)
     check_overfitting(model_home, model_away, train, test)
+
+    # The holdout is only for measuring accuracy. Refit on every game before
+    # saving so the live models include the most recent games.
+    print(f"\nRefitting on all {len(df)} games for production...")
+    model_home, model_away, model_margin = train_production_models(df)
+    save_models(model_home, model_away, model_margin)
     print("\n[OK] Training complete")

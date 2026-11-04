@@ -81,6 +81,7 @@ def step_player_rolling_stats():
 
 def step_update_series():
     """Update playoff series context for all games."""
+    from config.settings import CURRENT_SEASON
     log.info("  Updating series context...")
     query = text("""
         WITH ordered_series AS (
@@ -102,7 +103,7 @@ def step_update_series():
                 ) AS game_num
             FROM games g
             WHERE g.season_type = 'Playoffs'
-            AND g.season = '2025-26'
+            AND g.season = :season
         ),
         series_wins AS (
             SELECT
@@ -155,7 +156,7 @@ def step_update_series():
         WHERE games.game_id = sw.game_id
     """)
     with Session(engine) as session:
-        session.execute(query)
+        session.execute(query, {"season": CURRENT_SEASON})
         session.commit()
     log.info("  Series context updated")
 
@@ -167,7 +168,11 @@ def step_predict():
 
 
 def step_tweet(predictions, dry_run=False):
-    from twitter.bot import post_predictions
+    try:
+        from twitter.bot import post_predictions
+    except ImportError:
+        log.info("  Twitter module not available — skipping")
+        return
     if predictions:
         post_predictions(predictions, dry_run=dry_run)
     else:
@@ -192,7 +197,7 @@ def run_pipeline(skip_retrain=False, dry_run_twitter=True,
         def retrain():
             from data.ingestion.build_features import build_feature_dataset
             from model.train import (
-                chronological_split, train_model,
+                train_production_models,
                 save_models, FEATURE_COLS,
                 TARGET_HOME, TARGET_AWAY
             )
@@ -201,10 +206,8 @@ def run_pipeline(skip_retrain=False, dry_run_twitter=True,
                 subset=FEATURE_COLS + [TARGET_HOME, TARGET_AWAY]
             )
             df = df.sort_values('game_date').reset_index(drop=True)
-            train, test = chronological_split(df, test_ratio=0.15)
-            mh = train_model(train, TARGET_HOME)
-            ma = train_model(train, TARGET_AWAY)
-            save_models(mh, ma)
+            mh, ma, mm = train_production_models(df)
+            save_models(mh, ma, mm)
         run_step("Retrain model", retrain)
     else:
         log.info("⏭️  Skipping retrain")

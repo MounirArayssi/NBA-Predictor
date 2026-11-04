@@ -10,9 +10,10 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics.pairwise import cosine_similarity
 from data.storage.db import engine
 from data.storage.models import TeamStyleVector, TeamSimilarity
+from config.settings import CURRENT_SEASON
 
 
-def compute_style_vectors(as_of_date=None):
+def compute_style_vectors(as_of_date=None, season=CURRENT_SEASON):
     """Compute style vectors for all teams based on season stats."""
     print("Computing team style vectors...")
 
@@ -33,23 +34,23 @@ def compute_style_vectors(as_of_date=None):
         FROM team_box_scores tbs
         JOIN teams t ON tbs.team_id = t.team_id
         JOIN games g ON tbs.game_id = g.game_id
-        WHERE g.season = '2025-26'
+        WHERE g.season = :season
         AND g.is_final = TRUE
         GROUP BY tbs.team_id, t.abbreviation
         HAVING COUNT(*) >= 10
     """)
 
-    df = pd.read_sql(query, engine)
+    df = pd.read_sql(query, engine, params={"season": season})
     print(f"  Got style data for {len(df)} teams")
 
     return df
 
 
-def compute_and_store_similarity(season='2025-26'):
+def compute_and_store_similarity(season=CURRENT_SEASON):
     """Compute cosine similarity between all team pairs."""
     print(f"\nComputing team similarity for {season}...")
 
-    style_df = compute_style_vectors()
+    style_df = compute_style_vectors(season=season)
 
     if style_df.empty:
         print("❌ No style data found")
