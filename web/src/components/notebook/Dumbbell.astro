@@ -1,0 +1,54 @@
+---
+// Two values per row (forecast vs actual, or group A vs group B) on one shared scale.
+interface Props {
+  rows: { label: string; a: number; b: number; n?: number; se?: number }[];
+  title: string; sub?: string; caption?: string; aLabel: string; bLabel: string; unit?: string; min?: number; max?: number; diff?: "b-a" | "a-b"; dp?: number;
+}
+const { rows, title, sub, caption, aLabel, bLabel, unit = "pts", diff = "b-a", dp = 1 } = Astro.props;
+const dif = (r) => (diff === "b-a" ? r.b - r.a : r.a - r.b);
+const vals = rows.flatMap((r) => [r.a, r.b]);
+const step = Math.max(...vals) - Math.min(...vals) > 20 ? 5 : 2;
+const lo = Astro.props.min ?? Math.floor((Math.min(...vals) - 1) / step) * step;
+const hi = Astro.props.max ?? Math.ceil((Math.max(...vals) + 1) / step) * step;
+const W = 600, rowH = 38, m = { l: 92, r: 90, t: 34, b: 26 };
+const H = m.t + m.b + rowH * rows.length;
+const x = (v) => m.l + (W - m.l - m.r) * (v - lo) / (hi - lo);
+const ticks = []; for (let v = lo; v <= hi + 1e-9; v += step) ticks.push(v);
+const id = "db-" + title.replace(/\W+/g, "").slice(0, 20);
+const legend2 = 34 + aLabel.length * 7.4;
+---
+<figure class="chart nb-chart">
+  <p class="chart-title">{title}</p>
+  {sub && <p class="chart-sub">{sub}</p>}
+  <div class="chart-scroll">
+    <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-labelledby={id}>
+      <title id={id}>{title}</title>
+      <g transform={`translate(${m.l},12)`}>
+        <circle cx="6" cy="0" r="6" fill="var(--model)" /><text x="18" y="4" class="lbl">{aLabel}</text>
+        <circle cx={legend2} cy="0" r="5" fill="var(--surface)" stroke="var(--ink)" stroke-width="2" /><text x={legend2 + 12} y="4" class="lbl">{bLabel}</text>
+      </g>
+      {ticks.map((v) => (<g><line class="grid" x1={x(v)} x2={x(v)} y1={m.t - 6} y2={H - m.b} /><text x={x(v)} y={H - 8} text-anchor="middle">{v}</text></g>))}
+      <text x={W - 4} y={m.t - 10} text-anchor="end">difference</text>
+      {rows.map((r, i) => {
+        const cy = m.t + rowH * i + rowH / 2;
+        const d = dif(r);
+        return (
+          <g>
+            <title>{`${r.label}: ${aLabel.toLowerCase()} ${r.a}, ${bLabel.toLowerCase()} ${r.b} ${unit}${r.n ? ` (${r.n.toLocaleString()} games)` : ""}`}</title>
+            <rect x="0" y={cy - rowH / 2} width={W} height={rowH} fill="transparent" />
+            <text x={m.l - 10} y={cy + 4} text-anchor="end" class="lbl">{r.label}</text>
+            <line x1={x(r.a)} x2={x(r.b)} y1={cy} y2={cy} stroke="var(--rule-strong)" stroke-width="3" />
+            <circle cx={x(r.a)} cy={cy} r="7" fill="var(--model)" stroke="var(--surface)" stroke-width="2" />
+            <circle cx={x(r.b)} cy={cy} r="5.5" fill="var(--surface)" stroke="var(--ink)" stroke-width="2" />
+            <text x={W - 4} y={cy + 4} text-anchor="end" class="strong">{`${d >= 0 ? "+" : "−"}${Math.abs(d).toFixed(dp)}`}</text>
+          </g>
+        );
+      })}
+    </svg>
+  </div>
+  {caption && <figcaption>{caption}</figcaption>}
+  <details class="data"><summary>Data table</summary>
+    <table><thead><tr><th></th><th class="r">{aLabel}</th><th class="r">{bLabel}</th><th class="r">Difference</th>{rows[0]?.se != null && <th class="r">Std. error</th>}{rows[0]?.n != null && <th class="r">Games</th>}</tr></thead>
+      <tbody>{rows.map((r) => <tr><td>{r.label}</td><td class="r num">{r.a}</td><td class="r num">{r.b}</td><td class="r num">{dif(r).toFixed(dp)}</td>{r.se != null && <td class="r num">±{r.se}</td>}{r.n != null && <td class="r num">{r.n.toLocaleString()}</td>}</tr>)}</tbody></table>
+  </details>
+</figure>

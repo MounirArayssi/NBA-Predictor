@@ -2,9 +2,16 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
+import numpy as np
 import pandas as pd
 from sqlalchemy import text
 from data.storage.db import engine
+
+# Rest days are capped here in training and in live prediction (model/predict.py)
+REST_CAP = 5
+
+
+from data.ingestion.team_strength import add_team_strength_features
 
 
 def build_feature_dataset(window=10):
@@ -142,20 +149,26 @@ def build_feature_dataset(window=10):
     df = add_series_form_features(df)
     df = add_advanced_rolling_features(df)
     df = add_availability_features(df)
+    df = add_team_strength_features(df)
     return df
 
 
-# Availability — rotation players absent from a game.
-# Rotation = played >= ROT_MIN_GAMES of the team's last ROT_WINDOW games at >= ROT_MIN_MINUTES avg.
+# Availability — rotation players unavailable for a game.
+# Rotation = played >= ROT_MIN_GAMES of the team's last ROT_WINDOW games THIS SEASON
+# at >= ROT_MIN_MINUTES avg. (Using last season's games let departed players count
+# as "missing" for the first weeks of every season.)
+# Unavailable = listed Out/Doubtful on the official NBA injury report — the game
+# day's training-time report in training, the latest report live — so training and
+# prediction use the same information.
 ROT_WINDOW = 10
-ROT_MIN_GAMES = 3
+ROT_MIN_GAMES = 2   # 3 dropped stars hurt in week 1 (e.g. Banchero, 2 games); 2 tested slightly better in CV (2026-11-05)
 ROT_MIN_MINUTES = 15
 
 
 def _load_played_box_scores(before_date=None):
     query = """
         SELECT b.game_id, b.team_id, b.player_id, b.minutes_played, b.points,
-               g.game_date, p.full_name
+               g.game_date, g.season, p.full_name
         FROM player_box_scores b
         JOIN games g USING (game_id)
         JOIN players p USING (player_id)
@@ -188,35 +201,53 @@ def _still_on_team(players, team_id, last_team_by_date, as_of):
     return players[latest.reindex(players.index).eq(team_id).values]
 
 
+def _season_rotation(tb, season, before_date, team_id, last_team_by_date):
+    """Rotation from the team's last ROT_WINDOW games of `season` before before_date."""
+    prior = tb[(tb.season == season) & (tb.game_date < before_date)]
+    if prior.empty:
+        return _rotation(prior)
+    recent = (prior[['game_id', 'game_date']].drop_duplicates()
+              .sort_values('game_date').tail(ROT_WINDOW)['game_id'])
+    rot = _rotation(prior[prior.game_id.isin(recent)])
+    return _still_on_team(rot, team_id, last_team_by_date, before_date)
+
+
 def compute_availability():
     """
-    Historical availability from box scores: for every team-game, the minutes and
-    points per game of rotation players who did not play.
+    Historical availability: for every team-game, minutes and points per game of
+    rotation players listed Out/Doubtful on that day's official injury report.
+    Dates with no stored report fall back to box-score absences (counted and
+    reported, since that definition differs from what's known before tip-off).
     """
+    from data.ingestion.fetch_official_injuries import load_training_unavailable
+
     box = _load_played_box_scores()
     last_team_by_date = box.sort_values('game_date')[['player_id', 'game_date', 'team_id']]
+    unavailable = load_training_unavailable()
 
     rows = []
+    fallback = 0
     for team_id, tb in box.groupby('team_id'):
-        games = tb[['game_id', 'game_date']].drop_duplicates().sort_values('game_date')
-        by_game = {gid: g for gid, g in tb.groupby('game_id')}
-        gids = games['game_id'].tolist()
-        dates = games['game_date'].tolist()
-        for i, gid in enumerate(gids):
-            if i == 0:
-                rows.append((gid, team_id, 0.0, 0.0))
-                continue
-            window = pd.concat([by_game[g] for g in gids[max(0, i - ROT_WINDOW):i]])
-            rot = _rotation(window)
-            absent = rot[~rot.index.isin(by_game[gid]['player_id'])]
-            absent = _still_on_team(absent, team_id, last_team_by_date, dates[i])
+        games = (tb[['game_id', 'game_date', 'season']].drop_duplicates()
+                 .sort_values('game_date'))
+        played_by_game = tb.groupby('game_id')['player_id'].apply(set).to_dict()
+        for gid, gdate, season in games.itertuples(index=False):
+            rot = _season_rotation(tb, season, gdate, team_id, last_team_by_date)
+            report = unavailable.get(gdate.date())
+            if report is not None:
+                absent = rot[rot.index.isin(report.get(team_id, set()))]
+            else:
+                fallback += 1
+                absent = rot[~rot.index.isin(played_by_game.get(gid, set()))]
             rows.append((gid, team_id, float(absent['mins'].astype(float).sum()),
                          float(absent['pts'].sum())))
+    print(f"    {len(rows)} team-games, {fallback} without an injury report "
+          f"(box-score absences used)")
     return pd.DataFrame(rows, columns=['game_id', 'team_id', 'missing_min', 'missing_pts'])
 
 
 def add_availability_features(df):
-    print("  Computing availability (missing rotation players)...")
+    print("  Computing availability (unavailable rotation players)...")
     avail = compute_availability()
     for side in ('home', 'away'):
         a = avail.rename(columns={'team_id': f'{side}_team_id',
@@ -235,19 +266,22 @@ def normalize_player_name(name):
 def compute_live_availability(team_id, game_date, out_names):
     """
     Availability for an unplayed game: rotation players (same definition as training)
-    who are listed Out on the injury report.
+    listed Out/Doubtful on the injury report.
     Returns (missing_min, missing_pts, missing_player_names).
     """
+    if not out_names:
+        return 0.0, 0.0, []
+    from data.ingestion.fetch_official_injuries import season_for_date
+
     box = _load_played_box_scores(before_date=game_date)
     tb = box[box.team_id == team_id]
-    if tb.empty or not out_names:
+    if tb.empty:
         return 0.0, 0.0, []
 
-    recent = (tb[['game_id', 'game_date']].drop_duplicates()
-              .sort_values('game_date').tail(ROT_WINDOW)['game_id'])
-    rot = _rotation(tb[tb.game_id.isin(recent)])
     last_team_by_date = box.sort_values('game_date')[['player_id', 'game_date', 'team_id']]
-    rot = _still_on_team(rot, team_id, last_team_by_date, pd.Timestamp(game_date))
+    gdate = pd.Timestamp(game_date)
+    rot = _season_rotation(tb, season_for_date(gdate.date()), gdate, team_id,
+                           last_team_by_date)
 
     out = {normalize_player_name(n) for n in out_names}
     absent = rot[rot['full_name'].map(normalize_player_name).isin(out)]
@@ -259,36 +293,33 @@ def add_rest_days(df):
     """Calculate rest days for each team before each game."""
     print("  Computing rest days...")
 
+    # Same rule as the live get_rest_days (model/predict.py): days since the
+    # team's previous final game, home or away, from the full schedule (not just
+    # rows in df), capped at REST_CAP; 3 when there is no previous game.
     df = df.sort_values('game_date').copy()
     df['game_date'] = pd.to_datetime(df['game_date'])
 
-    home_last_game = {}
-    away_last_game = {}
-    home_rest = []
-    away_rest = []
+    sched = pd.read_sql(text("""
+        SELECT game_date, home_team_id AS team_id FROM games WHERE is_final = TRUE
+        UNION
+        SELECT game_date, away_team_id AS team_id FROM games WHERE is_final = TRUE
+    """), engine)
+    sched['game_date'] = pd.to_datetime(sched['game_date'])
+    dates_by_team = {t: np.sort(g['game_date'].unique())
+                     for t, g in sched.groupby('team_id')}
 
-    for _, row in df.iterrows():
-        home_id   = row['home_team_id']
-        away_id   = row['away_team_id']
-        game_date = row['game_date']
+    def rest_for(team_id, game_date):
+        dates = dates_by_team.get(team_id)
+        if dates is None:
+            return 3
+        i = np.searchsorted(dates, np.datetime64(game_date), side='left')
+        if i == 0:
+            return 3
+        days = int((np.datetime64(game_date) - dates[i - 1]) / np.timedelta64(1, 'D'))
+        return max(0, min(REST_CAP, days))
 
-        if home_id in home_last_game:
-            rest = (game_date - home_last_game[home_id]).days
-        else:
-            rest = 3
-        home_rest.append(rest)
-
-        if away_id in away_last_game:
-            rest = (game_date - away_last_game[away_id]).days
-        else:
-            rest = 3
-        away_rest.append(rest)
-
-        home_last_game[home_id] = game_date
-        away_last_game[away_id] = game_date
-
-    df['home_rest_days']    = home_rest
-    df['away_rest_days']    = away_rest
+    df['home_rest_days'] = [rest_for(t, d) for t, d in zip(df['home_team_id'], df['game_date'])]
+    df['away_rest_days'] = [rest_for(t, d) for t, d in zip(df['away_team_id'], df['game_date'])]
     df['rest_advantage']    = df['home_rest_days'] - df['away_rest_days']
     df['home_back_to_back'] = (df['home_rest_days'] == 1).astype(int)
     df['away_back_to_back'] = (df['away_rest_days'] == 1).astype(int)
@@ -405,17 +436,15 @@ def add_playoff_features(df):
         key        = tuple(sorted([row['home_team_id'], row['away_team_id']]))
         season_key = (row['season'], key)
 
+        # Wins are tracked per TEAM: home court alternates within a series, so
+        # "wins by whoever was home" is not tonight's home team's series wins.
         if season_key not in series_history:
-            series_history[season_key] = {
-                'games':     [],
-                'home_wins': 0,
-                'away_wins': 0
-            }
+            series_history[season_key] = {'games': [], 'wins': {}}
 
         history  = series_history[season_key]
         game_num = len(history['games']) + 1
-        h_wins   = history['home_wins']
-        a_wins   = history['away_wins']
+        h_wins   = history['wins'].get(row['home_team_id'], 0)
+        a_wins   = history['wins'].get(row['away_team_id'], 0)
 
         series_game_num.append(game_num)
         home_series_wins.append(h_wins)
@@ -430,10 +459,8 @@ def add_playoff_features(df):
 
         home_won = row['home_score'] > row['away_score']
         history['games'].append({'home_won': home_won})
-        if home_won:
-            history['home_wins'] += 1
-        else:
-            history['away_wins'] += 1
+        winner = row['home_team_id'] if home_won else row['away_team_id']
+        history['wins'][winner] = history['wins'].get(winner, 0) + 1
 
     df['series_game_num']  = series_game_num
     df['home_series_wins'] = home_series_wins

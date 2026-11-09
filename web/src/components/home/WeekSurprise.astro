@@ -1,0 +1,63 @@
+---
+// Homepage: the most surprising completed game of the latest week of results
+// (lowest pregame probability for the eventual winner). Omitted if none exists.
+import surprises from "../../data/surprises.json";
+import { teamByAbbr, gameUrl, fmtShortDate } from "../../lib/data.js";
+import { teamVars } from "../../lib/teamColors.js";
+
+const w = surprises.week?.outcome;
+const nick = (a) => { const t = teamByAbbr[a]; return t ? t.name.replace(t.city, "").trim() : a; };
+const fav = w ? (w.ph > w.pa || (w.ph === w.pa && w.p >= 0.5) ? w.h : w.a) : null;
+const favP = w ? Math.round(100 * (fav === w.h ? w.p : 1 - w.p)) : null;
+const loser = w ? (w.w === w.h ? w.a : w.h) : null;
+---
+{w && (
+  <section class="section" aria-labelledby="h-week">
+    <div class="section-head">
+      <h2 id="h-week">Biggest surprise of the week</h2>
+      <span class="meta">{fmtShortDate(surprises.week.start)} – {fmtShortDate(surprises.week.end)} · <a href="/surprises/">All surprise games</a></span>
+    </div>
+    <a class="wk instrument dots" href={w.page ? gameUrl(w.id) : "/surprises/"} data-reveal="lift">
+      <div class="side">
+        <div class="pct num" data-count>{Math.round(100 * w.pw)}%</div>
+        <div class="cap">the forecast's pregame chance for {w.w}</div>
+      </div>
+      <div class="body">
+        <div class="score">
+          {[w.a, w.h].map((a) => (
+            <div class={`tm ${a === w.w ? "won" : ""}`} style={teamVars(a)}>
+              <span class="bar" aria-hidden="true"></span>
+              <span class="ab">{a}</span>
+              <span class="nm">{nick(a)}{a === w.h ? " · home" : ""}</span>
+              <span class="pts num">{a === w.h ? w.hs : w.as_}</span>
+            </div>
+          ))}
+        </div>
+        <p class="line">
+          {fmtShortDate(w.d)}: {w.w} beat {loser}. The forecast had {fav} winning {favP}% of the time, projected {fav === w.h ? `${w.ph}–${w.pa}` : `${w.pa}–${w.ph}`}; the final margin was {w.se.toFixed(0)} points from the forecast. <span class="go">Game breakdown →</span>
+        </p>
+      </div>
+    </a>
+    <p class="note">Surprising relative to this model's forecast. <a href="/teams/predictability/">Which teams are hardest to forecast?</a></p>
+  </section>
+)}
+
+<style>
+  .wk { display: grid; gap: var(--s5); grid-template-columns: minmax(0, 1fr); padding: var(--s5); border-radius: 8px; text-decoration: none; color: var(--ink); transition: transform 0.25s var(--ease-out), box-shadow 0.25s ease; }
+  @media (min-width: 760px) { .wk { grid-template-columns: 220px minmax(0, 1fr); align-items: center; } }
+  .wk:hover { transform: translateY(-2px); box-shadow: 0 12px 30px -16px rgba(13, 18, 22, 0.6); }
+  .wk:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .pct { font-size: clamp(2.8rem, 7vw, 4rem); line-height: 1; color: var(--led); text-shadow: 0 0 14px rgba(245, 185, 76, 0.35); }
+  .cap { font-size: 0.8rem; color: var(--ink-2); margin-top: 6px; max-width: 22ch; }
+  .score { display: grid; gap: 6px; max-width: 420px; }
+  .tm { display: grid; grid-template-columns: 5px 3.2ch minmax(0, 1fr) auto; gap: 10px; align-items: center; }
+  .tm .bar { align-self: stretch; min-height: 24px; border-radius: 1px; background: linear-gradient(var(--tp) 0 62%, var(--ts) 62% 100%); box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.14); }
+  .tm .ab { font-weight: 600; }
+  .tm .nm { color: var(--ink-2); font-size: 0.85rem; }
+  .tm .pts { font-size: 1.6rem; color: var(--ink-2); }
+  .tm.won .pts { color: var(--led); }
+  .line { margin: var(--s4) 0 0; font-size: 0.92rem; color: var(--ink-2); max-width: 68ch; }
+  .go { color: var(--accent); white-space: nowrap; }
+  .wk + .note { margin-top: var(--s3); }
+  @media (prefers-reduced-motion: reduce) { .wk:hover { transform: none; } }
+</style>

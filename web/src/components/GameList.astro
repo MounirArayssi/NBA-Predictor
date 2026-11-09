@@ -1,0 +1,107 @@
+---
+// Scoreboard-style list of games. Away team on the first line, home team on the
+// second ("AWAY at HOME"), projected and final scores in separate labeled columns.
+import ProbabilityBar from "./ProbabilityBar.astro";
+import { teamVars } from "../lib/teamColors.js";
+import { teamByAbbr, gameUrl, teamUrl, fmtTime, fmtShortDate, favorite } from "../lib/data.js";
+
+interface Props { games: any[]; showDate?: boolean; label?: string }
+const { games, showDate = false, label = "Games" } = Astro.props;
+
+function state(g) {
+  const p = g.fc;
+  if (g.status === "final") {
+    if (!p) return { text: "No forecast", cls: "na" };
+    const fav = favorite(p, g);
+    return p.correct
+      ? { text: `✓ Picked ${fav.abbr}`, cls: "ok" }
+      : { text: `✗ Picked ${fav.abbr}`, cls: "miss" };
+  }
+  if (g.status === "scheduled") return p ? { text: "Awaiting result", cls: "na" } : { text: "Forecast not yet published", cls: "na" };
+  return { text: "Result not recorded", cls: "na" };
+}
+---
+<div class="glist" role="list" aria-label={label}>
+  <div class="ghead" aria-hidden="true">
+    <span>{showDate ? "Date / tip" : "Tip-off"}</span>
+    <span class="tline"><span>Matchup</span><span></span><span class="r">Proj.</span><span class="r">Final</span></span>
+    <span>Win probability</span><span class="r">Result</span>
+  </div>
+  {games.map((g) => {
+    const p = g.fc;
+    const st = state(g);
+    const fav = favorite(p, g);
+    const sides = [["away", g.away, p?.pa, g.score?.a], ["home", g.home, p?.ph, g.score?.h]];
+    const winner = g.score ? (g.score.h > g.score.a ? g.home : g.away) : null;
+    return (
+      <article class="grow" role="listitem" data-date={g.date} data-teams={`${g.home} ${g.away}`} data-status={g.status}
+        aria-label={`${teamByAbbr[g.away]?.name} at ${teamByAbbr[g.home]?.name}, ${g.date}`}>
+        <div class="when">
+          {showDate && <span class="d num">{fmtShortDate(g.date)}</span>}
+          <span class="t num">{g.status === "final" ? "Final" : g.tip ? fmtTime(g.tip) : "Time TBD"}</span>
+          {g.stype === "Playoffs" && <span class="po">Playoffs</span>}
+        </div>
+        <div class="teams">
+          <div class="tline mhead" aria-hidden="true"><span></span><span></span><span class="r">Proj.</span><span class="r">Final</span></div>
+          {sides.map(([side, abbr, proj, fin]) => (
+            <div class={`tline ${winner === abbr ? "won" : ""}`}>
+              <a class="abbr" href={teamUrl(abbr)}><i class="chip" style={teamVars(abbr)} aria-hidden="true"></i>{abbr}</a>
+              <span class="name">{teamByAbbr[abbr]?.name}{side === "home" ? <span class="ha"> · home</span> : null}</span>
+              <span class="proj num" title="Projected score">{proj != null ? Math.round(proj) : "–"}</span>
+              <span class="fin num" title="Final score">{fin != null ? fin : ""}</span>
+            </div>
+          ))}
+        </div>
+        <div class="fc">
+          {p ? (
+            <>
+              <ProbabilityBar away={g.away} home={g.home} hwp={p.hwp} />
+            </>
+          ) : null}
+        </div>
+        <div class="end">
+          <span class={`res ${st.cls}`}>{st.text}</span>
+          <a class="more" href={gameUrl(g.id)} aria-label={`Game details: ${g.away} at ${g.home}`}>Details</a>
+        </div>
+      </article>
+    );
+  })}
+</div>
+<style>
+  .glist { border-top: 2px solid var(--rule-heavy); container-type: inline-size; }
+  .ghead, .grow { display: grid; grid-template-columns: 96px minmax(0, 1.5fr) minmax(170px, 1fr) 160px; gap: var(--s4); align-items: center; }
+  .ghead { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); padding: 8px 0; border-bottom: 1px solid var(--rule-strong); }
+  .ghead .r { text-align: right; }
+  .tline.mhead { display: none; font-size: 0.65rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+  .mhead .r { text-align: right; }
+  .grow { padding: 12px 0; border-bottom: 1px solid var(--rule); }
+  .when { display: flex; flex-direction: column; gap: 2px; font-size: 0.85rem; color: var(--ink-2); }
+  .when .d { color: var(--ink); font-weight: 500; }
+  .po { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--accent); }
+  .teams { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .tline { display: grid; grid-template-columns: 58px minmax(0, 1fr) 44px 44px; gap: var(--s3); align-items: baseline; }
+  .abbr { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; color: var(--ink); text-decoration: none; letter-spacing: 0.02em; }
+  .abbr:hover { text-decoration: underline; }
+  .name { color: var(--ink-2); font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ha { color: var(--muted); }
+  .proj { text-align: right; color: var(--model); font-weight: 500; }
+  .fin { text-align: right; color: var(--ink-2); }
+  .won .fin { color: var(--ink); font-weight: 600; }
+  .fc { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+  .vnote { font-size: 0.75rem; color: var(--muted); }
+  .end { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; text-align: right; }
+  .more { font-size: 0.85rem; }
+  @container (max-width: 820px) {
+    .ghead { display: none; }
+    .grow { grid-template-columns: 72px minmax(0, 1fr); row-gap: var(--s2); }
+    .fc { grid-column: 2; }
+    .end { grid-column: 2; flex-direction: row; justify-content: space-between; align-items: baseline; }
+    .tline.mhead { display: grid; }
+  }
+  @container (max-width: 420px) {
+    .grow { grid-template-columns: minmax(0, 1fr); }
+    .when { flex-direction: row; gap: var(--s3); }
+    .fc, .end { grid-column: 1; }
+    .tline { grid-template-columns: 54px minmax(0, 1fr) 36px 36px; gap: var(--s2); }
+  }
+</style>

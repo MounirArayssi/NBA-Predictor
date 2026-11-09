@@ -12,14 +12,26 @@ from data.storage.models import Game, Team
 from config.settings import NBA_API_DELAY, CURRENT_SEASON
 
 
-def fetch_and_store_games(season=CURRENT_SEASON, season_type="Playoffs"):
-    print(f"Fetching {season_type} games for {season}...")
+def _rows_are_final(game_rows):
+    """LeagueGameFinder returns live games with partial PTS; WL is only set
+    once the game is over, so require WL and PTS on both team rows."""
+    if len(game_rows) < 2 or 'WL' not in game_rows.columns:
+        return False
+    return bool(game_rows['WL'].notna().all()
+                and game_rows['PTS'].notna().all())
+
+
+def fetch_and_store_games(season=CURRENT_SEASON, season_type="Playoffs", date_from=None):
+    """date_from (datetime.date): only fetch games on or after this date."""
+    print(f"Fetching {season_type} games for {season}"
+          f"{f' from {date_from}' if date_from else ''}...")
 
     try:
         gamefinder = leaguegamefinder.LeagueGameFinder(
             season_nullable=season,
             season_type_nullable=season_type,
-            league_id_nullable="00"
+            league_id_nullable="00",
+            date_from_nullable=date_from.isoformat() if date_from else ""
         )
         games_df = gamefinder.get_data_frames()[0]
         print(f"Found {len(games_df)} game records")
@@ -42,8 +54,7 @@ def fetch_and_store_games(season=CURRENT_SEASON, season_type="Playoffs"):
             if existing:
                 # Games inserted earlier as 'scheduled' (via fetch_upcoming_games)
                 # still need their final scores filled in
-                if not existing.is_final and len(game_rows) >= 2 \
-                        and game_rows['PTS'].notna().all():
+                if not existing.is_final and _rows_are_final(game_rows):
                     home_team = session.get(Team, existing.home_team_id)
                     for _, row in game_rows.iterrows():
                         if int(row['TEAM_ID']) == home_team.nba_team_id:
@@ -85,7 +96,7 @@ def fetch_and_store_games(season=CURRENT_SEASON, season_type="Playoffs"):
                 continue
 
             game_date = pd.to_datetime(home_row['GAME_DATE']).date()
-            is_final = pd.notna(home_row.get('PTS', None))
+            is_final = _rows_are_final(game_rows)
 
             game = Game(
                 nba_game_id  = game_id,

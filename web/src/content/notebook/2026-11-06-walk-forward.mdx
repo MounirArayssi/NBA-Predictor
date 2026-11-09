@@ -1,0 +1,50 @@
+---
+title: "A walk-forward backtest of every season since 2022-23"
+date: 2026-11-06
+topic: Forecast Evaluation
+summary: "After filling data gaps, every game from 2022-23 on was predicted by a model that had never seen that season, using that day's injury report and no betting lines."
+outcome: Kept
+---
+import CodeFile from "../../components/notebook/CodeFile.astro";
+import Dumbbell from "../../components/notebook/Dumbbell.astro";
+import perf from "../../data/performance.json";
+
+## Why a backtest
+
+A few weeks of live forecasts cannot tell you much. Thirty games can show 70% or 55% winners just by chance. To learn how good the model really is, it has to be tested on thousands of games, and the only way to get that many is to go back in time. The danger in going back is leakage: using anything the model could not have known on the day of the game.
+
+## Data work first
+
+Three gaps had to be closed before the backtest could be trusted:
+
+- **209 days of 2022-23 official injury reports** were missing. Without them the availability input would fall back to "who did not play", which is only known after the game.
+- **260 games had no box score**, which breaks the rotation definitions and recent-form inputs.
+- **Team form had to go back to 2021** so the first backtest season had a full ten-game history.
+
+## Method
+
+Each season is predicted by a model trained only on the seasons before it. Every game then goes through the same function the daily forecast uses, `predict_single_game`, with that day's archived injury report:
+
+<CodeFile file="misc/walkforward_backfill.py" def="run_season" />
+
+Win probabilities need the same care. The curve that turns a forecast margin into a probability is refit for each season, using only backtest forecasts from earlier seasons:
+
+<CodeFile file="misc/walkforward_backfill.py" def="fit_calibration" />
+
+## Results
+
+The backtest now covers {perf.record.all.n.toLocaleString()} games from {perf.record.first} to {perf.record.last}. It picked {perf.record.all.win}% of winners. Always picking the home team would have picked {perf.record.all.home_win}%.
+
+<Dumbbell
+  title="Winners picked by season: model vs always picking the home team"
+  aLabel="Model" bLabel="Home team" diff="a-b" unit="%"
+  rows={perf.record.seasons.map((s) => ({ label: s.complete ? s.season : s.season + "*", a: s.all.win, b: s.all.home_win, n: s.all.n }))}
+  caption="* Season in progress. Difference is the model minus the home-team baseline, in percentage points."
+/>
+
+Accuracy rises from 2022-23 to 2025-26, partly because each later season has more history to train on. Full detail, including calibration and margin errors, is on the [Performance](/performance/) page.
+
+## Caveats
+
+- These are **retrospective** tests, not forecasts published at the time. The site always keeps them separate from issued forecasts.
+- Ten games where the source table stores the same team as home and away are left out of the published figures; see [Methodology](/methodology/).

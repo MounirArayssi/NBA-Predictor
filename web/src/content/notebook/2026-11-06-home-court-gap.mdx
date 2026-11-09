@@ -1,0 +1,49 @@
+---
+title: "Does home court matter less when the visitor is clearly better?"
+date: 2026-11-06
+topic: Research Notes
+summary: "Across the full backtest, mostly no. Road favorites ended close to their forecast margin at every size of gap. The one exception was 2022-23."
+outcome: Open
+---
+import CodeFile from "../../components/notebook/CodeFile.astro";
+import Dumbbell from "../../components/notebook/Dumbbell.astro";
+import fig from "../../data/notebook_figures.json";
+
+## Question
+
+The model applies one home advantage to every game. A common argument is that a much better visiting team neutralizes the crowd, so home court should count for less when the road team is clearly stronger. If that were true, road favorites would beat their forecast margin, and by more as the gap grows.
+
+## First look
+
+The first two seasons checked pointed in opposite directions. In 2022-23, road favorites won by less than predicted. In early 2023-24, they won by more. Two seasons were not enough to tell, so the question was rerun on the full walk-forward backtest.
+
+## Full backtest
+
+The analysis takes every regular-season backtest game where the forecast favored the road team and compares the forecast road margin with the actual one:
+
+<CodeFile file="web/scripts/notebook_figures.py" section="home_court" />
+
+<Dumbbell
+  title="Road favorites: forecast vs actual margin, by season"
+  sub="Average road-team margin in games the model expected the visitor to win."
+  aLabel="Forecast" bLabel="Actual"
+  rows={fig.home_court.by_season.map((r) => ({ label: r.label, a: r.pred, b: r.actual, n: r.n, se: r.se }))}
+  caption="Positive difference: road favorites did better than forecast. 2026-27 is in progress and has few games."
+/>
+
+<Dumbbell
+  title="Road favorites: by size of the forecast edge"
+  sub="All backtest seasons pooled."
+  aLabel="Forecast" bLabel="Actual"
+  rows={fig.home_court.by_gap.map((r) => ({ label: r.label + " pts", a: r.pred, b: r.actual, n: r.n, se: r.se }))}
+/>
+
+## What it shows
+
+- **By size of gap there is no pattern.** Small, medium and large road edges all finished within half a point of the forecast. That is the opposite of what the hypothesis predicts: the gap should widen as the visitor's edge grows.
+- **2022-23 stands out.** Road favorites fell 3.2 points short of their forecast (±0.6 standard error). It was the first backtest season, and its model was trained on only one earlier season (2021-22). That is the more likely explanation than anything about home court.
+- From 2023-24 on, road favorites beat their forecast by 0.1 to 0.9 points, each within about 1.3 standard errors of zero.
+
+## Next
+
+The evidence is against a strength-dependent home advantage. The question stays open for one narrower check: whether the effect differs in the playoffs, where crowds and stakes are different. The backtest has only about 80 to 90 playoff games per season, so it may need several more seasons to answer.

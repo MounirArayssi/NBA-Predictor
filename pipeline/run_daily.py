@@ -49,6 +49,51 @@ def step_fetch_games():
     fetch_upcoming_games()
 
 
+def _todays_team_ids():
+    with engine.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT home_team_id, away_team_id FROM games WHERE game_date = :d
+        """), {"d": date.today()}).fetchall()
+    return {t for r in rows for t in r}
+
+
+def step_fetch_games_today():
+    """Only results since the last un-finalized game, plus today's schedule."""
+    from datetime import timedelta
+    from data.ingestion.fetch_games import (
+        fetch_and_store_games,
+        fetch_upcoming_games
+    )
+    from config.settings import CURRENT_SEASON
+    with engine.connect() as conn:
+        oldest_pending = conn.execute(text("""
+            SELECT MIN(game_date) FROM games
+            WHERE is_final = FALSE AND game_date < :today AND season = :season
+        """), {"today": date.today(), "season": CURRENT_SEASON}).scalar()
+    date_from = oldest_pending or (date.today() - timedelta(days=1))
+    fetch_and_store_games(CURRENT_SEASON, 'Playoffs', date_from=date_from)
+    fetch_and_store_games(CURRENT_SEASON, 'Regular Season', date_from=date_from)
+    fetch_upcoming_games(days_ahead=1)
+
+
+def step_rolling_stats_today():
+    from data.ingestion.compute_rolling_stats import compute_todays_stats
+    for w in [5, 7, 10, 20]:
+        compute_todays_stats(window=w)
+
+
+def step_player_rolling_stats_today():
+    from data.ingestion.compute_player_rolling_stats import (
+        compute_player_rolling_stats
+    )
+    team_ids = _todays_team_ids()
+    if not team_ids:
+        log.info("  No games today")
+        return
+    for w in [5, 10]:
+        compute_player_rolling_stats(window=w, today_only=True, team_ids=team_ids)
+
+
 def step_fetch_box_scores():
     from data.ingestion.fetch_box_scores import fetch_all_box_scores
     fetch_all_box_scores()
@@ -180,18 +225,30 @@ def step_tweet(predictions, dry_run=False):
 
 
 def run_pipeline(skip_retrain=False, dry_run_twitter=True,
-                 skip_twitter=False):
+                 skip_twitter=False, today_only=False):
     start = datetime.now()
     log.info("=" * 55)
-    log.info(f"DAILY PIPELINE — {date.today()}")
+    log.info(f"DAILY PIPELINE — {date.today()}"
+             f"{' (today only)' if today_only else ''}")
     log.info("=" * 55)
 
-    run_step("Fetch games",              step_fetch_games)
-    run_step("Fetch box scores",         step_fetch_box_scores)
-    run_step("Fetch odds",               step_fetch_odds)
-    run_step("Rolling stats",            step_rolling_stats)
-    run_step("Player rolling stats",     step_player_rolling_stats)
-    run_step("Update series context",    step_update_series)
+    if today_only:
+        # Only what today's predictions read. Historical rolling rows are left
+        # for the next full run, so retraining is skipped too.
+        run_step("Fetch games (recent + today)", step_fetch_games_today)
+        run_step("Fetch box scores",             step_fetch_box_scores)
+        run_step("Fetch odds",                   step_fetch_odds)
+        run_step("Rolling stats (today)",        step_rolling_stats_today)
+        run_step("Player rolling stats (today)", step_player_rolling_stats_today)
+        run_step("Update series context",        step_update_series)
+        skip_retrain = True
+    else:
+        run_step("Fetch games",              step_fetch_games)
+        run_step("Fetch box scores",         step_fetch_box_scores)
+        run_step("Fetch odds",               step_fetch_odds)
+        run_step("Rolling stats",            step_rolling_stats)
+        run_step("Player rolling stats",     step_player_rolling_stats)
+        run_step("Update series context",    step_update_series)
 
     if not skip_retrain:
         def retrain():
@@ -238,6 +295,9 @@ if __name__ == "__main__":
                         help='Actually post tweets (default is dry run)')
     parser.add_argument('--predict-only',  action='store_true',
                         help='Just run predictions, skip data fetching')
+    parser.add_argument('--today-only',    action='store_true',
+                        help="Only fetch/compute what today's games need; "
+                             "skips history backfill and retraining")
     args = parser.parse_args()
 
     if args.predict_only:
@@ -247,5 +307,6 @@ if __name__ == "__main__":
         run_pipeline(
             skip_retrain   = args.skip_retrain,
             dry_run_twitter = not args.post_twitter,
-            skip_twitter   = args.skip_twitter
+            skip_twitter   = args.skip_twitter,
+            today_only     = args.today_only
         )

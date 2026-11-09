@@ -1,0 +1,43 @@
+---
+// A compact list of surprise games (rows annotated by analytics.metrics.annotate).
+// Shows the actual winner's pregame probability prominently and the margin miss;
+// links to the game page when one exists.
+import { gameUrl, teamUrl, fmtShortDate } from "../lib/data.js";
+import { teamVars } from "../lib/teamColors.js";
+
+interface Props { rows: any[]; focus?: string; empty?: string; label: string; showSeason?: boolean }
+const { rows, focus, empty = "No games in this sample.", label, showSeason = false } = Astro.props;
+---
+{rows.length === 0 ? <p class="note">{empty}</p> : (
+  <ol class="slist" aria-label={label}>
+    {rows.map((r) => {
+      const fav = r.ph > r.pa || (r.ph === r.pa && r.p >= 0.5) ? r.h : r.a;
+      return (
+        <li>
+          <span class="pw num" title="The winner's pregame win probability">{Math.round(100 * r.pw)}%</span>
+          <span class="main">
+            <span class="mu">
+              <i class="chip" style={teamVars(r.w)} aria-hidden="true"></i>
+              <strong>{r.w}</strong> beat <a href={teamUrl(r.w === r.h ? r.a : r.h)}>{r.w === r.h ? r.a : r.h}</a>
+              <span class="num sc">{r.w === r.h ? `${r.hs}–${r.as_}` : `${r.as_}–${r.hs}`}</span>
+            </span>
+            <span class="meta num">
+              {r.page ? <a href={gameUrl(r.id)}>{fmtShortDate(r.d)}{showSeason ? `, ${r.s}` : ""}</a> : <>{fmtShortDate(r.d)}{showSeason ? `, ${r.s}` : ""}</>}
+              {r.po ? " · playoffs" : ""} · forecast {fav} {r.ph > r.pa ? `${r.ph}–${r.pa}` : `${r.pa}–${r.ph}`} · missed margin by {r.se.toFixed(0)}
+            </span>
+          </span>
+        </li>
+      );
+    })}
+  </ol>
+)}
+
+<style>
+  .slist { list-style: none; margin: 0; padding: 0; border-top: 2px solid var(--rule-heavy); }
+  .slist li { display: grid; grid-template-columns: 3.6em minmax(0, 1fr); gap: var(--s3); padding: 9px 0; border-bottom: 1px solid var(--rule); align-items: baseline; }
+  .pw { font-size: 1.15rem; font-weight: 500; color: var(--accent); text-align: right; }
+  .mu { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  .mu a { color: var(--ink); }
+  .sc { color: var(--ink-2); }
+  .meta { display: block; font-size: 0.78rem; color: var(--muted); margin-top: 2px; }
+</style>

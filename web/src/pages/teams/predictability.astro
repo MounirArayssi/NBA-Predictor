@@ -1,0 +1,158 @@
+---
+// Team Predictability: which teams' games were harder or easier for this model
+// to forecast, per season and game type. All figures come from
+// web/analytics/metrics.py (exported to predictability.json).
+import Base from "../../layouts/Base.astro";
+import LeagueMae from "../../components/charts/LeagueMae.astro";
+import predictability from "../../data/predictability.json";
+import { teams, teamUrl, signed } from "../../lib/data.js";
+import { teamVars } from "../../lib/teamColors.js";
+
+const P = predictability;
+const seasons = [...new Set(P.scopes.map((s) => s.season))];
+const kinds = { all: "All games", rs: "Regular season", po: "Playoffs" };
+const defaultKey = P.scopes.find((s) => s.key === "all|all") ? "all|all" : P.scopes[0].key;
+const byAbbr = Object.fromEntries(teams.map((t) => [t.abbr, t]));
+const ci = (c) => (c ? `${c[0].toFixed(1)}–${c[1].toFixed(1)}` : "–");
+const seasonLabel = (s) => (s === "all" ? P.scopes.find((x) => x.key === "all|all")?.label ?? "All seasons" : s);
+---
+<Base title="Team Predictability" description="Which NBA teams' games are hardest and easiest for this model to forecast: average margin miss, bias, error variability, expected wins and Brier score for all 30 teams, by season." section="teams">
+  <div class="wrap">
+    <header class="page-head">
+      <a class="back" href="/teams/">← Teams</a>
+      <p class="kicker accent">Teams</p>
+      <h1>Team Predictability</h1>
+      <p class="lede">Which teams' games this model forecasts well, and which it misses. This is not a ranking of good and bad teams: a weak team can be easy to forecast, and a strong one hard. Misses come from the model's limits, roster changes, missing information and ordinary variation, not only from the team.</p>
+    </header>
+
+    <div class="controls" id="pcontrols" hidden>
+      <div class="field">
+        <label for="p-season">Season</label>
+        <select id="p-season">{seasons.map((s) => <option value={s}>{seasonLabel(s)}</option>)}</select>
+      </div>
+      <div class="field">
+        <label for="p-kind">Games</label>
+        <select id="p-kind">{Object.entries(kinds).map(([k, v]) => <option value={k}>{v}</option>)}</select>
+      </div>
+      <div class="field">
+        <label for="p-min">Minimum games</label>
+        <select id="p-min"><option value="0">Any</option><option value={P.tiers.small}>{P.tiers.small}+</option><option value={P.tiers.stable}>{P.tiers.stable}+</option></select>
+      </div>
+      <p class="note count" id="p-count" aria-live="polite"></p>
+    </div>
+
+    {P.scopes.map((sc) => (
+      <section class="scope" data-key={sc.key} hidden={sc.key !== defaultKey} aria-label={sc.label}>
+        <p class="scope-meta">
+          <strong>{sc.label}</strong> · {sc.n_games.toLocaleString()} graded games · league average margin miss {sc.league.mae.toFixed(1)} pts
+          {!sc.complete && <span class="muted"> · season in progress</span>}
+        </p>
+        <div class="pchart">
+          <p class="chart-title">Average margin miss with intervals</p>
+          <LeagueMae scope={sc} id={sc.key.replace("|", "-")} />
+        </div>
+        <div class="table-scroll">
+              <table data-sortable class="ptable">
+                <caption>Sorted by average margin miss (smallest first). Select a column to re-sort. Intervals are 90% bootstrap intervals.</caption>
+                <thead>
+                  <tr>
+                    <th>Team</th>
+                    <th class="r" data-type="num">Games</th>
+                    <th class="r" data-type="num" aria-sort="ascending">Margin miss</th>
+                    <th class="r" data-nosort>Interval</th>
+                    <th class="r" data-type="num">Avg. error</th>
+                    <th class="r" data-type="num">Variability</th>
+                    <th class="r" data-type="num">Winner picked</th>
+                    <th class="r" data-type="num">Wins / exp.</th>
+                    <th class="r" data-type="num">Gap</th>
+                    <th class="r" data-type="num">Brier</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Object.entries(sc.teams).filter(([, m]: any) => m.n > 0).sort((a: any, b: any) => a[1].mae - b[1].mae).map(([abbr, m]: any) => (
+                    <tr data-n={m.n} class={m.tier}>
+                      <td data-v={abbr}><a href={`${teamUrl(abbr)}#predictability`} style={teamVars(abbr)}><i class="chip" aria-hidden="true"></i> <strong>{abbr}</strong> <span class="nm">{byAbbr[abbr]?.name}</span></a>{m.tier === "small" && <span class="tag">small sample</span>}</td>
+                      <td class="r num" data-v={m.n}>{m.n}</td>
+                      <td class="r num" data-v={m.mae}><strong>{m.mae.toFixed(1)}</strong></td>
+                      <td class="r num muted">{ci(m.mae_ci)}</td>
+                      <td class="r num" data-v={m.bias}>{signed(m.bias)}</td>
+                      <td class="r num" data-v={m.sd ?? ""}>{m.sd != null ? m.sd.toFixed(1) : "–"}</td>
+                      <td class="r num" data-v={m.acc}>{m.acc.toFixed(0)}%</td>
+                      <td class="r num" data-v={m.act_w}>{m.act_w} / {m.exp_w.toFixed(1)}</td>
+                      <td class="r num" data-v={m.gap}>{signed(m.gap)}</td>
+                      <td class="r num" data-v={m.brier}>{m.brier.toFixed(3)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+      </section>
+    ))}
+
+    <section class="section defs" aria-labelledby="h-defs">
+      <h2 id="h-defs">How to read this</h2>
+      <dl>
+        <dt>Margin miss</dt><dd>Mean absolute margin error: the average gap, in points, between a team's forecast margin and its actual margin. The headline measure of how hard the team's games were for this model.</dd>
+        <dt>Avg. error</dt><dd>Mean signed margin error from the team's side. Positive means the team did better than forecast on average (the model underrated it in this sample); negative, worse.</dd>
+        <dt>Variability</dt><dd>Sample standard deviation of the signed margin errors: how much the misses varied from game to game.</dd>
+        <dt>Winner picked</dt><dd>Share of the team's games where the forecast winner won. Teams play different mixes of close and lopsided games, so this alone is not a fair predictability ranking.</dd>
+        <dt>Wins / exp. and gap</dt><dd>Actual wins against the sum of the team's pregame win probabilities, and the difference.</dd>
+        <dt>Brier</dt><dd>Mean squared difference between the team's pregame win probability and the result (1 win, 0 loss). Lower is better; 0.25 is what always saying 50% would score.</dd>
+        <dt>Samples</dt><dd>Under {P.tiers.small} games a team is marked "small sample" and should not be ranked; {P.tiers.small} to {P.tiers.stable - 1} games is exploratory; {P.tiers.stable}+ is about a full season. Overlapping intervals mean the difference between two teams is not clear.</dd>
+        <dt>Seasons and models</dt><dd>Each season's forecasts come from a model trained only on games before them, and that model changes from season to season. A team moving up or down between seasons can reflect the team, the model, or both.</dd>
+      </dl>
+      <p class="note">Calculation version {P.calc_version}. <a href="/methodology/">Methodology</a> · <a href="/surprises/">Surprise games</a></p>
+    </section>
+  </div>
+</Base>
+
+<script>
+  import { enableSorting } from "../../lib/sortable.js";
+  enableSorting();
+  const $ = (id: string) => document.getElementById(id) as HTMLSelectElement;
+  const controls = document.getElementById("pcontrols")!;
+  controls.hidden = false;
+  const scopes = [...document.querySelectorAll<HTMLElement>(".scope")];
+  const count = document.getElementById("p-count")!;
+  const qs = new URLSearchParams(location.search);
+  const has = (k: string) => scopes.some((s) => s.dataset.key === k);
+  const [s0, k0] = (scopes.find((s) => !s.hidden)?.dataset.key ?? "all|all").split("|");
+  $("p-season").value = qs.get("season") || s0;
+  $("p-kind").value = qs.get("games") || k0;
+  $("p-min").value = qs.get("min") || "0";
+  function apply() {
+    let key = `${$("p-season").value}|${$("p-kind").value}`;
+    const kindOpt = [...$("p-kind").options];
+    kindOpt.forEach((o) => (o.disabled = !has(`${$("p-season").value}|${o.value}`)));
+    if (!has(key)) { $("p-kind").value = "all"; key = `${$("p-season").value}|all`; }
+    const min = +$("p-min").value;
+    let shown = 0, total = 0;
+    scopes.forEach((s) => {
+      s.hidden = s.dataset.key !== key;
+      if (!s.hidden) s.querySelectorAll<HTMLTableRowElement>("tbody tr").forEach((r) => { total++; r.hidden = +r.dataset.n! < min; if (!r.hidden) shown++; });
+    });
+    count.textContent = `${shown} of ${total} teams`;
+    const u = new URL(location.href);
+    u.searchParams.set("season", $("p-season").value); u.searchParams.set("games", $("p-kind").value);
+    min ? u.searchParams.set("min", String(min)) : u.searchParams.delete("min");
+    history.replaceState(null, "", u);
+  }
+  ["p-season", "p-kind", "p-min"].forEach((id) => $(id).addEventListener("change", apply));
+  apply();
+</script>
+
+<style>
+  .pchart { max-width: 820px; margin-bottom: var(--s5); }
+  .ptable td { white-space: nowrap; }
+  .scope-meta { font-size: 0.9rem; color: var(--ink-2); margin-bottom: var(--s3); }
+  .ptable td a { color: var(--ink); text-decoration: none; white-space: nowrap; }
+  .ptable td a:hover .nm { text-decoration: underline; }
+  .ptable .nm { color: var(--ink-2); font-size: 0.85rem; }
+  .ptable tr.small td { color: var(--muted); }
+  .tag { margin-left: 6px; font-size: 0.68rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--accent); }
+  .count { margin: 0 0 0 auto; align-self: center; }
+  .defs dl { display: grid; gap: var(--s2) var(--s5); max-width: 960px; margin: var(--s4) 0; }
+  @media (min-width: 700px) { .defs dl { grid-template-columns: 200px minmax(0, 1fr); } }
+  .defs dt { font-weight: 600; }
+  .defs dd { margin: 0; color: var(--ink-2); }
+</style>

@@ -1,0 +1,153 @@
+---
+import Base from "../../layouts/Base.astro";
+import { site, teams } from "../../lib/data.js";
+const seasons = [...site.seasons].reverse();
+const slugs = Object.fromEntries(teams.map((t) => [t.abbr, t.slug]));
+---
+<Base title="Forecast archive" description="Every graded NBA forecast since 2022-23, searchable by season, team and result." section="forecasts">
+  <div class="wrap">
+    <header class="page-head">
+      <a class="back" href="/forecasts/">← Forecasts</a>
+      <p class="kicker accent">Archive</p>
+      <h1>Forecast archive</h1>
+      <p class="lede">Every graded forecast, one per game, searchable by season, team and result.</p>
+    </header>
+
+    <noscript><p class="state">The archive needs JavaScript to load and filter its data. Season summaries are on the <a href="/performance/">Performance</a> page.</p></noscript>
+
+    <div id="archive" hidden>
+      <div class="controls">
+        <div class="field" id="season-field">
+          <label for="a-season">Season</label>
+          <select id="a-season">{seasons.map((s) => <option value={s}>{s}</option>)}</select>
+        </div>
+        <div class="field">
+          <label for="a-team">Team</label>
+          <select id="a-team"><option value="">All teams</option>{teams.map((t) => <option value={t.abbr}>{t.name}</option>)}</select>
+        </div>
+        <div class="field">
+          <label for="a-type">Games</label>
+          <select id="a-type"><option value="">Regular season and playoffs</option><option value="rs">Regular season</option><option value="po">Playoffs</option></select>
+        </div>
+        <div class="field">
+          <label for="a-res">Pick</label>
+          <select id="a-res"><option value="">Any result</option><option value="ok">Correct</option><option value="miss">Missed</option></select>
+        </div>
+        <div class="field">
+          <label for="a-from">From</label>
+          <input id="a-from" type="date" />
+        </div>
+        <div class="field">
+          <label for="a-to">To</label>
+          <input id="a-to" type="date" />
+        </div>
+        <button class="btn" type="button" id="a-reset">Reset</button>
+      </div>
+
+      <p class="summary" id="summary" aria-live="polite"></p>
+
+      <div class="table-scroll">
+        <table>
+          <thead id="a-head"></thead>
+          <tbody id="a-body"></tbody>
+        </table>
+      </div>
+      <div class="pager">
+        <button class="btn" type="button" id="prev">‹ Newer</button>
+        <span id="page" class="num"></span>
+        <button class="btn" type="button" id="next">Older ›</button>
+      </div>
+    </div>
+  </div>
+</Base>
+
+<script define:vars={{ seasons, slugs }}>
+  const $ = (s) => document.getElementById(s);
+  $("archive").hidden = false;
+  const PER = 50;
+  const cache = {};
+  const qs = new URLSearchParams(location.search);
+  const st = {
+    season: qs.get("season") || seasons[0],
+    team: qs.get("team") || "", type: qs.get("type") || "", res: qs.get("res") || "",
+    from: qs.get("from") || "", to: qs.get("to") || "", page: +(qs.get("page") || 1),
+  };
+  const ids = { team: "a-team", type: "a-type", res: "a-res", from: "a-from", to: "a-to", season: "a-season" };
+  Object.entries(ids).forEach(([k, id]) => { $(id).value = st[k]; });
+
+  const fd = (ymd) => new Date(ymd + "T12:00:00Z").toLocaleDateString("en-US", { timeZone: "UTC", month: "short", day: "numeric", year: "numeric" });
+  const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const sgn = (x) => x == null ? "–" : (x > 0 ? "+" : x < 0 ? "−" : "±") + Math.abs(Math.round(x));
+
+  async function load() {
+    const key = st.season;
+    if (!cache[key]) {
+      $("summary").textContent = "Loading…";
+      const r = await fetch(`/data/archive-${key}.json`);
+      if (!r.ok) throw new Error(`Could not load ${key}`);
+      cache[key] = await r.json();
+    }
+    return cache[key];
+  }
+
+  function sync() {
+    const p = new URLSearchParams();
+    if (st.season !== seasons[0]) p.set("season", st.season);
+    ["team", "type", "res", "from", "to"].forEach((k) => st[k] && p.set(k, st[k]));
+    if (st.page > 1) p.set("page", st.page);
+    history.replaceState(null, "", `${location.pathname}${p.toString() ? "?" + p : ""}`);
+  }
+
+  async function render() {
+    let rows;
+    try { rows = await load(); } catch (e) { $("summary").textContent = "The archive data could not be loaded. Try reloading the page."; return; }
+    const f = rows.filter((r) =>
+      (!st.team || r.h === st.team || r.a === st.team) &&
+      (!st.type || (st.type === "po" ? r.po : !r.po)) &&
+      (!st.res || (st.res === "ok" ? r.ok : !r.ok)) &&
+      (!st.from || r.d >= st.from) && (!st.to || r.d <= st.to));
+    const pages = Math.max(1, Math.ceil(f.length / PER));
+    st.page = Math.min(Math.max(1, st.page), pages);
+    const okN = f.filter((r) => r.ok).length;
+    $("summary").innerHTML = f.length
+      ? `<strong>${f.length.toLocaleString()}</strong> games · winner picked correctly in <strong>${okN.toLocaleString()}</strong> (${(100 * okN / f.length).toFixed(1)}%)`
+      : "No games match these filters.";
+    $("a-head").innerHTML = `<tr><th>Date</th><th>Matchup</th><th>Forecast</th><th class="r">Projected<br><span class=\"hint\">away–home</span></th><th class="r">Final<br><span class=\"hint\">away–home</span></th><th>Pick</th><th class="r">Margin error</th></tr>`;
+    const slice = f.slice((st.page - 1) * PER, st.page * PER);
+    $("a-body").innerHTML = slice.map((r) => {
+      const homeFav = r.ph > r.pa || (r.ph === r.pa && r.p >= 0.5);
+      const fav = homeFav ? r.h : r.a, fp = Math.round(100 * (homeFav ? r.p : 1 - r.p));
+      const date = r.page ? `<a href="/games/${esc(r.id)}/">${fd(r.d)}</a>` : fd(r.d);
+      return `<tr>
+        <td class="num">${date}${r.po ? ' <span class="muted">PO</span>' : ""}</td>
+        <td><a href="/teams/${esc(slugs[r.a])}/">${esc(r.a)}</a> at <a href="/teams/${esc(slugs[r.h])}/">${esc(r.h)}</a></td>
+        <td class="num">${esc(fav)} ${fp}%</td>
+        <td class="r num">${r.pa}–${r.ph}</td>
+        <td class="r num">${r.as_}–${r.hs}</td>
+        <td><span class="res ${r.ok ? "ok" : "miss"}">${r.ok ? "✓ Correct" : "✗ Missed"}</span></td>
+        <td class="r num">${sgn(r.me)}</td>
+      </tr>`;
+    }).join("");
+    $("page").textContent = f.length ? `Page ${st.page} of ${pages}` : "";
+    $("prev").disabled = st.page <= 1;
+    $("next").disabled = st.page >= pages;
+    sync();
+  }
+
+  Object.entries(ids).forEach(([k, id]) => $(id).addEventListener("change", () => { st[k] = $(id).value; st.page = 1; render(); }));
+  $("prev").addEventListener("click", () => { st.page--; render(); window.scrollTo({ top: $("summary").offsetTop - 80 }); });
+  $("next").addEventListener("click", () => { st.page++; render(); window.scrollTo({ top: $("summary").offsetTop - 80 }); });
+  $("a-reset").addEventListener("click", () => {
+    Object.assign(st, { team: "", type: "", res: "", from: "", to: "", page: 1 });
+    Object.entries(ids).forEach(([k, id]) => { if (k !== "season") $(id).value = ""; });
+    render();
+  });
+  render();
+</script>
+
+<style>
+  :global(.hint) { font-weight: 500; text-transform: none; letter-spacing: 0; }
+  .summary { font-size: 0.95rem; margin-bottom: var(--s3); }
+  .pager { display: flex; align-items: center; gap: var(--s4); justify-content: flex-end; margin-top: var(--s4); }
+  #a-reset { align-self: end; }
+</style>

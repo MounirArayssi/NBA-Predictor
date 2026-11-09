@@ -1,0 +1,27 @@
+---
+// How much of the season-margin input comes from this season vs last season.
+interface Props { games?: number }
+const { games = 20 } = Astro.props;
+const W = 600, H = 220, m = { l: 48, r: 110, t: 14, b: 40 }, N = 40;
+const x = (n) => m.l + (W - m.l - m.r) * n / N;
+const y = (v) => m.t + (H - m.t - m.b) * (1 - v);
+const w = (n) => Math.min(n, games) / games;
+const cur = Array.from({ length: N + 1 }, (_, n) => `${n ? "L" : "M"}${x(n)} ${y(w(n))}`).join("");
+const prev = Array.from({ length: N + 1 }, (_, n) => `${n ? "L" : "M"}${x(n)} ${y(1 - w(n))}`).join("");
+---
+<figure class="chart nb-chart">
+  <p class="chart-title">Season margin input: weight on each season</p>
+  <p class="chart-sub">From <code>BLEND_GAMES = {games}</code>: last season fades out linearly over the first {games} games.</p>
+  <div class="chart-scroll">
+    <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-labelledby="bw-t">
+      <title id="bw-t">Share of the season margin input taken from this season and from last season, by games played</title>
+      {[0, 0.5, 1].map((v) => (<g><line class="grid" x1={m.l} x2={W - m.r} y1={y(v)} y2={y(v)} /><text x={m.l - 8} y={y(v) + 4} text-anchor="end">{v * 100}%</text></g>))}
+      {[0, 10, 20, 30, 40].map((n) => <text x={x(n)} y={H - m.b + 18} text-anchor="middle">{n}</text>)}
+      <path d={prev} fill="none" stroke="var(--rule-strong)" stroke-width="2.5" />
+      <path d={cur} fill="none" stroke="var(--model)" stroke-width="2.5" />
+      <text x={x(N) + 8} y={y(1) + 4} class="strong">this season</text>
+      <text x={x(N) + 8} y={y(0) + 4} class="lbl">last season</text>
+      <text x={(m.l + W - m.r) / 2} y={H - 6} text-anchor="middle" class="lbl">Games played this season</text>
+    </svg>
+  </div>
+</figure>

@@ -1,0 +1,30 @@
+---
+// Signed margin error per game from one team's perspective:
+// (actual team margin) − (predicted team margin). Above zero = the team did
+// better than forecast.
+interface Props { games: any[]; abbr: string; id: string }
+const { games, abbr, id } = Astro.props;
+const W = 640, H = 240, m = { l: 40, r: 12, t: 14, b: 36 };
+const lim = Math.max(10, Math.ceil(Math.max(...games.map((g) => Math.abs(g.me))) / 10) * 10);
+const y = (v) => m.t + (H - m.t - m.b) * (1 - (v + lim) / (2 * lim));
+const band = (W - m.l - m.r) / games.length;
+const bw = Math.max(1, Math.min(10, band - 1));
+const yt = [-lim, -lim / 2, 0, lim / 2, lim];
+---
+<figure class="chart">
+  <div class="chart-scroll">
+    <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-labelledby={`eb-${id}`}>
+      <title id={`eb-${id}`}>{abbr}: margin forecast error in each game, actual minus predicted</title>
+      {yt.map((v) => (<g><line class={v === 0 ? "axis" : "grid"} x1={m.l} x2={W - m.r} y1={y(v)} y2={y(v)} /><text x={m.l - 8} y={y(v) + 4} text-anchor="end">{v > 0 ? `+${v}` : v}</text></g>))}
+      {games.map((g, i) => {
+        const top = g.me >= 0 ? y(g.me) : y(0);
+        const h = Math.max(1, Math.abs(y(g.me) - y(0)));
+        return <rect x={m.l + band * i + (band - bw) / 2} y={top} width={bw} height={h} fill={g.me >= 0 ? "var(--model)" : "var(--accent)"} />;
+      })}
+      <text x={m.l + 4} y={m.t + 10} class="lbl">Better than forecast</text>
+      <text x={m.l + 4} y={H - m.b - 4} class="lbl">Worse than forecast</text>
+      <text x={(m.l + W - m.r) / 2} y={H - 6} text-anchor="middle" class="lbl">Games in date order</text>
+    </svg>
+  </div>
+  <figcaption>Each bar is one game: {abbr}'s actual margin minus its predicted margin, in points. Positive bars sit above the line and negative bars below it, so direction does not depend on color.</figcaption>
+</figure>

@@ -1,0 +1,53 @@
+---
+// Every team's average margin miss (MAE) for one sample, with its 90% bootstrap
+// interval, sorted from smallest to largest. Teams with small samples are drawn
+// hollow. With `highlight`, one team is emphasised.
+import { teamUrl } from "../../lib/data.js";
+import { teamColor } from "../../lib/teamColors.js";
+
+interface Props { scope: any; highlight?: string; id: string; compact?: boolean }
+const { scope, highlight, id, compact = false } = Astro.props;
+const rows = Object.entries(scope.teams).filter(([, s]: any) => s.n > 0)
+  .sort((a: any, b: any) => a[1].mae - b[1].mae) as [string, any][];
+const vals = rows.flatMap(([, s]) => [s.mae, ...(s.mae_ci ?? [])]);
+const lo = Math.floor(Math.min(...vals) - 0.5), hi = Math.ceil(Math.max(...vals) + 0.5);
+const rowH = compact ? 15 : 20, W = 680, m = { l: 52, r: 110, t: 22, b: 30 };
+const H = m.t + rows.length * rowH + m.b;
+const x = (v) => m.l + ((W - m.l - m.r) * (v - lo)) / (hi - lo);
+const ticks = [];
+for (let t = Math.ceil(lo); t <= hi; t += hi - lo > 8 ? 2 : 1) ticks.push(t);
+const med = scope.league.median_team_mae;
+const rank = highlight ? rows.findIndex(([a]) => a === highlight) + 1 : null;
+---
+<figure class={`chart league-mae ${highlight ? "has-hl" : ""}`}>
+  <div class="chart-scroll">
+    <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-labelledby={`lm-${id}`}>
+      <title id={`lm-${id}`}>{`Average margin miss by team, ${scope.label}, smallest to largest${highlight && rank ? `; ${highlight} is ${rank} of ${rows.length}` : ""}`}</title>
+      {ticks.map((t) => (<g><line class="grid" x1={x(t)} x2={x(t)} y1={m.t - 6} y2={H - m.b} /><text x={x(t)} y={H - m.b + 16} text-anchor="middle">{t}</text></g>))}
+      {med != null && <><line x1={x(med)} x2={x(med)} y1={m.t - 10} y2={H - m.b} stroke="var(--neutral-mark)" stroke-dasharray="4 3" /><text x={x(med) + 4} y={m.t - 10} class="lbl">median {med.toFixed(1)}</text></>}
+      {rows.map(([abbr, s], i) => {
+        const cy = m.t + i * rowH + rowH / 2;
+        const c = teamColor(abbr).light;
+        const hl = abbr === highlight;
+        return (
+          <a href={`${teamUrl(abbr)}#predictability`} class={`row ${hl ? "hl" : ""}`} style={`--d:${i * 20}ms`}>
+            <title>{`${abbr}: ${s.mae.toFixed(2)} points over ${s.n} games${s.mae_ci ? `, 90% interval ${s.mae_ci[0]}–${s.mae_ci[1]}` : ""}`}</title>
+            <text x={m.l - 8} y={cy + 4} text-anchor="end" class={hl ? "strong" : "lbl"}>{abbr}</text>
+            {s.mae_ci && <line x1={x(s.mae_ci[0])} x2={x(s.mae_ci[1])} y1={cy} y2={cy} stroke={c} stroke-width={hl ? 3 : 2} opacity="0.55" />}
+            <circle cx={x(s.mae)} cy={cy} r={hl ? 6 : 4.5} fill={s.tier === "small" ? "var(--surface)" : c} stroke={c} stroke-width="2" />
+            <text x={W - m.r + 8} y={cy + 4} class={hl ? "strong" : ""}>{s.mae.toFixed(1)} <tspan class="n">n={s.n}</tspan></text>
+          </a>
+        );
+      })}
+      <text x={(m.l + W - m.r) / 2} y={H - 4} text-anchor="middle" class="lbl">average margin miss, points (lower = easier to forecast)</text>
+    </svg>
+  </div>
+  <figcaption>Dots: average absolute margin error per team. Lines: 90% bootstrap intervals; overlapping lines mean the difference between those teams is not clear in this sample. Hollow dots: fewer than 20 games.</figcaption>
+</figure>
+
+<style>
+  .league-mae .n { font-size: 10px; fill: var(--muted); }
+  .league-mae .row:focus-visible circle { stroke: var(--accent); stroke-width: 3; }
+  .league-mae.has-hl .row:not(.hl) { opacity: 0.45; }
+  .league-mae svg { min-width: 480px; }
+</style>

@@ -1,0 +1,42 @@
+---
+// Dumbbell rows: average predicted home margin vs average actual home margin,
+// grouped by the size of the predicted margin.
+interface Props { rows: any[] }
+const { rows } = Astro.props;
+const W = 600, rowH = 30, m = { l: 112, r: 20, t: 28, b: 36 };
+const H = m.t + rows.length * rowH + m.b;
+const vals = rows.flatMap((r) => [r.pred, r.actual]);
+const lim = Math.ceil(Math.max(...vals.map(Math.abs)) / 5) * 5;
+const x = (v) => m.l + (W - m.l - m.r) * (v + lim) / (2 * lim);
+const ticks = [];
+for (let v = -lim; v <= lim; v += 5) ticks.push(v);
+---
+<figure class="chart">
+  <div class="chart-scroll">
+    <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-labelledby="mb-t">
+      <title id="mb-t">Average predicted home margin against average actual home margin, by predicted margin range</title>
+      {ticks.map((v) => (<g><line class="grid" x1={x(v)} x2={x(v)} y1={m.t - 8} y2={H - m.b} /><text x={x(v)} y={H - m.b + 16} text-anchor="middle">{v > 0 ? `+${v}` : v}</text></g>))}
+      <line x1={x(0)} x2={x(0)} y1={m.t - 8} y2={H - m.b} stroke="var(--ink-2)" stroke-width="1" />
+      <text x={x(-lim) + 2} y={m.t - 14} class="lbl">Road team wins by more</text>
+      <text x={x(lim) - 2} y={m.t - 14} text-anchor="end" class="lbl">Home team wins by more</text>
+      {rows.map((r, i) => {
+        const cy = m.t + i * rowH + rowH / 2;
+        return (
+          <g>
+            <text x={m.l - 10} y={cy + 4} text-anchor="end" class="lbl">{r.label}</text>
+            <line x1={x(r.pred)} x2={x(r.actual)} y1={cy} y2={cy} stroke="var(--rule-strong)" stroke-width="3" />
+            <circle cx={x(r.actual)} cy={cy} r="5" fill="var(--surface)" stroke="var(--ink-2)" stroke-width="2" />
+            <circle cx={x(r.pred)} cy={cy} r="5" fill="var(--model)" />
+          </g>
+        );
+      })}
+      <text x={(m.l + W - m.r) / 2} y={H - 6} text-anchor="middle" class="lbl">Home margin (points)</text>
+    </svg>
+  </div>
+  <figcaption><span style="color:var(--model)">●</span> Average predicted margin &nbsp; ○ Average actual margin.</figcaption>
+  <details class="data"><summary>Data table</summary>
+    <table><thead><tr><th>Predicted range</th><th class="r">Games</th><th class="r">Avg predicted</th><th class="r">Avg actual</th></tr></thead>
+      <tbody>{rows.map((r) => (<tr><td>{r.label}</td><td class="r num">{r.n.toLocaleString()}</td><td class="r num">{r.pred}</td><td class="r num">{r.actual}</td></tr>))}</tbody>
+    </table>
+  </details>
+</figure>

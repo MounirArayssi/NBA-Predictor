@@ -1,0 +1,128 @@
+---
+// Every graded game, one dot each, laid out season by season in date order
+// (columns of 8 games, read top to bottom, left to right). Orange = the forecast
+// winner won. Hover or tap a dot for the game; details are fetched from the
+// public archive files on first use, so the page only embeds one character per game.
+import fs from "node:fs";
+import path from "node:path";
+
+const ROWS = 8;
+const dir = path.resolve(process.cwd(), "public", "data");
+const seasons = fs.readdirSync(dir).filter((f) => /^archive-\d{4}-\d{2}\.json$/.test(f)).sort().map((f) => {
+  const rows = JSON.parse(fs.readFileSync(path.join(dir, f), "utf8"))
+    .sort((a, b) => a.d.localeCompare(b.d) || a.id.localeCompare(b.id));
+  const firstPo = rows.findIndex((r) => r.po);
+  return {
+    season: rows[0].s, file: f, n: rows.length,
+    ok: rows.filter((r) => r.ok).length,
+    bits: rows.map((r) => (r.ok ? "1" : "0")).join(""),
+    po: firstPo,
+  };
+});
+const maxCols = Math.max(...seasons.map((s) => Math.ceil(s.n / ROWS) + (s.po > 0 ? 2 : 0)));
+---
+<figure class="ribbons instrument" data-cols={maxCols} data-rows={ROWS}>
+  {seasons.map((s) => (
+    <div class="rib">
+      <div class="rib-head">
+        <span class="rs">{s.season}</span>
+        <span class="rv num">{s.ok.toLocaleString()} / {s.n.toLocaleString()} · {((100 * s.ok) / s.n).toFixed(1)}%</span>
+      </div>
+      <canvas data-bits={s.bits} data-po={s.po} data-file={s.file} aria-hidden="true"></canvas>
+    </div>
+  ))}
+  <p class="rib-tip num" role="status" aria-live="polite">Hover or tap a dot to see that game.</p>
+  <figcaption class="sr-only">Every graded game by season in date order. {seasons.map((s) => `${s.season}: ${s.ok} of ${s.n} winners picked.`).join(" ")}</figcaption>
+</figure>
+
+<script>
+  const fig = document.querySelector<HTMLElement>(".ribbons");
+  if (fig) {
+    const COLS = +fig.dataset.cols!, ROWS = +fig.dataset.rows!;
+    const tip = fig.querySelector(".rib-tip")!;
+    const css = getComputedStyle(fig);
+    const HIT = css.getPropertyValue("--ball-hit").trim() || "#e8773a";
+    const MISS = css.getPropertyValue("--ball-miss").trim() || "#3a444d";
+    const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const cache: Record<string, Promise<any[]>> = {};
+    const load = (f: string) => (cache[f] ??= fetch(`/data/${f}`).then((r) => r.json()).then((rows) =>
+      rows.sort((a: any, b: any) => a.d.localeCompare(b.d) || a.id.localeCompare(b.id))));
+    const canvases = [...fig.querySelectorAll<HTMLCanvasElement>("canvas")];
+    // Grid position of game i: playoff games start two columns after the regular season.
+    const place = (i: number, po: number) => {
+      const reg = po > 0 ? po : Infinity;
+      const regCols = Math.ceil(Math.min(reg, 1e9) / ROWS);
+      return i < reg ? [Math.floor(i / ROWS), i % ROWS] : [regCols + 1 + Math.floor((i - reg) / ROWS), (i - reg) % ROWS];
+    };
+    const states = canvases.map((cv) => {
+      const bits = cv.dataset.bits!, po = +cv.dataset.po!;
+      const pos = Array.from(bits, (_, i) => place(i, po));
+      return { cv, bits, po, pos, ctx: cv.getContext("2d")!, w: 0, cell: 0, upTo: 0, hl: -1 };
+    });
+    function size() {
+      for (const s of states) {
+        const w = s.cv.clientWidth;
+        const cell = w / COLS;
+        const dpr = Math.min(2, devicePixelRatio || 1);
+        s.cv.width = w * dpr; s.cv.height = cell * ROWS * dpr;
+        s.cv.style.height = `${cell * ROWS}px`;
+        s.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        s.w = w; s.cell = cell;
+        draw(s);
+      }
+    }
+    function draw(s: any) {
+      const { ctx, cell } = s;
+      ctx.clearRect(0, 0, s.w, cell * ROWS);
+      const r = Math.max(0.9, cell * 0.36);
+      for (let i = 0; i < s.upTo; i++) {
+        const [cx, cy] = s.pos[i];
+        ctx.fillStyle = s.bits[i] === "1" ? HIT : MISS;
+        ctx.beginPath(); ctx.arc((cx + 0.5) * cell, (cy + 0.5) * cell, i === s.hl ? r * 1.9 : r, 0, 6.2832); ctx.fill();
+        if (i === s.hl) { ctx.strokeStyle = "#e9edf0"; ctx.lineWidth = 1.5; ctx.stroke(); }
+      }
+    }
+    const run = () => {
+      if (still) { states.forEach((s) => { s.upTo = s.bits.length; draw(s); }); return; }
+      const t0 = performance.now(), dur = 1800;
+      const step = (t: number) => {
+        const k = Math.min(1, (t - t0) / dur), e = 1 - Math.pow(1 - k, 3);
+        states.forEach((s) => { s.upTo = Math.round(s.bits.length * e); draw(s); });
+        if (k < 1) requestAnimationFrame(step);
+      };
+      requestAnimationFrame(step);
+    };
+    size();
+    addEventListener("resize", size);
+    const io = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) { io.disconnect(); run(); } }, { threshold: 0.15 });
+    io.observe(fig);
+    const fmt = (d: string) => new Date(d + "T12:00:00Z").toLocaleDateString("en-US", { timeZone: "UTC", month: "short", day: "numeric", year: "numeric" });
+    states.forEach((s) => {
+      const pick = async (e: PointerEvent) => {
+        const b = s.cv.getBoundingClientRect();
+        const col = Math.floor((e.clientX - b.left) / s.cell), row = Math.floor((e.clientY - b.top) / s.cell);
+        const i = s.pos.findIndex(([c, r]: number[]) => c === col && r === row);
+        if (i < 0 || i >= s.upTo) return;
+        states.forEach((o) => { if (o !== s && o.hl >= 0) { o.hl = -1; draw(o); } });
+        s.hl = i; draw(s);
+        const g = (await load(s.cv.dataset.file!))[i];
+        if (!g || s.hl !== i) return;
+        const homeFav = g.ph > g.pa || (g.ph === g.pa && g.p >= 0.5);
+        const fav = homeFav ? g.h : g.a, pf = Math.round(100 * (homeFav ? g.p : 1 - g.p));
+        const win = g.hs > g.as_ ? g.h : g.a;
+        tip.textContent = `${fmt(g.d)} · ${g.a} at ${g.h}${g.po ? " (playoffs)" : ""} · picked ${fav} ${pf}% · final ${g.a} ${g.as_}, ${g.h} ${g.hs} · ${g.ok ? "✓ correct" : `✗ ${win} won`}`;
+      };
+      s.cv.addEventListener("pointermove", pick);
+      s.cv.addEventListener("pointerdown", pick);
+    });
+  }
+</script>
+
+<style>
+  .ribbons { margin: 0; padding: 14px 16px 12px; border-radius: 8px; display: grid; gap: 12px; }
+  .rib-head { display: flex; justify-content: space-between; gap: var(--s3); font-size: 0.78rem; margin-bottom: 4px; }
+  .rs { font-weight: 600; letter-spacing: 0.04em; }
+  .rv { color: var(--led); }
+  canvas { display: block; width: 100%; cursor: crosshair; touch-action: pan-y; }
+  .rib-tip { margin: 2px 0 0; min-height: 1.4em; font-size: 0.78rem; color: var(--ink-2); }
+</style>

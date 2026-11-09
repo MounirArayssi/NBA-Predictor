@@ -217,6 +217,9 @@ def predict_for_date(target: date, injury_report, all_player_props):
         return 0
 
     log.info(f"  {len(games)} games found for {target}")
+    if injury_report is None:
+        from data.ingestion.fetch_official_injuries import get_injury_report
+        injury_report = get_injury_report(target)
     predictions = []
     for game in games:
         pred = predict_single_game(
@@ -289,23 +292,9 @@ def main():
     # Report what's in the DB before predicting
     report_db_coverage(start, end)
 
-    # Fetch live injury/odds once for all dates (historical snapshots not stored)
-    log.info("Fetching live injury report and player props (used for all dates)...")
-    try:
-        from data.ingestion.fetch_injuries import fetch_injury_report
-        injury_report = fetch_injury_report()
-        log.info(f"  Injury report: {sum(len(v) for v in injury_report.values())} entries")
-    except Exception as e:
-        log.warning(f"  Could not fetch injury report: {e} — using empty dict")
-        injury_report = {}
-
-    try:
-        from data.ingestion.fetch_odds import fetch_todays_player_props
-        all_player_props = fetch_todays_player_props()
-        log.info(f"  Player props fetched")
-    except Exception as e:
-        log.warning(f"  Could not fetch player props: {e} — using empty dict")
-        all_player_props = {}
+    # Injury reports are the official NBA report archived for each date
+    # (fetched per date in predict_for_date). Player props aren't used.
+    injury_report, all_player_props = None, {}
 
     # Loop through every date
     total_predictions = 0

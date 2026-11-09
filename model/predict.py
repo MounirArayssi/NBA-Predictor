@@ -11,7 +11,26 @@ from sqlalchemy import text
 from data.storage.db import engine
 from data.storage.models import Game, Team, GameOdds
 from model.train import FEATURE_COLS
-from data.ingestion.build_features import shrink_series_avg, compute_live_availability
+from data.ingestion.build_features import shrink_series_avg, compute_live_availability, REST_CAP
+from data.ingestion.team_strength import get_live_team_strength
+
+# Vegas lines are NOT used to make predictions: the model is independent of the
+# market so it can be compared against it. Lines are still loaded and stored
+# (vegas_spread / vegas_total, spread_edge, total_edge) for grading, and the key
+# factors still say where the model disagrees with the market. Setting this to
+# True restores the old market pulls (total blend, margin floor, tiebreak weight,
+# reliability scoring, 'market' margin candidate).
+USE_MARKET_IN_PREDICTION = False
+
+# Game scores come from the team model alone (home/away score models). Layer-by-layer
+# out-of-sample test (2026-11-05, 116 games of 2026-27 + 411 of Feb-Jun 2026): the plain
+# team model picked the most winners in every slice (65.5% vs 62.9% published this
+# season, 75.2% vs 74.6% Feb-Apr, 59.5% vs 54.8% playoffs). The player model's summed
+# team totals run 20-60 pts low, so blending it in only helped when it happened to
+# cancel a team-model bias. The direct margin model blend (70/30) cost winners too.
+# Player predictions are still made and shown, just not blended into the game score.
+# The playoff total drag in blend_game_total is kept (team totals run ~3.5 pts high).
+TEAM_MODEL_ONLY = True
 from data.ingestion.fetch_injuries import fetch_injury_report
 from data.ingestion.fetch_odds import fetch_todays_player_props
 
@@ -254,6 +273,7 @@ def save_predictions(predictions, is_backfill=False):
                 uncertainty_flag=(pred.get("confidence") == "LOW"),
 
                 key_factors=pred.get("factors", []),
+                feature_vector=pred.get("feature_vector"),
 
                 model_margin=model_margin,
                 model_total=model_total,
@@ -414,7 +434,8 @@ def get_scoring_stats(team_id, game_date, n=10):
     if len(rows) < 5:
         return 12.0
     pts = [float(r[0]) for r in rows]
-    return float(np.std(pts)) if len(pts) > 1 else 12.0
+    # ddof=1 to match training (pandas .std() in add_scoring_variance)
+    return float(np.std(pts, ddof=1)) if len(pts) > 1 else 12.0
 
 
 def get_in_series_stats(home_team_id, away_team_id, game_date, season_type):
@@ -790,30 +811,10 @@ def build_features_for_upcoming_game(home_team_id, away_team_id,
     row_dict['in_series_total_avg'] = row_dict['in_series_home_avg_pts'] + row_dict['in_series_away_avg_pts']
     row_dict['in_series_margin'] = row_dict['in_series_home_avg_pts'] - row_dict['in_series_away_avg_pts']
 
-    # Playoff pace penalty
-    if season_type == 'Playoffs':
-        row_dict['home_avg_points'] = float(
-            row_dict['home_avg_points']
-        ) * 0.97
-        row_dict['away_avg_points'] = float(
-            row_dict['away_avg_points']
-        ) * 0.95
-        row_dict['implied_total'] = (
-            row_dict['home_avg_points'] +
-            row_dict['away_avg_points']
-        )
-
-    # Apply downward adjustment for volatile teams
-    if home_bad > 0.35:
-        row_dict['home_avg_points'] = float(
-            row_dict['home_avg_points']
-        ) * (1 - (home_bad - 0.35) * 0.3)
-
-    if away_bad > 0.35:
-        row_dict['away_avg_points'] = float(
-            row_dict['away_avg_points']
-        ) * (1 - (away_bad - 0.35) * 0.3)
-
+    # No hand adjustments to model inputs here: training uses the raw rolling
+    # averages, so a playoff "pace penalty" (x0.97 / x0.95 on avg_points) or a
+    # bad-night cut fed the model inputs it never saw. Playoff scoring is learned
+    # from the playoff-weighted training data instead.
     return row_dict
 
 
@@ -1306,7 +1307,7 @@ def get_rest_days(team_id, game_date):
     if not last_game_date:
         return 3
 
-    return max(0, min(5, (pd.Timestamp(game_date).date() - last_game_date).days))
+    return max(0, min(REST_CAP, (pd.Timestamp(game_date).date() - last_game_date).days))
 
 
 def calculate_ensemble_prediction(game, row_dict, home_pred_team, away_pred_team, player_results, direct_margin_pred=None):
@@ -1324,7 +1325,7 @@ def calculate_ensemble_prediction(game, row_dict, home_pred_team, away_pred_team
     team_total = float(home_pred_team + away_pred_team)
     raw_team_margin = float(home_pred_team - away_pred_team)
 
-    if direct_margin_pred is not None:
+    if direct_margin_pred is not None and not TEAM_MODEL_ONLY:
         team_margin = 0.70 * raw_team_margin + 0.30 * float(direct_margin_pred)
     else:
         team_margin = raw_team_margin
@@ -1333,7 +1334,7 @@ def calculate_ensemble_prediction(game, row_dict, home_pred_team, away_pred_team
     row_dict['_away_pred_team'] = float(away_pred_team)
     row_dict['_team_total_for_reliability'] = team_total
 
-    if not player_results.get('available'):
+    if TEAM_MODEL_ONLY or not player_results.get('available'):
         market_margin = get_market_home_margin(game)
         final_total, total_debug = blend_game_total(
             game, team_total, 0.0, {'available': False}
@@ -1393,8 +1394,10 @@ def get_directional_edge(game, row_dict, home_pred_team, away_pred_team, player_
     """
     team_margin = float(home_pred_team - away_pred_team)
     player_margin = 0.0
-    if player_results.get('available'):
+    if player_results.get('available') and not TEAM_MODEL_ONLY:
         player_margin = float(player_results.get('home_pts', 0) - player_results.get('away_pts', 0))
+    if TEAM_MODEL_ONLY:
+        return team_margin
 
     market_margin = get_market_home_margin(game)
     net_rating_diff = clamp(safe_float(row_dict.get('net_rating_diff'), 0.0), -10, 10)
@@ -1472,16 +1475,20 @@ def predict_todays_games(prediction_date=None):
     print(f"Found {len(games)} games for {target}\n")
 
     # Fetch shared data once
-    injury_report, all_player_props = fetch_shared_game_data()
+    injury_report, all_player_props = fetch_shared_game_data(prediction_date)
 
     predictions = []
     for game in games:
-        prediction = predict_single_game(
-            game, model_home, model_away,
-            injury_report, all_player_props,
-            model_margin=model_margin,
-            calibration_model=calibration_model,
-        )
+        try:
+            prediction = predict_single_game(
+                game, model_home, model_away,
+                injury_report, all_player_props,
+                model_margin=model_margin,
+                calibration_model=calibration_model,
+            )
+        except ValueError as e:
+            print(f"❌ SKIPPED {game['away_team']} @ {game['home_team']}: {e}")
+            continue
         if prediction:
             predictions.append(prediction)
             print_prediction(prediction, game, injury_report)
@@ -1499,18 +1506,17 @@ def print_header(prediction_date=None):
     print(f"{'='*55}\n")
 
 
-def fetch_shared_game_data():
-    """Fetch injury report and player props once for all games"""
-    from data.ingestion.fetch_injuries import fetch_injury_report
-    from data.ingestion.fetch_odds import fetch_todays_player_props
-    
+def fetch_shared_game_data(prediction_date=None):
+    """
+    Injury report once for all games: the official NBA report (latest one live,
+    that day's training-time report for past dates; ESPN only as a live fallback).
+    Player props are no longer fetched — predictions don't use market lines.
+    """
+    from data.ingestion.fetch_official_injuries import get_injury_report
+
     print("Fetching injury report...")
-    injury_report = fetch_injury_report()
-    
-    print("Fetching player props...")
-    all_player_props = fetch_todays_player_props()
-    
-    return injury_report, all_player_props
+    injury_report = get_injury_report(prediction_date)
+    return injury_report, {}
 
 
 def predict_single_game(game, model_home, model_away, injury_report, all_player_props, model_margin=None, calibration_model=None):
@@ -1584,7 +1590,7 @@ def predict_single_game(game, model_home, model_away, injury_report, all_player_
         confidence=confidence
     )
 
-    return build_prediction_dict(
+    prediction = build_prediction_dict(
         game,
         home_pred_final,
         away_pred_final,
@@ -1597,11 +1603,14 @@ def predict_single_game(game, model_home, model_away, injury_report, all_player_
         debug={**ensemble_debug, **calibration_debug},
         calibration_model=calibration_model,
     )
+    # Exact model inputs, stored so live features can be checked against training
+    prediction['feature_vector'] = {f: float(row_dict[f]) for f in FEATURE_COLS}
+    return prediction
 
 
 def build_game_features(game):
     """Build feature vector for a game"""
-    return build_features_for_upcoming_game(
+    row_dict = build_features_for_upcoming_game(
         home_team_id=game['home_team_id'],
         away_team_id=game['away_team_id'],
         game_date=game['game_date'],
@@ -1610,6 +1619,10 @@ def build_game_features(game):
         home_series_wins=game['home_series_wins'],
         away_series_wins=game['away_series_wins'],
     )
+    # Elo + season blend — same TeamStrength code as training
+    row_dict.update(get_live_team_strength(
+        game['home_team_id'], game['away_team_id'], game['season'], game['game_date']))
+    return row_dict
 
 
 def add_live_availability(row_dict, game, injury_report):
@@ -1631,10 +1644,14 @@ def add_live_availability(row_dict, game, injury_report):
 
 def get_team_predictions(model_home, model_away, row_dict, model_margin=None):
     """Get predictions from team models (and optionally the direct margin model)."""
-    features = np.array([
-        float(row_dict.get(f, 0) or 0)
-        for f in FEATURE_COLS
-    ]).reshape(1, -1)
+    missing = [f for f in FEATURE_COLS
+               if row_dict.get(f) is None or pd.isna(row_dict.get(f))]
+    if missing:
+        # Used to become 0 silently, which the model never saw in training
+        raise ValueError(
+            f"{row_dict.get('away_team')} @ {row_dict.get('home_team')}: "
+            f"missing features {missing}")
+    features = np.array([float(row_dict[f]) for f in FEATURE_COLS]).reshape(1, -1)
 
     home_pred = float(model_home.predict(features)[0])
     away_pred = float(model_away.predict(features)[0])
@@ -1743,7 +1760,7 @@ def get_market_home_margin(game):
     underdog. Example: PHX +9.5 means market expects PHX by -9.5, so the
     expected home margin is -spread.
     """
-    if game.get('vegas_spread') is None:
+    if not USE_MARKET_IN_PREDICTION or game.get('vegas_spread') is None:
         return None
     return -safe_float(game.get('vegas_spread'), 0.0)
 
@@ -2055,7 +2072,8 @@ def blend_game_total(game, team_total, player_total, player_results):
         blended_total = team_total * team_w + player_total * player_w
 
     vegas_total = game.get('vegas_total')
-    has_vegas_total = vegas_total is not None and safe_float(vegas_total, 0) > 0
+    has_vegas_total = (USE_MARKET_IN_PREDICTION and vegas_total is not None
+                       and safe_float(vegas_total, 0) > 0)
     market_total_weight = 0.0
 
     if has_vegas_total:
@@ -2285,7 +2303,9 @@ def print_injuries(team_abbr, injury_report):
     if key_injuries:
         print(f"\n  ⚠️  {team_abbr} injuries:")
         for p in key_injuries:
-            detail = f" ({p['type']})" if p['type'] else ""
+            # ESPN entries carry 'type'; official NBA report entries carry 'detail'
+            reason = p.get('type') or p.get('detail')
+            detail = f" ({reason})" if reason else ""
             print(f"    ❌ {p['name']}{detail}")
 
 

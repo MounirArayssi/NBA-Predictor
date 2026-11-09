@@ -1,0 +1,30 @@
+---
+// Pregame Elo gap (home advantage included) against the actual home margin.
+import fig from "../../data/notebook_figures.json";
+const { calibration: pts, per_point } = fig.elo;
+const W = 600, H = 320, m = { l: 48, r: 16, t: 14, b: 44 };
+const xlo = -300, xhi = 450, ylo = -15, yhi = 20;
+const x = (v) => m.l + (W - m.l - m.r) * (v - xlo) / (xhi - xlo);
+const y = (v) => m.t + (H - m.t - m.b) * (1 - (v - ylo) / (yhi - ylo));
+const maxN = Math.max(...pts.map((p) => p.n));
+const total = pts.reduce((s, p) => s + p.n, 0);
+---
+<figure class="chart nb-chart">
+  <p class="chart-title">Does the Elo gap predict the margin?</p>
+  <p class="chart-sub">{total.toLocaleString()} games since 2021-22, grouped by pregame Elo difference; dot size is the number of games. The dashed line is {per_point} Elo points per point of margin.</p>
+  <div class="chart-scroll">
+    <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-labelledby="ec-t">
+      <title id="ec-t">Average actual home margin by pregame Elo difference</title>
+      {[-15, -10, -5, 0, 5, 10, 15, 20].map((v) => (<g><line class={v === 0 ? "axis" : "grid"} x1={m.l} x2={W - m.r} y1={y(v)} y2={y(v)} /><text x={m.l - 8} y={y(v) + 4} text-anchor="end">{v > 0 ? "+" + v : v}</text></g>))}
+      {[-300, -150, 0, 150, 300, 450].map((v) => <text x={x(v)} y={H - m.b + 18} text-anchor="middle">{v > 0 ? "+" + v : v}</text>)}
+      <line x1={x(xlo)} y1={y(xlo / per_point)} x2={x(xhi)} y2={y(xhi / per_point)} stroke="var(--accent)" stroke-width="2" stroke-dasharray="5 4" />
+      {pts.map((p) => <circle cx={x(p.diff)} cy={y(p.margin)} r={4 + 8 * Math.sqrt(p.n / maxN)} fill="var(--model)" fill-opacity="0.85" stroke="var(--surface)" stroke-width="2"><title>{`Elo gap about ${p.diff > 0 ? "+" : ""}${p.diff}: home teams won by ${p.margin} on average (${p.n.toLocaleString()} games)`}</title></circle>)}
+      <text x={(m.l + W - m.r) / 2} y={H - 8} text-anchor="middle" class="lbl">Home Elo + home advantage − away Elo</text>
+      <text x={m.l + 6} y={m.t + 12} class="lbl">Actual home margin, pts</text>
+    </svg>
+  </div>
+  <details class="data"><summary>Data table</summary>
+    <table><thead><tr><th class="r">Avg. Elo gap</th><th class="r">Avg. home margin</th><th class="r">Games</th></tr></thead>
+      <tbody>{pts.map((p) => <tr><td class="r num">{p.diff}</td><td class="r num">{p.margin}</td><td class="r num">{p.n.toLocaleString()}</td></tr>)}</tbody></table>
+  </details>
+</figure>

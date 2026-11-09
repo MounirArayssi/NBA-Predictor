@@ -1,0 +1,37 @@
+---
+import { getCollection, render } from "astro:content";
+import Base from "../../layouts/Base.astro";
+import { fmtLongDate, fmtShortDate } from "../../lib/data.js";
+
+export async function getStaticPaths() {
+  const all = (await getCollection("notebook")).sort((a, b) => +a.data.date - +b.data.date || a.data.title.localeCompare(b.data.title));
+  return all.map((entry, i) => ({ params: { slug: entry.id }, props: { entry, prev: all[i - 1], next: all[i + 1] } }));
+}
+const { entry, prev, next } = Astro.props;
+const { Content } = await render(entry);
+const d = entry.data.date.toISOString().slice(0, 10);
+---
+<Base title={entry.data.title} description={entry.data.summary} section="notebook" type="article">
+  <article class="wrap">
+    <header class="page-head read">
+      <a class="back" href="/notebook/">← Notebook</a>
+      <p class="kicker"><a href={`/notebook/?topic=${encodeURIComponent(entry.data.topic)}`}>{entry.data.topic}</a> · {entry.data.outcome}</p>
+      <h1>{entry.data.title}</h1>
+      <p class="lede">{entry.data.summary}</p>
+      <p class="note"><time datetime={d}>{fmtLongDate(d)}</time></p>
+    </header>
+    <div class="prose">
+      <Content />
+    </div>
+    <nav class="pn read" aria-label="More notebook entries">
+      <div>{prev && <><span class="kicker">Earlier</span><a href={`/notebook/${prev.id}/`}>{prev.data.title}</a><span class="muted">{fmtShortDate(prev.data.date.toISOString().slice(0, 10))}</span></>}</div>
+      <div class="r">{next && <><span class="kicker">Later</span><a href={`/notebook/${next.id}/`}>{next.data.title}</a><span class="muted">{fmtShortDate(next.data.date.toISOString().slice(0, 10))}</span></>}</div>
+    </nav>
+  </article>
+</Base>
+<style>
+  .kicker a { color: inherit; }
+  .pn { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s5); margin-top: var(--s7); padding-top: var(--s4); border-top: 1px solid var(--rule); }
+  .pn div { display: flex; flex-direction: column; gap: 4px; font-size: 0.95rem; }
+  .pn .r { text-align: right; align-items: flex-end; }
+</style>

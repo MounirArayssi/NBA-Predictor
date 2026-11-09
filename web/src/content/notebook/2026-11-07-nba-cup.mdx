@@ -1,0 +1,48 @@
+---
+title: "NBA Cup games: are they higher scoring?"
+date: 2026-11-07
+topic: Experiments
+summary: "Point differential is a Cup tiebreaker, so teams might keep starters in. Across 180 group-stage games, scoring and late-game behavior looked like regular games."
+outcome: Rejected
+---
+import CodeFile from "../../components/notebook/CodeFile.astro";
+import Dumbbell from "../../components/notebook/Dumbbell.astro";
+import fig from "../../data/notebook_figures.json";
+export const c = fig.cup.cup, r = fig.cup.regular;
+
+## Hypothesis
+
+In NBA Cup group play, ties in the standings are broken by point differential. A team leading by 18 in the fourth quarter has a reason to keep its starters in and push to 25, where it would normally empty the bench. If teams really do that, Cup group games should score more and finish with wider margins, and leaders should give back fewer points in the fourth quarter.
+
+## Finding the Cup games
+
+The database has no Cup flag. The public NBA schedule does: each game has a `gameSubtype`, and `"in-season"` marks a Cup group game. The comparison group is regular games played inside the same weeks, so the season, the calendar and the injury picture match.
+
+<CodeFile file="web/scripts/notebook_figures.py" section="cup" />
+
+## Findings
+
+| Same weeks, 2023-24 to 2025-26 | Cup group games | Other games |
+|---|---|---|
+| Games | {c.n} | {r.n} |
+| Average total points | {c.total} (±{c.total_se}) | {r.total} (±{r.total_se}) |
+| Average winning margin | {c.abs_margin} | {r.abs_margin} |
+| Games with a 15+ point lead after three quarters | {c.n_big} | {r.n_big} |
+| Points those leaders gave back in the fourth | {c.give_back} | {r.give_back} |
+
+<Dumbbell
+  title="Average total points: other games vs Cup group games"
+  sub="Same weeks of each season."
+  aLabel="Other games" bLabel="Cup group games" unit="pts"
+  rows={fig.cup.by_season.map((s) => ({ label: s.label, a: s.regular, b: s.cup }))}
+/>
+
+- **Scoring is the same.** The overall gap is under one point, well inside the noise, and it changes direction from season to season.
+- **Margins are the same.** If teams were running up scores, winning margins would be wider.
+- **Leaders did not hold on harder.** Teams up 15 or more after three quarters gave back about as many points in the fourth, slightly more in Cup games, though on only {c.n_big} games.
+
+There was one faint hint in the other direction: favorites beat the model's forecast margin by about 1.8 points in Cup group games (±1.2 standard error). That is too weak to act on. The 18 knockout games were forecast about 5.6 points too high on the total, but they play more like playoff games, and 18 is far too few.
+
+## Decision
+
+Not added as a feature. A narrower version could be worth revisiting with 2026-27 Cup data: flag only the final group game, and only when point differential can still change who advances.

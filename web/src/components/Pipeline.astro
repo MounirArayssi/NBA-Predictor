@@ -1,0 +1,58 @@
+---
+// How one forecast is made, as a flow: sources -> inputs -> two score models ->
+// margin/total/probability -> saved before tip-off -> graded. The moving dashes
+// on the connectors are decoration; every box is labeled in text.
+const cols = [
+  { x: 10, w: 128, nodes: [{ y: 40, t: "NBA Stats", s: "schedules, scores, box scores" }, { y: 150, t: "Injury report", s: "official NBA PDF" }] },
+  { x: 178, w: 128, nodes: [{ y: 95, t: "21 inputs", s: "strength, form, availability, rest, series" }] },
+  { x: 346, w: 128, nodes: [{ y: 40, t: "Home score", s: "boosted trees" }, { y: 150, t: "Away score", s: "boosted trees" }] },
+  { x: 514, w: 128, nodes: [{ y: 95, t: "Forecast", s: "margin, total, win probability" }] },
+  { x: 682, w: 128, nodes: [{ y: 40, t: "Saved", s: "before tip-off" }, { y: 150, t: "Graded", s: "against the final" }] },
+];
+const H = 70;
+const links = [];
+for (let c = 0; c < cols.length - 1; c++) {
+  for (const a of cols[c].nodes) for (const b of cols[c + 1].nodes) {
+    if (c === 3 && b.y !== 40) continue;            // forecast -> saved only
+    const x1 = cols[c].x + cols[c].w, y1 = a.y + H / 2, x2 = cols[c + 1].x, y2 = b.y + H / 2, mx = (x1 + x2) / 2;
+    links.push({ d: `M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`, c });
+  }
+}
+// saved -> graded (down the last column)
+const last = cols[4];
+links.push({ d: `M${last.x + last.w / 2},${40 + H} L${last.x + last.w / 2},150`, c: 4 });
+---
+<figure class="pipe" data-reveal>
+  <div class="chart-scroll">
+    <svg viewBox="0 0 820 240" class="instrument" role="img" aria-labelledby="pipe-t">
+      <title id="pipe-t">Forecast pipeline: NBA Stats data and the official injury report feed 21 inputs; two models predict the home and away scores; those give the margin, total and win probability; the forecast is saved before tip-off and graded against the final score.</title>
+      {links.map((l) => (<g><path d={l.d} class="wire" /><path d={l.d} class="flow" style={`--d:${l.c * 0.25}s`} /></g>))}
+      {cols.map((c, ci) => c.nodes.map((n) => (
+        <g class="node" style={`--d:${ci * 0.18}s`}>
+          <rect x={c.x} y={n.y} width={c.w} height={H} rx="6" />
+          <text x={c.x + 12} y={n.y + 28} class="t">{n.t}</text>
+          <foreignObject x={c.x + 12} y={n.y + 36} width={c.w - 20} height={H - 38}><p class="s" xmlns="http://www.w3.org/1999/xhtml">{n.s}</p></foreignObject>
+        </g>
+      )))}
+    </svg>
+  </div>
+</figure>
+
+<style>
+  .pipe { margin: var(--s5) 0 var(--s6); font-family: var(--sans); }
+  .pipe svg { display: block; width: 100%; height: auto; min-width: 640px; border-radius: 8px; }
+  .wire { fill: none; stroke: var(--rule-strong); stroke-width: 1.5; }
+  .flow { fill: none; stroke: var(--accent); stroke-width: 2.5; stroke-linecap: round; stroke-dasharray: 1 13; animation: flow 1.6s linear infinite; animation-delay: var(--d); opacity: 0.9; }
+  @keyframes flow { to { stroke-dashoffset: -14; } }
+  .node rect { fill: var(--surface); stroke: var(--rule-strong); }
+  .node .t { font-family: var(--mono); font-size: 14px; font-weight: 500; fill: var(--ink); }
+  .s { margin: 0; font-size: 10.5px; line-height: 1.3; color: var(--ink-2); }
+  :global(html.js) .pipe .node, :global(html.js) .pipe .flow { opacity: 0; }
+  :global(html.js) .pipe.in .node { opacity: 1; transition: opacity 0.5s ease var(--d); }
+  :global(html.js) .pipe.in .flow { opacity: 0.9; transition: opacity 0.5s ease calc(var(--d) + 0.6s); }
+  @media (prefers-reduced-motion: reduce) {
+    .flow { animation: none; }
+    :global(html.js) .pipe .node { opacity: 1; }
+    :global(html.js) .pipe .flow { opacity: 0.9; }
+  }
+</style>

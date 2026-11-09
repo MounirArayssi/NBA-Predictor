@@ -1,0 +1,32 @@
+---
+// Two-segment bar, away on the left and home on the right, each in its team's
+// official color, with both percentages written out so the bar is never the only
+// carrier of meaning. The favorite's segment is full strength.
+import { teamColor } from "../lib/teamColors.js";
+interface Props { away: string; home: string; hwp: number; size?: "sm" | "lg" }
+const { away, home, hwp, size = "sm" } = Astro.props;
+const h = Math.round(hwp * 100);
+const a = 100 - h;
+const homeFav = h >= a;
+---
+<div class={`pbar ${size}`}>
+  <div class="track" aria-hidden="true">
+    <span class={homeFav ? "seg" : "seg fav"} style={`width:${a}%;--cl:${teamColor(away).light};--cd:${teamColor(away).ui}`}></span>
+    <span class={homeFav ? "seg fav" : "seg"} style={`width:${h}%;--cl:${teamColor(home).light};--cd:${teamColor(home).ui}`}></span>
+  </div>
+  <div class="labels num">
+    <span class={!homeFav ? "fav-l" : ""}>{away} {a}%</span>
+    <span class={homeFav ? "fav-l" : ""}>{h}% {home}</span>
+  </div>
+</div>
+<style>
+  .pbar { min-width: 0; }
+  .track { display: flex; gap: 2px; height: 6px; }
+  .lg .track { height: 12px; }
+  :global(.instrument) .seg { background: var(--cd); }
+  .seg { background: var(--cl, var(--rule-strong)); display: block; opacity: 0.32; border-radius: 1px; }
+  .seg.fav { opacity: 1; }
+  .labels { display: flex; justify-content: space-between; font-size: 0.78rem; color: var(--muted); margin-top: 4px; }
+  .lg .labels { font-size: 0.95rem; margin-top: 6px; }
+  .fav-l { color: var(--ink); font-weight: 500; }
+</style>

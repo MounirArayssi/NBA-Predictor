@@ -1,0 +1,85 @@
+---
+// One tile per team in its official colors: a solid primary header with a
+// secondary stripe, then record, Elo and an Elo trend line (pregame Elo stored
+// with that team's recent forecasts). Tiles carry the same data-search / data-conf
+// attributes as the table rows so the page filters apply to both.
+import { teams, teamUrl } from "../lib/data.js";
+import { teamVars } from "../lib/teamColors.js";
+
+const sorted = [...teams].sort((a, b) => (b.elo?.elo ?? 0) - (a.elo?.elo ?? 0));
+const allElo = teams.flatMap((t) => (t.elo_hist ?? []).map((h) => h[1]));
+const lo = Math.min(...allElo), hi = Math.max(...allElo);
+const W = 200, H = 46;
+function spark(hist) {
+  if (!hist || hist.length < 2) return null;
+  const n = hist.length;
+  const pts = hist.map((h, i) => [(W * i) / (n - 1), 4 + (H - 8) * (1 - (h[1] - lo) / (hi - lo || 1))]);
+  return { d: pts.map((p, i) => `${i ? "L" : "M"}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" "), end: pts.at(-1), first: hist[0], last: hist.at(-1), n };
+}
+const nick = (t) => t.name.replace(t.city, "").trim() || t.name;
+const mid = 4 + (H - 8) * (1 - (1500 - lo) / (hi - lo || 1));
+---
+<ul class="tiles" id="team-tiles">
+  {sorted.map((t, i) => {
+    const sp = spark(t.elo_hist);
+    return (
+      <li data-search={`${t.name} ${t.abbr} ${t.city}`.toLowerCase()} data-conf={t.conference} data-reveal="lift" style={`${teamVars(t.abbr)};--i:${i}`}>
+        <a href={teamUrl(t.abbr)}>
+          <div class="top">
+            <span class="ab">{t.abbr}</span>
+            <span class="nm">{nick(t)}</span>
+            <span class="rk num">#{i + 1}</span>
+          </div>
+          <div class="body">
+            <div class="nums">
+              <span><b class="num">{t.wins}–{t.losses}</b> record</span>
+              <span><b class="num">{t.elo ? t.elo.elo : "–"}</b> Elo</span>
+            </div>
+            {sp ? (
+              <svg viewBox={`0 0 ${W} ${H}`} class="spark" preserveAspectRatio="none" role="img" aria-label={`${t.abbr} Elo over the last ${sp.n} games with a forecast: ${sp.first[1]} to ${sp.last[1]}`}>
+                {mid > 0 && mid < H && <line x1="0" x2={W} y1={mid} y2={mid} class="avg" />}
+                <path d={sp.d} pathLength="1" />
+                <circle cx={sp.end[0]} cy={sp.end[1]} r="3" />
+              </svg>
+            ) : <p class="none">No Elo history</p>}
+          </div>
+        </a>
+      </li>
+    );
+  })}
+</ul>
+<p class="note tiles-note">Ranked by current Elo. Trend lines show each team's pregame Elo over its last {Math.max(...teams.map((t) => t.elo_hist?.length ?? 0))} games with a forecast, on a common scale; the faint line is 1500, the long-run average.</p>
+
+<style>
+  .tiles { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 200px), 1fr)); }
+  .tiles a { display: block; height: 100%; text-decoration: none; color: var(--ink); background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; transition: transform 0.25s var(--ease-out), box-shadow 0.25s ease, border-color 0.2s; }
+  .tiles a:hover { transform: translateY(-2px); border-color: var(--tl); box-shadow: 0 10px 24px -16px var(--tl); }
+  .tiles a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .top { position: relative; display: grid; grid-template-columns: auto 1fr auto; align-items: baseline; gap: 8px; padding: 12px 12px 14px; background: var(--tp); color: var(--tf); }
+  .top::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 4px; background: var(--ts); transform-origin: left; }
+  .ab { font-family: var(--mono); font-size: 1.35rem; font-weight: 500; letter-spacing: 0.03em; }
+  .nm { font-size: 0.85rem; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rk { font-size: 0.75rem; }
+  .body { padding: 10px 12px 12px; }
+  .nums { display: flex; justify-content: space-between; font-size: 0.78rem; color: var(--muted); }
+  .nums b { color: var(--ink); font-weight: 500; font-size: 0.95rem; margin-right: 2px; }
+  .spark { display: block; width: 100%; height: 46px; margin-top: 8px; overflow: visible; }
+  .spark path { fill: none; stroke: var(--tl); stroke-width: 2; stroke-linejoin: round; }
+  .spark circle { fill: var(--tl); }
+  .spark .avg { stroke: var(--rule-strong); stroke-dasharray: 2 3; vector-effect: non-scaling-stroke; }
+  .none { font-size: 0.8rem; color: var(--muted); margin: 8px 0 0; }
+  .tiles-note { margin-top: var(--s3); }
+  /* Stripe sweeps in, then the Elo line draws itself. */
+  :global(html.js) .tiles li .top::after { transform: scaleX(0); }
+  :global(html.js) .tiles li.in .top::after { transform: none; transition: transform 0.7s var(--ease-out) calc(var(--i) * 30ms + 0.15s); }
+  :global(html.js) .tiles li .spark path { stroke-dasharray: 1; stroke-dashoffset: 1; }
+  :global(html.js) .tiles li.in .spark path { stroke-dashoffset: 0; transition: stroke-dashoffset 1.2s var(--ease-out) calc(var(--i) * 30ms + 0.25s); }
+  :global(html.js) .tiles li .spark circle { opacity: 0; }
+  :global(html.js) .tiles li.in .spark circle { opacity: 1; transition: opacity 0.3s ease calc(var(--i) * 30ms + 1.2s); }
+  @media (prefers-reduced-motion: reduce) {
+    :global(html.js) .tiles li .top::after { transform: none; }
+    :global(html.js) .tiles li .spark path { stroke-dasharray: none; stroke-dashoffset: 0; }
+    :global(html.js) .tiles li .spark circle { opacity: 1; }
+    .tiles a:hover { transform: none; }
+  }
+</style>

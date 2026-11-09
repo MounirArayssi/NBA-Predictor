@@ -1,0 +1,79 @@
+---
+// A to-scale court (94 x 50 ft) where each team's share of the floor is its
+// pregame win probability: away from the left baseline, home from the right.
+// The dividing line slides from midcourt to the split. Team names, percentages
+// and scores are written on the floor, so color is never the only carrier.
+import { teamColor } from "../lib/teamColors.js";
+import { teamByAbbr } from "../lib/data.js";
+
+interface Props { away: string; home: string; hwp: number; pa?: number; ph?: number; fa?: number; fh?: number }
+const { away, home, hwp, pa, ph, fa, fh } = Astro.props;
+const L = 940, Wd = 500, mid = L / 2, hy = 250;
+const aP = Math.round(100 * (1 - hwp)), hP = 100 - aP;
+const split = L * (1 - hwp);
+const ca = teamColor(away), ch = teamColor(home);
+const nick = (abbr) => { const t = teamByAbbr[abbr]; return t ? t.name.replace(t.city, "").trim() : abbr; };
+const final = fa != null && fh != null;
+const sides = [
+  { abbr: away, pct: aP, cx: Math.max(150, Math.min(split / 2, mid - 150)), proj: pa, fin: fa, c: ca },
+  { abbr: home, pct: hP, cx: Math.min(L - 150, Math.max((split + L) / 2, mid + 150)), proj: ph, fin: fh, c: ch },
+];
+const half = (flip) => {
+  const X = (v) => (flip ? L - v : v);
+  return { hoop: X(52.5), key: flip ? L - 190 : 0, ft: X(190), arcEndX: X(140), flip };
+};
+---
+<figure class="gcourt" data-reveal style={`--dx:${(mid - split).toFixed(1)}px`}>
+  <svg viewBox={`-12 -12 ${L + 24} ${Wd + 24}`} class="instrument" role="img" aria-labelledby="gc-t">
+    <title id="gc-t">{`Win probability as a share of the court: ${away} ${aP} percent, ${home} ${hP} percent.`}</title>
+    <rect x="0" y="0" width={split} height={Wd} class="terr" style={`fill:${ca.ui}`} />
+    <rect x={split} y="0" width={L - split} height={Wd} class="terr" style={`fill:${ch.ui}`} />
+    <rect x="0" y="0" width={L} height={Wd} class="ln" />
+    <line x1={mid} y1="0" x2={mid} y2={Wd} class="ln" />
+    <circle cx={mid} cy={hy} r="60" class="ln" />
+    {[half(false), half(true)].map((s) => (
+      <g>
+        <rect x={s.key} y="170" width="190" height="160" class="ln" />
+        <circle cx={s.ft} cy={hy} r="60" class="ln" />
+        <path class="ln" d={`M ${s.flip ? L : 0} 30 H ${s.arcEndX} A 237.5 237.5 0 0 ${s.flip ? 0 : 1} ${s.arcEndX} 470 H ${s.flip ? L : 0}`} />
+        <circle cx={s.hoop} cy={hy} r="7.5" class="rim" />
+      </g>
+    ))}
+    <g class="split"><line x1={split} y1="-6" x2={split} y2={Wd + 6} /></g>
+    {sides.map((s) => (
+      <g class="side" text-anchor="middle">
+        <text x={s.cx} y="128" class="ab" style={`fill:${s.c.ui}`}>{s.abbr}</text>
+        <text x={s.cx} y="160" class="nm">{nick(s.abbr)}{s.abbr === home ? " · home" : ""}</text>
+        <text x={s.cx} y="282" class="pct">{s.pct}%</text>
+        <text x={s.cx} y="330" class="sub">{s.proj != null ? `proj. ${Math.round(s.proj)}` : ""}{final ? `  ·  final ${s.fin}` : ""}</text>
+      </g>
+    ))}
+  </svg>
+  <figcaption>Each team's share of the floor is its pregame win probability. The line starts at midcourt and moves to the split.</figcaption>
+</figure>
+
+<style>
+  .gcourt { margin: 0 0 var(--s5); }
+  svg { display: block; width: 100%; height: auto; border-radius: 8px; }
+  .terr { opacity: 0.26; }
+  .ln { fill: none; stroke: #5d6a74; stroke-width: 2.5; }
+  .rim { fill: none; stroke: var(--accent); stroke-width: 3; }
+  .split line { stroke: var(--ink); stroke-width: 3; filter: drop-shadow(0 0 6px rgba(233, 237, 240, 0.8)); }
+  .side text { paint-order: stroke; stroke: var(--board); stroke-width: 6px; stroke-linejoin: round; }
+  .ab { font-family: var(--mono); font-size: 44px; font-weight: 500; letter-spacing: 0.06em; }
+  .nm { font-family: var(--sans); font-size: 20px; fill: var(--ink-2); }
+  .pct { font-family: var(--mono); font-size: 92px; font-weight: 500; fill: var(--led); }
+  .sub { font-family: var(--mono); font-size: 22px; fill: var(--ink-2); white-space: pre; }
+  figcaption { font-size: 0.85rem; color: var(--muted); margin-top: var(--s2); }
+  /* The split line travels from midcourt; territories and labels follow. */
+  :global(html.js) .gcourt .split { transform: translateX(var(--dx)); }
+  :global(html.js) .gcourt .terr, :global(html.js) .gcourt .side { opacity: 0; }
+  :global(html.js) .gcourt.in .split { transform: none; transition: transform 1.4s var(--ease-out) 0.2s; }
+  :global(html.js) .gcourt.in .terr { opacity: 0.26; transition: opacity 0.8s ease 0.9s; }
+  :global(html.js) .gcourt.in .side { opacity: 1; transition: opacity 0.6s ease 0.6s; }
+  @media (prefers-reduced-motion: reduce) {
+    :global(html.js) .gcourt .split { transform: none; }
+    :global(html.js) .gcourt .terr { opacity: 0.26; }
+    :global(html.js) .gcourt .side { opacity: 1; }
+  }
+</style>

@@ -15,77 +15,44 @@ warnings.filterwarnings('ignore')
 from data.ingestion.build_features import build_feature_dataset
 
 
-# Features the model trains on
+# Features the model trains on.
+# Lean set (2026-11-05): paired walk-forward CV over 3 seeds, vs the previous 42 features:
+# margin MAE 12.05 -> 11.65, winners 63.8% -> 66.1%, better on every seed. Shooting
+# splits, FT/oreb/tov/efg, location splits, scoring std, matchup products and in-series
+# form added nothing once Elo + season blend were in (they mostly re-describe team
+# strength with more noise). Schedule load (games in last 4/6 days), travel distance /
+# time zones and per-team home-court strength were tested and added nothing either.
 FEATURE_COLS = [
-    # Home team form
-    'home_avg_points',
+    # Team strength (data/ingestion/team_strength.py)
+    'home_elo',
+    'away_elo',
+    'elo_diff',              # includes home advantage
+    'home_season_margin',    # season-to-date margin, blended with last season early on
+    'away_season_margin',
+    'home_games_played',
+    'away_games_played',
+
+    # Recent form (last 10 games)
     'home_off_rating',
-    'home_def_rating',
-    'home_fg_pct',
-    'home_fg3_pct',
-    'home_win_pct',
-
-    # Home/away location splits — how each team scores specifically at home vs on road
-    # (home_avg_points_allowed not populated in rolling stats, so only scoring splits used)
-    'home_home_avg_pts',
-    'away_away_avg_pts',
-
-    # Away team form
-    'away_avg_points',
     'away_off_rating',
+    'home_def_rating',
     'away_def_rating',
-    'away_fg_pct',
-    'away_fg3_pct',
-    'away_win_pct',
+    'combined_pace',
 
-    # Free throw rate (direct scoring path, matters in physical playoff games)
-    'home_ft_rate',
-    'away_ft_rate',
+    # Availability — rotation points/game listed Out/Doubtful on the official injury report
+    'home_missing_pts',
+    'away_missing_pts',
 
-    # Advanced efficiency (oreb creates possessions, tov kills them, efg = true shooting proxy)
-    'home_oreb_pct',
-    'away_oreb_pct',
-    'home_tov_pct',
-    'away_tov_pct',
-    'home_efg_pct',
-    'away_efg_pct',
-
-    # Matchup context
+    # Rest
     'home_rest_days',
     'away_rest_days',
-    'rest_advantage',
     'home_back_to_back',
     'away_back_to_back',
 
-    # Playoff context (series_game_num, away_series_wins, is_playoff removed — zero importance)
+    # Playoff series state
     'home_series_wins',
     'is_elimination',
     'series_pressure',
-
-    # Scoring variance (consistency / variance_differential removed — rescaled copies of std)
-    'home_scoring_std',
-    'away_scoring_std',
-
-    # Matchup interactions (3pt_matchup removed — zero importance)
-    'combined_pace',
-    'home_off_vs_away_def',
-    'away_off_vs_home_def',
-    'net_rating_diff',
-
-    # bad_night_pct, series_wins_diff, Q4/clutch splits removed — redundant or noise,
-    # no change in walk-forward CV (model/experiment.py)
-
-    # In-series form (playoff calibration)
-    'in_series_home_avg_pts',
-    'in_series_away_avg_pts',
-    'in_series_total_avg',
-    'in_series_margin',
-
-    # Availability — points per game of rotation players not playing
-    # (box scores in training, injury report at prediction time).
-    # Missing minutes added nothing on top in walk-forward CV.
-    'home_missing_pts',
-    'away_missing_pts',
 ]
 
 TARGET_HOME = 'home_score'

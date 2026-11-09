@@ -1,0 +1,133 @@
+---
+import Base from "../../layouts/Base.astro";
+import SourceLabel from "../../components/SourceLabel.astro";
+import EloLadder from "../../components/EloLadder.astro";
+import TeamTiles from "../../components/TeamTiles.astro";
+import { teamVars } from "../../lib/teamColors.js";
+import { site, teams, teamAnalytics, teamUrl, fmtShortDate, signed, fixed } from "../../lib/data.js";
+
+const btKey = (teamAnalytics.sources.find((s) => s.complete) ?? teamAnalytics.sources[0])?.key;
+const btLabel = teamAnalytics.sources.find((s) => s.key === btKey)?.season;
+const rows = teams.map((t) => ({ t, m: teamAnalytics.teams[t.abbr]?.[btKey]?.metrics ?? { n: 0 } }));
+const rollDate = teams.map((t) => t.rolling?.as_of).filter(Boolean).sort().pop();
+---
+<Base title="Teams" description="All 30 NBA teams: current record, Elo rating, recent offensive and defensive ratings, and how each team performed against the model's expectations." section="teams">
+  <div class="wrap">
+    <header class="page-head">
+      <p class="kicker accent">{site.season} season</p>
+      <h1>Teams</h1>
+      <p class="lede">Current form for every team, with how each one finished against the model's expectations in the most recent full season. Open a team for its forecast history.</p>
+    </header>
+
+    <div class="controls" id="tcontrols" hidden>
+      <div class="field">
+        <label for="t-search">Search</label>
+        <input id="t-search" type="search" placeholder="Team or abbreviation" autocomplete="off" />
+      </div>
+      <div class="field">
+        <span class="label" id="l-conf">Conference</span>
+        <div class="seg" role="group" aria-labelledby="l-conf">
+          <button class="btn" type="button" data-conf="" aria-pressed="true">All</button>
+          <button class="btn" type="button" data-conf="East" aria-pressed="false">East</button>
+          <button class="btn" type="button" data-conf="West" aria-pressed="false">West</button>
+        </div>
+      </div>
+      <p class="note count" id="t-count" aria-live="polite"></p>
+    </div>
+
+    <p class="pred-link"><a class="btn" href="/teams/predictability/">Team Predictability: which teams are hardest to forecast →</a></p>
+
+    <section class="tiles-sec" aria-label="Teams by Elo">
+      <TeamTiles />
+    </section>
+
+    <section class="ladder-sec" aria-labelledby="h-ladder">
+      <h2 id="h-ladder">The league on one scale</h2>
+      <EloLadder />
+    </section>
+
+    <h2 class="table-h">All teams, sortable</h2>
+    <div class="table-scroll">
+      <table data-sortable id="teams">
+        <thead>
+          <tr>
+            <th>Team</th>
+            <th>Conf.</th>
+            <th class="r" data-type="num">{site.season} W–L</th>
+            <th class="r" data-type="num">Elo</th>
+            <th class="r" data-type="num">Off. rtg</th>
+            <th class="r" data-type="num">Def. rtg</th>
+            <th class="r" data-type="num">Pace</th>
+            <th class="r" data-type="num">{btLabel} wins vs exp.</th>
+            <th class="r" data-type="num">{btLabel} picks correct</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(({ t, m }) => (
+            <tr data-search={`${t.name} ${t.abbr} ${t.city}`.toLowerCase()} data-conf={t.conference}>
+              <td data-v={t.name}><a href={teamUrl(t.abbr)}><i class="chip" style={teamVars(t.abbr)} aria-hidden="true"></i> <strong>{t.abbr}</strong> {t.name}</a></td>
+              <td>{t.conference}</td>
+              <td class="r num" data-v={t.wins + t.losses ? (t.wins / (t.wins + t.losses)).toFixed(4) : ""}>{t.wins}–{t.losses}</td>
+              <td class="r num" data-v={t.elo?.elo ?? ""}>{t.elo ? t.elo.elo : "–"}</td>
+              <td class="r num" data-v={t.rolling?.ortg ?? ""}>{fixed(t.rolling?.ortg)}</td>
+              <td class="r num" data-v={t.rolling?.drtg ?? ""}>{fixed(t.rolling?.drtg)}</td>
+              <td class="r num" data-v={t.rolling?.pace ?? ""}>{fixed(t.rolling?.pace)}</td>
+              <td class="r num" data-v={m.gap ?? ""}>{m.n ? signed(m.gap) : "–"}</td>
+              <td class="r num" data-v={m.acc ?? ""}>{m.n ? `${fixed(m.acc, 0)}%` : "–"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+    <p class="note" id="t-empty" hidden>No teams match that search.</p>
+    <div class="notes">
+      <p class="note"><strong>W–L</strong>: {site.season} regular season, from final scores in this edition. <strong>Elo</strong>: the rating recorded with each team's most recent forecast. <strong>Off. / Def. rtg, Pace</strong>: points scored and allowed per 100 possessions and possessions per game over the last 10 games{rollDate ? `, as of ${fmtShortDate(rollDate)}` : ""}. Lower defensive rating is better.</p>
+      <p class="note"><SourceLabel text={btLabel} /> <strong>Wins vs exp.</strong>: actual wins minus the sum of the team's pregame win probabilities. <strong>Picks correct</strong>: share of the team's games where the forecast winner won. Both use the {btLabel} season, about 82 to 100 games per team.</p>
+    </div>
+  </div>
+</Base>
+
+<script>
+  import { enableSorting } from "../../lib/sortable.js";
+  enableSorting();
+  const controls = document.getElementById("tcontrols") as HTMLElement;
+  controls.hidden = false;
+  const search = document.getElementById("t-search") as HTMLInputElement;
+  const rows = [...document.querySelectorAll<HTMLTableRowElement>("#teams tbody tr")];
+  const tiles = [...document.querySelectorAll<HTMLElement>("#team-tiles li")];
+  const count = document.getElementById("t-count")!;
+  const empty = document.getElementById("t-empty")!;
+  let conf = "";
+  function apply() {
+    const q = search.value.trim().toLowerCase();
+    let n = 0;
+    rows.forEach((r) => {
+      const ok = (!q || r.dataset.search!.includes(q)) && (!conf || r.dataset.conf === conf);
+      r.hidden = !ok; if (ok) n++;
+    });
+    tiles.forEach((t) => { t.hidden = !((!q || t.dataset.search!.includes(q)) && (!conf || t.dataset.conf === conf)); });
+    count.textContent = `${n} of ${rows.length} teams`;
+    empty.hidden = n > 0;
+  }
+  search.addEventListener("input", apply);
+  document.querySelectorAll<HTMLButtonElement>("[data-conf]").forEach((b) => b.addEventListener("click", () => {
+    conf = b.dataset.conf!;
+    document.querySelectorAll("[data-conf]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    apply();
+  }));
+  apply();
+</script>
+
+<style>
+  .count { margin: 0 0 0 auto; align-self: center; }
+  td a { color: var(--ink); text-decoration: none; }
+  td a:hover { text-decoration: underline; color: var(--accent); }
+  td a strong { display: inline-block; min-width: 3.2ch; }
+  .notes { margin-top: var(--s4); }
+  .tiles-sec { margin-bottom: var(--s7); }
+  .pred-link { margin: 0 0 var(--s5); }
+  .pred-link .btn { text-decoration: none; }
+  .ladder-sec { margin-bottom: var(--s7); }
+  .ladder-sec h2, .table-h { margin-bottom: var(--s4); }
+  td a .chip { margin-right: 4px; }
+</style>

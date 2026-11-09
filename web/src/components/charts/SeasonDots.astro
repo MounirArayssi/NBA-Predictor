@@ -1,0 +1,45 @@
+---
+// Winner accuracy by season: regular season and playoffs, against the
+// always-pick-the-home-team baseline. Values are labeled directly.
+interface Props { seasons: any[] }
+const { seasons } = Astro.props;
+const W = 640, H = 300, m = { l: 48, r: 16, t: 16, b: 44 };
+const vals = seasons.flatMap((s) => [s.regular.win, s.playoffs.win, s.all.home_win]).filter((v) => v != null);
+const lo = Math.floor((Math.min(...vals) - 2) / 5) * 5;
+const hi = Math.ceil((Math.max(...vals) + 2) / 5) * 5;
+const y = (v) => m.t + (H - m.t - m.b) * (1 - (v - lo) / (hi - lo));
+const band = (W - m.l - m.r) / seasons.length;
+const ticks = [];
+for (let v = lo; v <= hi; v += 5) ticks.push(v);
+---
+<figure class="chart">
+  <div class="chart-scroll">
+    <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-labelledby="sd-t">
+      <title id="sd-t">Winner accuracy by season for regular season and playoff games, compared with always picking the home team</title>
+      {ticks.map((v) => (<g><line class="grid" x1={m.l} x2={W - m.r} y1={y(v)} y2={y(v)} /><text x={m.l - 8} y={y(v) + 4} text-anchor="end">{v}%</text></g>))}
+      {seasons.map((s, i) => {
+        const cx = m.l + band * (i + 0.5);
+        return (
+          <g>
+            <line x1={cx - 40} x2={cx + 40} y1={y(s.all.home_win)} y2={y(s.all.home_win)} stroke="var(--neutral-mark)" stroke-width="2" stroke-dasharray="4 3" />
+            <circle cx={cx - 14} cy={y(s.regular.win)} r="6" fill="var(--model)" />
+            <text x={cx - 24} y={y(s.regular.win) + 4} text-anchor="end" class="strong">{s.regular.win.toFixed(1)}</text>
+            {s.playoffs.n > 0 && <rect x={cx + 8} y={y(s.playoffs.win) - 6} width="12" height="12" fill="var(--accent)" />}
+            {s.playoffs.n > 0 && <text x={cx + 26} y={y(s.playoffs.win) + 4} class="lbl">{s.playoffs.win.toFixed(1)}</text>}
+            <text x={cx} y={H - 22} text-anchor="middle" class="lbl">{s.season}</text>
+            <text x={cx} y={H - 8} text-anchor="middle">n={s.all.n.toLocaleString()}</text>
+          </g>
+        );
+      })}
+    </svg>
+  </div>
+  <figcaption>
+    <span style="color:var(--model)">●</span> Regular season &nbsp; <span style="color:var(--accent)">■</span> Playoffs (about 84 games a season) &nbsp;
+    <span aria-hidden="true">- - -</span> Home team won (the baseline of always picking the home team).
+  </figcaption>
+  <details class="data"><summary>Data table</summary>
+    <table><thead><tr><th>Season</th><th class="r">Regular season</th><th class="r">Games</th><th class="r">Playoffs</th><th class="r">Games</th><th class="r">Home team won</th></tr></thead>
+      <tbody>{seasons.map((s) => (<tr><td>{s.season}</td><td class="r num">{s.regular.win}%</td><td class="r num">{s.regular.n}</td><td class="r num">{s.playoffs.n ? `${s.playoffs.win}%` : "–"}</td><td class="r num">{s.playoffs.n}</td><td class="r num">{s.all.home_win}%</td></tr>))}</tbody>
+    </table>
+  </details>
+</figure>

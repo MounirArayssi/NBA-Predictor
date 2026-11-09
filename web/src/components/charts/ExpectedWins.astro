@@ -1,0 +1,32 @@
+---
+// Cumulative expected wins (sum of pregame win probabilities) vs actual wins,
+// game by game, for one team and one prediction population.
+interface Props { games: any[]; abbr: string; id: string }
+const { games, abbr, id } = Astro.props;
+const W = 640, H = 280, m = { l: 40, r: 70, t: 14, b: 40 };
+const n = games.length;
+const maxY = Math.max(1, Math.ceil(Math.max(...games.map((g) => Math.max(g.ce, g.ca))) / 5) * 5);
+const x = (i) => m.l + (W - m.l - m.r) * (n === 1 ? 0.5 : i / (n - 1));
+const y = (v) => m.t + (H - m.t - m.b) * (1 - v / maxY);
+const step = maxY <= 10 ? 2 : maxY <= 30 ? 5 : 10;
+const yt = [];
+for (let v = 0; v <= maxY; v += step) yt.push(v);
+const line = (key) => games.map((g, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(g[key]).toFixed(1)}`).join(" ");
+const last = games[n - 1];
+const xt = [0, Math.floor((n - 1) / 2), n - 1].filter((v, i, a) => a.indexOf(v) === i);
+---
+<figure class="chart">
+  <div class="chart-scroll">
+    <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-labelledby={`ew-${id}`}>
+      <title id={`ew-${id}`}>{abbr}: cumulative expected wins from pregame win probabilities against actual wins</title>
+      {yt.map((v) => (<g><line class="grid" x1={m.l} x2={W - m.r} y1={y(v)} y2={y(v)} /><text x={m.l - 8} y={y(v) + 4} text-anchor="end">{v}</text></g>))}
+      <path d={line("ce")} fill="none" stroke="var(--model)" stroke-width="2" stroke-dasharray="5 3" />
+      <path d={line("ca")} fill="none" stroke="var(--ink)" stroke-width="2" />
+      <text x={x(n - 1) + 6} y={y(last.ca) + (last.ca >= last.ce ? -2 : 12)} class="strong">{last.ca} actual</text>
+      <text x={x(n - 1) + 6} y={y(last.ce) + (last.ca >= last.ce ? 12 : -2)} fill="var(--model)" style="fill:var(--model)">{last.ce.toFixed(1)} exp.</text>
+      {xt.map((i) => (<text x={x(i)} y={H - m.b + 16} text-anchor="middle">{i + 1}</text>))}
+      <text x={(m.l + W - m.r) / 2} y={H - 6} text-anchor="middle" class="lbl">Game number in sample</text>
+    </svg>
+  </div>
+  <figcaption>Solid: actual wins. Dashed: expected wins, the running sum of {abbr}'s pregame win probability in each game.</figcaption>
+</figure>

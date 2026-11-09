@@ -1,0 +1,39 @@
+---
+// Histogram of prediction errors. Bins come pre-computed from the exporter.
+interface Props { bins: any[]; xLabel: string; title: string; zero?: boolean; unit?: string }
+const { bins, xLabel, title, zero = false, unit = "pts" } = Astro.props;
+const W = 560, H = 260, m = { l: 44, r: 12, t: 12, b: 44 };
+const total = bins.reduce((a, b) => a + b.n, 0);
+const shares = bins.map((b) => (100 * b.n) / total);
+const maxS = Math.ceil(Math.max(...shares) / 5) * 5;
+const y = (s) => m.t + (H - m.t - m.b) * (1 - s / maxS);
+const band = (W - m.l - m.r) / bins.length;
+const x0 = bins[0].lo, x1 = bins[bins.length - 1].hi;
+const xv = (v) => m.l + (W - m.l - m.r) * (v - x0) / (x1 - x0);
+const yt = [];
+for (let s = 0; s <= maxS; s += 5) yt.push(s);
+const labelEvery = Math.ceil(bins.length / 8);
+const id = `h-${title.replace(/\W+/g, "").slice(0, 16)}`;
+---
+<figure class="chart">
+  <div class="chart-scroll">
+    <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-labelledby={id}>
+      <title id={id}>{title}</title>
+      {yt.map((s) => (<g><line class="grid" x1={m.l} x2={W - m.r} y1={y(s)} y2={y(s)} /><text x={m.l - 8} y={y(s) + 4} text-anchor="end">{s}%</text></g>))}
+      {bins.map((b, i) => (
+        <rect x={m.l + band * i + 1} y={y(shares[i])} width={Math.max(1, band - 2)} height={y(0) - y(shares[i])} fill="var(--model)" />
+      ))}
+      {bins.map((b, i) => (i % labelEvery === 0 ? <text x={m.l + band * i} y={H - m.b + 16} text-anchor="middle">{b.lo}</text> : null))}
+      <text x={W - m.r} y={H - m.b + 16} text-anchor="end">{x1}</text>
+      {zero && <line x1={xv(0)} x2={xv(0)} y1={m.t} y2={y(0)} stroke="var(--ink)" stroke-width="1" />}
+      <line class="axis" x1={m.l} x2={W - m.r} y1={y(0)} y2={y(0)} />
+      <text x={(m.l + W - m.r) / 2} y={H - 8} text-anchor="middle" class="lbl">{xLabel}</text>
+    </svg>
+  </div>
+  <details class="data"><summary>Data table</summary>
+    <table><thead><tr><th>Range ({unit})</th><th class="r">Count</th><th class="r">Share</th></tr></thead>
+      <tbody>{bins.map((b, i) => (<tr><td class="num">{b.lo} to {b.hi}</td><td class="r num">{b.n.toLocaleString()}</td><td class="r num">{shares[i].toFixed(1)}%</td></tr>))}</tbody>
+    </table>
+    <p class="note">Values beyond the outer bins are counted in the first or last bin. Total: {total.toLocaleString()}.</p>
+  </details>
+</figure>

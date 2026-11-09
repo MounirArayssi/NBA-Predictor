@@ -11,12 +11,20 @@ from sqlalchemy import Column, Integer, Numeric, Date, DateTime, String, Foreign
 from sqlalchemy.sql import func
 from data.storage.db import engine
 from data.storage.models import Base, PlayerRollingStats
-from config.settings import CURRENT_SEASON
+from config.settings import CURRENT_SEASON, PREVIOUS_SEASON
 
-def compute_player_rolling_stats(window=10):
+# Today's row needs only this many games, so rookies and new signings get a row
+# early in the season (games_counted records the actual sample size).
+TODAY_MIN_GAMES = 3
+
+def compute_player_rolling_stats(window=10, today_only=False, team_ids=None):
     """
     Compute rolling stats for every player.
     Similar to team rolling stats but at individual level.
+
+    today_only: skip backfilling historical per-game rows and only write the
+                as-of-today row (all that prediction needs).
+    team_ids:   restrict to players on these teams (e.g. teams playing today).
     """
     print(f"Computing player rolling stats (window={window})...")
     
@@ -62,11 +70,16 @@ def compute_player_rolling_stats(window=10):
     player_teams = df.groupby(
         ['player_id', 'team_id']
     ).size().reset_index()[['player_id', 'team_id']]
+    if team_ids is not None:
+        player_teams = player_teams[player_teams['team_id'].isin(team_ids)]
+
+    # Historical rows are only needed for training; today-only mode skips them
+    historical = player_teams.iloc[0:0] if today_only else player_teams
 
     records_added = 0
 
     with Session(engine) as session:
-        for _, pt in player_teams.iterrows():
+        for _, pt in historical.iterrows():
             player_id = int(pt['player_id'])
             team_id   = int(pt['team_id'])
 
@@ -136,18 +149,26 @@ def compute_player_rolling_stats(window=10):
 
             session.commit()
 
-        # Also compute today's stats for each player
+        # Today's row for each player, keyed to the team they last played for.
+        # Built from their most recent games for ANY team in this or last season,
+        # with a partial window allowed, so that:
+        #   - rookies get a row after TODAY_MIN_GAMES games
+        #   - traded / newly signed players keep their prior production
+        #   - players who missed last season aren't averaged with 2-year-old games
         today = date.today()
-        for _, pt in player_teams.iterrows():
-            player_id = int(pt['player_id'])
-            team_id   = int(pt['team_id'])
+        recent_df = df[df['season'].isin([CURRENT_SEASON, PREVIOUS_SEASON])]
+        recent_df = recent_df.sort_values('game_date')
+        latest_team = recent_df.groupby('player_id')['team_id'].last()
+        if team_ids is not None:
+            latest_team = latest_team[latest_team.isin(team_ids)]
 
-            player_df = df[
-                (df['player_id'] == player_id) &
-                (df['team_id'] == team_id)
-            ].copy().sort_values('game_date')
+        for player_id, team_id in latest_team.items():
+            player_id = int(player_id)
+            team_id   = int(team_id)
 
-            if len(player_df) < window:
+            player_df = recent_df[recent_df['player_id'] == player_id]
+
+            if len(player_df) < TODAY_MIN_GAMES:
                 continue
 
             window_df = player_df.tail(window)
@@ -190,7 +211,7 @@ def compute_player_rolling_stats(window=10):
                 avg_net_rating = safe_mean('net_rating'),
                 avg_blk_pct    = safe_mean('blk_pct'),
                 avg_stl_pct    = safe_mean('stl_pct'),
-                games_counted    = window
+                games_counted    = len(window_df)
             )
 
             if existing:

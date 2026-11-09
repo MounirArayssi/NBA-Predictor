@@ -1,0 +1,40 @@
+---
+// Distribution of one team's signed margin errors (actual minus forecast, from
+// the team's side), in 4-point bins, with zero and the mean marked. A distribution
+// centered off zero is bias; a wide one is variability.
+interface Props { games: any[]; abbr: string; id: string; color: string }
+const { games, abbr, id, color } = Astro.props;
+const lo = -40, hi = 40, step = 4;
+const bins = [];
+for (let b = lo; b < hi; b += step) bins.push({ lo: b, hi: b + step, n: 0 });
+for (const g of games) {
+  const v = Math.max(lo, Math.min(hi - 1e-9, g.me));
+  bins[Math.floor((v - lo) / step)].n++;
+}
+const mean = games.reduce((s, g) => s + g.me, 0) / Math.max(1, games.length);
+const W = 560, H = 230, m = { l: 36, r: 12, t: 16, b: 40 };
+const maxN = Math.max(1, ...bins.map((b) => b.n));
+const x = (v) => m.l + ((W - m.l - m.r) * (v - lo)) / (hi - lo);
+const y = (n) => m.t + (H - m.t - m.b) * (1 - n / maxN);
+const yt = [0, Math.round(maxN / 2), maxN].filter((v, i, a) => a.indexOf(v) === i);
+---
+<figure class="chart">
+  <div class="chart-scroll">
+    <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-labelledby={`eh-${id}`}>
+      <title id={`eh-${id}`}>{`${abbr}: distribution of ${games.length} margin errors; mean ${mean >= 0 ? "+" : ""}${mean.toFixed(1)} points`}</title>
+      {yt.map((v) => (<g><line class="grid" x1={m.l} x2={W - m.r} y1={y(v)} y2={y(v)} /><text x={m.l - 6} y={y(v) + 4} text-anchor="end">{v}</text></g>))}
+      {bins.map((b, i) => (
+        <rect x={x(b.lo) + 1} y={y(b.n)} width={x(b.hi) - x(b.lo) - 2} height={y(0) - y(b.n)} fill={color} opacity={b.lo >= 0 ? 0.95 : 0.55}>
+          <title>{`${b.lo} to ${b.hi} pts: ${b.n} games`}</title>
+        </rect>
+      ))}
+      <line class="axis" x1={x(0)} x2={x(0)} y1={m.t - 6} y2={y(0)} />
+      <line x1={x(mean)} x2={x(mean)} y1={m.t - 6} y2={y(0)} stroke="var(--ink)" stroke-width="1.5" stroke-dasharray="4 3" />
+      <text x={x(mean) + (mean >= 0 ? 5 : -5)} y={m.t + 4} text-anchor={mean >= 0 ? "start" : "end"} class="strong">{`mean ${mean >= 0 ? "+" : ""}${mean.toFixed(1)}`}</text>
+      {[-40, -20, 0, 20, 40].map((v) => <text x={x(v)} y={H - m.b + 16} text-anchor="middle">{v > 0 ? `+${v}` : v}</text>)}
+      <text x={x(-30)} y={H - 6} text-anchor="middle" class="lbl">worse than forecast</text>
+      <text x={x(30)} y={H - 6} text-anchor="middle" class="lbl">better than forecast</text>
+    </svg>
+  </div>
+  <figcaption>Each bar counts games whose margin error fell in a 4-point range (errors beyond ±40 are in the end bars). Dashed line: the average error.</figcaption>
+</figure>

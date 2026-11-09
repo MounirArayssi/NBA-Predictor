@@ -1,0 +1,90 @@
+---
+// After the game: how far the result was from the forecast, where the game ranks
+// among the season's surprises, and the factual team box score. Nothing here
+// says why the forecast missed; the box score is shown as what happened.
+import fs from "node:fs";
+import path from "node:path";
+import { site, teamByAbbr, teamUrl, signed } from "../lib/data.js";
+import { teamVars } from "../lib/teamColors.js";
+
+interface Props { g: any }
+const { g } = Astro.props;
+const p = g.fc;
+
+// Season archive (cached across pages during the build).
+const cache = (globalThis.__archiveCache ??= {});
+const file = path.resolve(process.cwd(), "public", "data", `archive-${g.season}.json`);
+const season = (cache[g.season] ??= fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : []);
+const me = season.find((r) => r.id === g.id);
+const rankOf = (key) => (me ? 1 + season.filter((r) => r[key] > me[key]).length : null);
+const ord = (n) => { const s = ["th", "st", "nd", "rd"], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]); };
+const loser = me ? (me.w === g.home ? g.away : g.home) : null;
+const B = g.box;
+const pct = (m, a) => (a ? `${((100 * m) / a).toFixed(1)}%` : "–");
+const boxRows = B ? [
+  ["Field goals", (t) => `${t.fgm}–${t.fga}`, (t) => pct(t.fgm, t.fga)],
+  ["Three-pointers", (t) => `${t.fg3m}–${t.fg3a}`, (t) => pct(t.fg3m, t.fg3a)],
+  ["Free throws", (t) => `${t.ftm}–${t.fta}`, (t) => pct(t.ftm, t.fta)],
+  ["Rebounds", (t) => t.rebounds],
+  ["Assists", (t) => t.assists],
+  ["Turnovers", (t) => t.turnovers],
+  ...[["Steals", "steals"], ["Blocks", "blocks"], ["Points in the paint", "paint_points"], ["Fast-break points", "fastbreak_points"], ["Second-chance points", "second_chance_pts"]]
+    .filter(([, k]) => B.a[k] != null && B.h[k] != null).map(([l, k]) => [l, (t) => t[k]]),
+] : [];
+---
+{me && (
+  <section class="section miss" id="result-vs-forecast" aria-labelledby="h-miss">
+    <div class="section-head">
+      <h2 id="h-miss">The result against the forecast</h2>
+      <a href={`/surprises/?season=${g.season}`}>{g.season} surprise games</a>
+    </div>
+    <div class="figures" data-reveal>
+      <div class="figure">
+        <div class="v">{Math.round(100 * me.pw)}%</div>
+        <div class="l">pregame chance the forecast gave {me.w}, the winner</div>
+        <div class="d">{me.pw < 0.5 ? `the forecast favored ${loser}` : `${me.w} was the forecast favorite`}</div>
+      </div>
+      <div class="figure">
+        <div class="v">{me.se.toFixed(0)}<small> pts</small></div>
+        <div class="l">margin miss</div>
+        <div class="d">forecast {signed(p.ph - p.pa, 0)}, actual {signed(g.score.h - g.score.a, 0)} for {g.home}</div>
+      </div>
+      <div class="figure">
+        <div class="v">{ord(rankOf("su"))}</div>
+        <div class="l">most surprising result of {g.season}</div>
+        <div class="d">of {season.length.toLocaleString()} graded games{g.season === site.season ? " so far" : ""}</div>
+      </div>
+      <div class="figure">
+        <div class="v">{ord(rankOf("se"))}</div>
+        <div class="l">largest margin miss of {g.season}</div>
+        <div class="d">outcome surprise {me.su.toFixed(2)} nats</div>
+      </div>
+    </div>
+    <p class="note">Surprise is measured against this model's forecast, not against what other observers expected. Outcome surprise is −ln(winner's pregame probability): 0.69 for a coin flip, 2.3 for a 10% winner.</p>
+
+    {B && (
+      <div class="box">
+        <p class="chart-title">Team box score</p>
+        <p class="chart-sub">What happened in the game. These numbers are not used by the forecast, and they are not offered as the reason it missed.</p>
+        <div class="table-scroll">
+          <table>
+            <thead><tr><th>Team stat</th><th class="r" style={teamVars(g.away)}><i class="chip" aria-hidden="true"></i> {g.away}</th><th class="r" style={teamVars(g.home)}><i class="chip" aria-hidden="true"></i> {g.home}</th></tr></thead>
+            <tbody>
+              <tr class="total"><td>Final score</td><td class="r num">{g.score.a}</td><td class="r num">{g.score.h}</td></tr>
+              {boxRows.map(([label, f, f2]) => (
+                <tr><td>{label}</td><td class="r num">{f(B.a)}{f2 && <span class="muted">{` · ${f2(B.a)}`}</span>}</td><td class="r num">{f(B.h)}{f2 && <span class="muted">{` · ${f2(B.h)}`}</span>}</td></tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    )}
+    <p class="note links">How the model does with these teams over time: <a href={`${teamUrl(g.away)}#predictability`}>{teamByAbbr[g.away]?.name}</a> · <a href={`${teamUrl(g.home)}#predictability`}>{teamByAbbr[g.home]?.name}</a></p>
+  </section>
+)}
+
+<style>
+  .miss .figures { margin-bottom: var(--s3); }
+  .box { margin-top: var(--s5); max-width: 640px; }
+  .links { margin-top: var(--s4); }
+</style>

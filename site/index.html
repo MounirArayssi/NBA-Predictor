@@ -1,0 +1,742 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+</head>
+<body>
+<title>NBA Game Predictor</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: a scoreboard band for the latest slate, then a lab notebook of results,
+   method and research - one centered 1120px column, sections separated by space, not boxes. */
+:root {
+  --bg: #f2f4f7;
+  --surface: #ffffff;
+  --ink: #111a24;
+  --ink-2: #47525f;
+  --muted: #6e7a88;
+  --line: #dde2e9;
+  --track: #e6eaf0;
+  --accent: #d9581a;
+  --model: #2a78d6;
+  --playoff: #eb6834;
+  --good: #1d7f47;
+  --good-bg: #e3f3e9;
+  --bad: #b83434;
+  --bad-bg: #f8e4e4;
+  --pending: #6e7a88;
+  --pending-bg: #eceff3;
+  --display: "Barlow Condensed", "Arial Narrow", "Helvetica Neue", sans-serif;
+  --body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e131a; --surface: #151c25; --ink: #e8edf3; --ink-2: #aab4c0; --muted: #808c9a;
+    --line: #253041; --track: #222c39; --accent: #f07a35; --model: #3987e5; --playoff: #d95926;
+    --good: #4cc27c; --good-bg: #16301f; --bad: #ec7272; --bad-bg: #3a1c1c;
+    --pending: #8d98a6; --pending-bg: #1f2833; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e131a; --surface: #151c25; --ink: #e8edf3; --ink-2: #aab4c0; --muted: #808c9a;
+  --line: #253041; --track: #222c39; --accent: #f07a35; --model: #3987e5; --playoff: #d95926;
+  --good: #4cc27c; --good-bg: #16301f; --bad: #ec7272; --bad-bg: #3a1c1c;
+  --pending: #8d98a6; --pending-bg: #1f2833; color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--body);
+  font-size: 15px; line-height: 1.55; -webkit-font-smoothing: antialiased;
+}
+body::before {
+  content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px);
+  z-index: 10; background: var(--surface);
+}
+.wrap {
+  max-width: 1120px; margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+a { color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+.num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+h1, h2, h3 { font-family: var(--display); font-weight: 700; letter-spacing: 0.01em; text-wrap: balance; margin: 0; }
+h2 { font-size: 2.1rem; line-height: 1.05; text-transform: uppercase; }
+h3 { font-size: 1.25rem; text-transform: uppercase; letter-spacing: 0.03em; }
+p { margin: 0; }
+.lede { color: var(--ink-2); max-width: 66ch; }
+.eyebrow {
+  font-family: var(--mono); font-size: 0.72rem; text-transform: uppercase;
+  letter-spacing: 0.12em; color: var(--muted);
+}
+
+/* Header + nav */
+header.top { background: var(--surface); border-bottom: 1px solid var(--line); }
+header.top .wrap { padding-block: 28px 22px; display: flex; flex-wrap: wrap; gap: 16px 32px; align-items: end; justify-content: space-between; }
+.brand { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.brand h1 { font-size: clamp(2.2rem, 6vw, 3.4rem); line-height: 0.95; text-transform: uppercase; }
+.brand h1 span { color: var(--accent); }
+.brand p { color: var(--ink-2); max-width: 58ch; }
+.stamp { text-align: right; display: flex; flex-direction: column; gap: 2px; }
+.stamp .num { font-size: 0.8rem; color: var(--ink-2); }
+nav.sections {
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5;
+  background: var(--surface); border-bottom: 1px solid var(--line);
+}
+nav.sections .wrap { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; padding-block: 0; }
+nav.sections a {
+  font-family: var(--display); font-weight: 600; font-size: 1rem; text-transform: uppercase;
+  letter-spacing: 0.06em; text-decoration: none; color: var(--ink-2);
+  padding: 12px 10px 10px; border-bottom: 2px solid transparent; white-space: nowrap;
+}
+nav.sections a:hover { color: var(--ink); }
+nav.sections a.active { color: var(--ink); border-bottom-color: var(--accent); }
+
+section { padding-block: 56px 8px; scroll-margin-top: 56px; }
+.sec-head { display: flex; flex-direction: column; gap: 10px; margin-bottom: 28px; }
+
+/* KPI strip */
+.kpis { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.kpi { background: var(--surface); padding: 18px 18px 16px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.kpi .label { font-size: 0.8rem; color: var(--ink-2); }
+.kpi .value { font-family: var(--display); font-weight: 700; font-size: 2.4rem; line-height: 1; }
+.kpi .value small { font-size: 1.2rem; color: var(--ink-2); font-weight: 600; }
+.kpi .note { font-size: 0.78rem; color: var(--muted); }
+
+/* Slate */
+.slate-meta { display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: baseline; }
+.games { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
+.game { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.game .row { display: grid; grid-template-columns: 46px 1fr auto auto; gap: 10px; align-items: baseline; }
+.game .abbr { font-family: var(--display); font-weight: 700; font-size: 1.5rem; line-height: 1; }
+.game .name { color: var(--ink-2); font-size: 0.85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.game .pred { font-family: var(--mono); font-size: 1.5rem; font-weight: 600; }
+.game .actual { font-family: var(--mono); font-size: 0.9rem; color: var(--muted); min-width: 2.6em; text-align: right; }
+.game .row.fav .abbr, .game .row.fav .pred { color: var(--ink); }
+.game .row:not(.fav) .pred { color: var(--ink-2); }
+.wp { display: flex; flex-direction: column; gap: 5px; }
+.wp-bar { display: flex; gap: 2px; height: 8px; }
+.wp-bar span { border-radius: 4px; }
+.wp-bar .fav { background: var(--model); }
+.wp-bar .dog { background: var(--track); }
+.wp-labels { display: flex; justify-content: space-between; font-size: 0.78rem; color: var(--ink-2); }
+.game .foot { display: flex; flex-wrap: wrap; gap: 6px 12px; justify-content: space-between; align-items: center; border-top: 1px solid var(--line); padding-top: 10px; }
+.market { font-size: 0.75rem; color: var(--muted); }
+.factors { margin: 0; padding-left: 16px; color: var(--ink-2); font-size: 0.82rem; display: flex; flex-direction: column; gap: 2px; }
+.pill { font-family: var(--mono); font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; padding: 3px 8px; border-radius: 999px; white-space: nowrap; }
+.pill.hit { color: var(--good); background: var(--good-bg); }
+.pill.miss { color: var(--bad); background: var(--bad-bg); }
+.pill.pending { color: var(--pending); background: var(--pending-bg); }
+.pill.po { color: var(--ink-2); background: var(--track); }
+
+/* Tables */
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 0.88rem; }
+th, td { padding: 9px 14px; text-align: left; white-space: nowrap; }
+th { font-family: var(--mono); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 500; border-bottom: 1px solid var(--line); }
+td { border-bottom: 1px solid var(--line); }
+tr:last-child td { border-bottom: 0; }
+td.r, th.r { text-align: right; }
+td.num, td .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+tbody tr:hover td { background: color-mix(in srgb, var(--track) 55%, transparent); }
+.sub-row td { color: var(--ink-2); font-size: 0.82rem; }
+.sub-row td:first-child { padding-left: 28px; }
+
+/* Layout helpers */
+.split { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 28px; align-items: start; }
+.split > * { min-width: 0; }
+.stack { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 18px; min-width: 0; }
+.panel-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 16px; align-items: baseline; margin-bottom: 10px; }
+.panel-head p { color: var(--ink-2); font-size: 0.85rem; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 0.8rem; color: var(--ink-2); }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
+.legend i.dash { width: 14px; height: 2px; border-radius: 1px; vertical-align: 3px; }
+.record-chips { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
+.chip { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; display: flex; flex-direction: column; gap: 2px; }
+.chip .big { font-family: var(--display); font-size: 1.7rem; font-weight: 700; line-height: 1.05; }
+.chip .small { font-size: 0.78rem; color: var(--ink-2); }
+.callout { border-left: 3px solid var(--model); padding: 4px 0 4px 14px; color: var(--ink-2); font-size: 0.9rem; max-width: 70ch; }
+
+/* Charts */
+svg.chart { width: 100%; height: auto; display: block; overflow: visible; }
+svg.chart text { font-family: var(--mono); font-size: 11px; fill: var(--muted); }
+svg.chart .axis-label { fill: var(--ink-2); }
+svg.chart .grid { stroke: var(--line); stroke-width: 1; }
+svg.chart .ref { stroke: var(--muted); stroke-width: 1.5; }
+.tip {
+  position: fixed; z-index: 20; pointer-events: none; background: var(--ink); color: var(--bg);
+  font-size: 0.78rem; line-height: 1.4; padding: 7px 10px; border-radius: 6px; max-width: 240px;
+  opacity: 0; transition: opacity 0.08s; font-family: var(--body);
+}
+.tip b { font-family: var(--mono); font-weight: 600; }
+
+/* Method */
+.steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--line); gap: 1px; }
+.steps li { background: var(--surface); padding: 16px 18px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.steps .n { font-family: var(--mono); font-size: 0.72rem; color: var(--accent); letter-spacing: 0.08em; }
+.steps b { font-family: var(--display); font-size: 1.15rem; text-transform: uppercase; letter-spacing: 0.03em; }
+.steps span { color: var(--ink-2); font-size: 0.85rem; }
+.feat-group { display: flex; flex-direction: column; gap: 6px; }
+.feat-group + .feat-group { margin-top: 14px; }
+.feat-group h4 { margin: 0; font-size: 0.85rem; font-weight: 600; display: flex; justify-content: space-between; }
+.feat-group h4 .num { color: var(--ink-2); font-weight: 500; }
+.bar-row { display: grid; grid-template-columns: minmax(0, 1fr) 120px 44px; gap: 10px; align-items: center; font-size: 0.82rem; color: var(--ink-2); }
+.bar-row .track { height: 8px; position: relative; }
+.bar-row .track span { position: absolute; left: 0; top: 0; bottom: 0; background: var(--model); border-radius: 0 4px 4px 0; min-width: 2px; }
+.bar-row .num { text-align: right; color: var(--ink); }
+.guards { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.guards li { display: grid; grid-template-columns: 18px 1fr; gap: 10px; font-size: 0.9rem; color: var(--ink-2); }
+.guards li::before { content: ""; width: 10px; height: 10px; margin-top: 6px; border-radius: 2px; background: var(--good); }
+.guards b { color: var(--ink); font-weight: 600; }
+
+/* Research log */
+.log { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.log li { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 18px; padding: 16px 0; border-top: 1px solid var(--line); }
+.log li:last-child { border-bottom: 1px solid var(--line); }
+.log time { font-family: var(--mono); font-size: 0.78rem; color: var(--muted); padding-top: 3px; }
+.log .entry { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.log .entry b { font-weight: 600; }
+.log .entry p { color: var(--ink-2); font-size: 0.9rem; max-width: 74ch; }
+.tag { font-family: var(--mono); font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.08em; padding: 2px 7px; border-radius: 4px; margin-left: 8px; vertical-align: 2px; }
+.tag.kept { color: var(--good); background: var(--good-bg); }
+.tag.rejected { color: var(--bad); background: var(--bad-bg); }
+.tag.open { color: var(--pending); background: var(--pending-bg); }
+
+/* Roadmap */
+.roadmap { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.idea { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.idea .why { color: var(--ink-2); font-size: 0.88rem; }
+.idea .eyebrow { color: var(--accent); }
+
+footer { margin-top: 64px; border-top: 1px solid var(--line); background: var(--surface); }
+footer .wrap { padding-block: 24px 32px; display: flex; flex-direction: column; gap: 6px; font-size: 0.82rem; color: var(--muted); }
+
+@media (max-width: 900px) {
+  .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .kpis .kpi:first-child { grid-column: 1 / -1; }
+  .split { grid-template-columns: minmax(0, 1fr); }
+  .steps { grid-template-columns: minmax(0, 1fr); }
+  .roadmap { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 520px) {
+  h2 { font-size: 1.75rem; }
+  .stamp { text-align: left; }
+  .log li { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .bar-row { grid-template-columns: minmax(0, 1fr) 70px 40px; }
+  .games { grid-template-columns: minmax(0, 1fr); }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; scroll-behavior: auto !important; } }
+</style>
+
+<header class="top">
+  <div class="wrap">
+    <div class="brand">
+      <span class="eyebrow">Machine-learning project · no betting lines used</span>
+      <h1>NBA Game <span>Predictor</span></h1>
+      <p>Predicts every NBA game's final score from team strength, recent form, rest and the official injury report, then grades itself after the final buzzer.</p>
+    </div>
+    <div class="stamp">
+      <span class="eyebrow">Last updated</span>
+      <span class="num" id="generated"></span>
+      <span class="num" id="trained"></span>
+    </div>
+  </div>
+</header>
+
+<nav class="sections" aria-label="Sections">
+  <div class="wrap">
+    <a href="#tonight">Latest slate</a>
+    <a href="#record">Live record</a>
+    <a href="#backtest">Backtest</a>
+    <a href="#accuracy">Accuracy</a>
+    <a href="#method">How it works</a>
+    <a href="#research">Research log</a>
+    <a href="#roadmap">Roadmap</a>
+  </div>
+</nav>
+
+<main class="wrap">
+
+  <section id="tonight" aria-labelledby="h-tonight">
+    <div class="sec-head">
+      <span class="eyebrow">Latest official predictions</span>
+      <h2 id="h-tonight">Latest slate</h2>
+      <div class="slate-meta lede" id="slate-meta"></div>
+    </div>
+    <div class="games" id="games"></div>
+  </section>
+
+  <section id="summary" aria-label="Headline numbers" style="padding-top:40px">
+    <div class="kpis" id="kpis"></div>
+  </section>
+
+  <section id="record" aria-labelledby="h-record">
+    <div class="sec-head">
+      <span class="eyebrow">Locked before tip-off, graded after the final</span>
+      <h2 id="h-record">Live record</h2>
+      <p class="lede">Only predictions made before tip-off count. The first pre-game prediction for each game is locked as official, and a rerun can replace it only in the last hour before tip. Games predicted after the fact are excluded.</p>
+    </div>
+    <div class="record-chips" id="record-chips"></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Date</th><th>Matchup</th><th class="r">Predicted</th><th class="r">Final</th><th class="r">Win prob.</th><th>Result</th></tr></thead>
+        <tbody id="live-rows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="backtest" aria-labelledby="h-backtest">
+    <div class="sec-head">
+      <span class="eyebrow">Walk-forward test · <span id="bt-n"></span> games</span>
+      <h2 id="h-backtest">Four seasons, predicted blind</h2>
+      <p class="lede">Each season was predicted by a model trained only on the seasons before it, through the same code path as the daily predictions, with that day's archived injury report and no betting lines. This is the honest estimate of how the model does on games it has never seen.</p>
+    </div>
+    <div class="split">
+      <div class="panel">
+        <div class="panel-head">
+          <h3>Winners picked, by season</h3>
+          <div class="legend">
+            <span><i style="background:var(--model)"></i>Regular season</span>
+            <span><i style="background:var(--playoff)"></i>Playoffs</span>
+            <span><i class="dash" style="background:var(--muted)"></i>Always pick home team</span>
+          </div>
+        </div>
+        <svg class="chart" id="chart-seasons" role="img" aria-label="Win percentage by season, regular season and playoffs, against always picking the home team"></svg>
+      </div>
+      <div class="stack">
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Season</th><th class="r">Games</th><th class="r">Winners</th><th class="r">Margin miss</th><th class="r">Brier</th></tr></thead>
+            <tbody id="season-rows"></tbody>
+          </table>
+        </div>
+        <p class="callout" id="bt-callout"></p>
+      </div>
+    </div>
+  </section>
+
+  <section id="accuracy" aria-labelledby="h-accuracy">
+    <div class="sec-head">
+      <span class="eyebrow">From the walk-forward test</span>
+      <h2 id="h-accuracy">How close it gets</h2>
+    </div>
+    <div class="split" style="grid-template-columns:minmax(0,1fr) minmax(0,1fr)">
+      <div class="panel">
+        <div class="panel-head">
+          <h3>Are the win probabilities honest?</h3>
+          <p>Each dot groups games by how confident the model was in its pick. On the diagonal, a 70% pick wins 70% of the time.</p>
+        </div>
+        <svg class="chart" id="chart-calib" role="img" aria-label="Predicted confidence against actual win rate"></svg>
+      </div>
+      <div class="panel">
+        <div class="panel-head">
+          <h3>Miss on each team's final score</h3>
+          <p id="miss-note"></p>
+        </div>
+        <svg class="chart" id="chart-miss" role="img" aria-label="Histogram of points missed on each team's score"></svg>
+      </div>
+    </div>
+    <div class="panel" style="margin-top:16px">
+      <div class="panel-head">
+        <h3>Exact final scores called</h3>
+        <p id="exact-note"></p>
+      </div>
+      <div class="table-wrap" style="border:0">
+        <table>
+          <thead><tr><th>Date</th><th>Matchup</th><th class="r">Final (predicted exactly)</th><th></th></tr></thead>
+          <tbody id="exact-rows"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section id="method" aria-labelledby="h-method">
+    <div class="sec-head">
+      <span class="eyebrow">Pipeline · features · guardrails</span>
+      <h2 id="h-method">How it works</h2>
+      <p class="lede">One command runs the daily cycle. Everything is stored in PostgreSQL so every prediction can be traced back to the exact inputs it used.</p>
+    </div>
+    <ol class="steps">
+      <li><span class="n">STEP 1</span><b>Games &amp; scores</b><span>Schedule, final scores and box scores from the NBA stats API.</span></li>
+      <li><span class="n">STEP 2</span><b>Injury report</b><span>The official NBA injury report PDF, parsed into who is Out or Doubtful and how many points per game that removes.</span></li>
+      <li><span class="n">STEP 3</span><b>Team form</b><span>Rolling 5/7/10/20-game offensive and defensive ratings and pace for every team.</span></li>
+      <li><span class="n">STEP 4</span><b>Team strength</b><span>A margin-of-victory Elo rating plus a season-to-date margin blended with last season early on.</span></li>
+      <li><span class="n">STEP 5</span><b>Predict</b><span>Gradient-boosted models predict each team's score; the margin gives the pick and the win probability.</span></li>
+      <li><span class="n">STEP 6</span><b>Lock &amp; grade</b><span>The pre-game prediction is locked as official, then scored against the final once the game ends.</span></li>
+    </ol>
+
+    <div class="split" style="margin-top:24px">
+      <div class="panel">
+        <div class="panel-head">
+          <h3>What the model listens to</h3>
+          <p><span id="n-features"></span> features. Share of the model's splits, averaged over the home and away score models.</p>
+        </div>
+        <div id="features"></div>
+      </div>
+      <div class="stack">
+        <div class="panel">
+          <h3 style="margin-bottom:14px">Guardrails</h3>
+          <ul class="guards">
+            <li><span><b>No betting lines in the prediction.</b> Odds are stored only to grade the model against the market later.</span></li>
+            <li><span><b>Same injury report it would have had.</b> Training and backtests use the official report from 5:30 PM ET on game day, never who actually sat out.</span></li>
+            <li><span><b>Train and live match.</b> Live features are built by the same code as training; Elo values are checked to match exactly.</span></li>
+            <li><span><b>Time only moves forward.</b> Backtests never train on a game from the season being predicted.</span></li>
+            <li><span><b>No post-game picks.</b> A prediction made after tip-off can never become official.</span></li>
+          </ul>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Season</th><th class="r">Games</th><th class="r">Box scores</th><th class="r">Injury reports</th></tr></thead>
+            <tbody id="coverage-rows"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="research" aria-labelledby="h-research">
+    <div class="sec-head">
+      <span class="eyebrow">What was tried, and what the data said</span>
+      <h2 id="h-research">Research log</h2>
+    </div>
+    <ul class="log">
+      <li><time datetime="2026-11-07">Nov 7, 2026</time><div class="entry">
+        <b>NBA Cup games: are they higher scoring?<span class="tag rejected">No effect</span></b>
+        <p>Point differential is a Cup tiebreaker, so teams might keep starters in. Across 180 group-stage games (2023-24 to 2025-26), Cup games averaged 229.0 points against 229.8 for regular games in the same weeks, and teams leading by 15+ after three quarters gave back about as much in the fourth. Not added as a feature.</p></div></li>
+      <li><time datetime="2026-11-07">Nov 7, 2026</time><div class="entry">
+        <b>Retrained on five seasons of history<span class="tag kept">Kept</span></b>
+        <p>Elo and training now start in October 2021 instead of 2023. On held-out seasons it matched or beat the shorter history: 2025-26 winners 65.3% → 67.0%, with lower margin and total error in two of three test seasons.</p></div></li>
+      <li><time datetime="2026-11-06">Nov 6, 2026</time><div class="entry">
+        <b>Walk-forward backtest of four seasons<span class="tag kept">Kept</span></b>
+        <p>Filled the data gaps first: 209 days of 2022-23 injury reports, 260 missing box scores and team form back to 2021. Then predicted 5,254 games, each season with a model that had never seen it.</p></div></li>
+      <li><time datetime="2026-11-06">Nov 6, 2026</time><div class="entry">
+        <b>Does home court matter less when the visitor is clearly better?<span class="tag open">Open</span></b>
+        <p>Mixed so far. In 2022-23 road favorites won by less than predicted; early 2023-24 showed the opposite. With two or more seasons of training, predicted margins line up with actual margins overall. To be tested as a feature.</p></div></li>
+      <li><time datetime="2026-11-05">Nov 5, 2026</time><div class="entry">
+        <b>Removed betting lines from the prediction<span class="tag kept">Kept</span></b>
+        <p>The model used to lean toward the Vegas spread and total. Now it stands on its own, so it can be compared with the market honestly.</p></div></li>
+      <li><time datetime="2026-11-05">Nov 5, 2026</time><div class="entry">
+        <b>Elo + season blend, lean 21-feature model<span class="tag kept">Kept</span></b>
+        <p>Replaced a 42-feature set. Out of sample on 2026-27: margin miss 12.63 → 11.64, winners 59.5% → 61.2%, Brier 0.244 → 0.223. Shooting splits, matchup products and scoring variance added nothing once team strength was measured well.</p></div></li>
+      <li><time datetime="2026-11-05">Nov 5, 2026</time><div class="entry">
+        <b>Schedule load, travel and per-team home court<span class="tag rejected">No gain</span></b>
+        <p>Games in the last four or six nights, travel distance, time zones and team-specific home-court strength were each tested and did not improve accuracy.</p></div></li>
+      <li><time datetime="2026-11-05">Nov 5, 2026</time><div class="entry">
+        <b>Team model only, player model kept for display<span class="tag kept">Kept</span></b>
+        <p>Blending in summed player predictions cost winners in every slice tested (this season, February to April, playoffs). Player-level information now enters through the injury feature instead.</p></div></li>
+    </ul>
+  </section>
+
+  <section id="roadmap" aria-labelledby="h-roadmap">
+    <div class="sec-head">
+      <span class="eyebrow">Next experiments</span>
+      <h2 id="h-roadmap">Roadmap</h2>
+      <p class="lede">Each idea gets the same test before it reaches the live model: the four-season walk-forward backtest.</p>
+    </div>
+    <div class="roadmap">
+      <div class="idea"><span class="eyebrow">Model structure</span><h3>Predict margin and total directly</h3>
+        <p class="why">Two separate team-score models optimize the wrong targets. A margin model and a total model match what gets graded: the winner, the spread and the over/under.</p></div>
+      <div class="idea"><span class="eyebrow">Injuries</span><h3>Lineup-level strength</h3>
+        <p class="why">Use on/off ratings of who is actually available instead of points per game missing. Losing a defensive center hurts more than his scoring says.</p></div>
+      <div class="idea"><span class="eyebrow">Market</span><h3>Does the market overreact to schedule spots?</h3>
+        <p class="why">Back-to-backs and travel didn't improve accuracy, but the betting line may still misprice them. Needs historical odds.</p></div>
+      <div class="idea"><span class="eyebrow">Injuries</span><h3>Questionable as a probability</h3>
+        <p class="why">Count a Questionable player as partly missing, weighted by how often players with that tag actually sit.</p></div>
+      <div class="idea"><span class="eyebrow">Win probability</span><h3>Recalibrate on 5,000 games</h3>
+        <p class="why">Refit the win-probability curve on the walk-forward results instead of a few dozen live games.</p></div>
+      <div class="idea"><span class="eyebrow">Grading</span><h3>Historical odds and closing-line value</h3>
+        <p class="why">Backfill opening and closing lines to measure where the model disagrees with Vegas and who was closer.</p></div>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>For entertainment and analysis only. Not betting advice. Not affiliated with the NBA or any team.</span>
+    <span>Data: NBA stats API and the official NBA injury report. Built with Python, scikit-learn and PostgreSQL.</span>
+  </div>
+</footer>
+
+<div class="tip" id="tip" role="tooltip"></div>
+
+<script>
+const DATA = {"generated": "Nov 7, 2026 12:32 AM ET", "slate": {"date": "2026-11-06", "made_at": "6:08 PM ET", "games": [{"home": "ATL", "away": "WAS", "home_name": "Atlanta Hawks", "away_name": "Washington Wizards", "ph": 120, "pa": 110, "hwp": 0.764, "vegas_spread": -8.5, "vegas_total": 228.5, "factors": ["ATL has high scoring volatility \u2014 wider boom/bust range", "WAS has high scoring volatility \u2014 wider boom/bust range"], "final": false, "ah": null, "aa": null, "correct": null, "playoff": false}, {"home": "CHA", "away": "BOS", "home_name": "Charlotte Hornets", "away_name": "Boston Celtics", "ph": 104, "pa": 111, "hwp": 0.297, "vegas_spread": 10.5, "vegas_total": 208.5, "factors": ["BOS has high scoring volatility \u2014 wider boom/bust range", "CHA has high scoring volatility \u2014 wider boom/bust range"], "final": false, "ah": null, "aa": null, "correct": null, "playoff": false}, {"home": "CLE", "away": "PHI", "home_name": "Cleveland Cavaliers", "away_name": "Philadelphia 76ers", "ph": 116, "pa": 117, "hwp": 0.464, "vegas_spread": 2.5, "vegas_total": 231.5, "factors": ["CLE has high scoring volatility \u2014 wider boom/bust range", "PHI has high scoring volatility \u2014 wider boom/bust range", "low-confidence projection \u2014 model sees a narrow margin or high volatility"], "final": false, "ah": null, "aa": null, "correct": null, "playoff": false}, {"home": "DAL", "away": "UTA", "home_name": "Dallas Mavericks", "away_name": "Utah Jazz", "ph": 121, "pa": 114, "hwp": 0.693, "vegas_spread": -6.5, "vegas_total": 225.5, "factors": ["UTA has high scoring volatility \u2014 wider boom/bust range", "DAL has high scoring volatility \u2014 wider boom/bust range", "DAL could generate extra possessions through offensive rebounding"], "final": false, "ah": null, "aa": null, "correct": null, "playoff": false}, {"home": "MEM", "away": "OKC", "home_name": "Memphis Grizzlies", "away_name": "Oklahoma City Thunder", "ph": 112, "pa": 116, "hwp": 0.377, "vegas_spread": 4.5, "vegas_total": 223.5, "factors": ["MEM has high scoring volatility \u2014 wider boom/bust range", "OKC has high scoring volatility \u2014 wider boom/bust range", "low-confidence projection \u2014 model sees a narrow margin or high volatility"], "final": false, "ah": null, "aa": null, "correct": null, "playoff": false}, {"home": "MIL", "away": "TOR", "home_name": "Milwaukee Bucks", "away_name": "Toronto Raptors", "ph": 115, "pa": 122, "hwp": 0.297, "vegas_spread": 4.5, "vegas_total": 229.5, "factors": ["TOR has high scoring volatility \u2014 wider boom/bust range", "MIL has high scoring volatility \u2014 wider boom/bust range"], "final": false, "ah": null, "aa": null, "correct": null, "playoff": false}, {"home": "NOP", "away": "MIN", "home_name": "New Orleans Pelicans", "away_name": "Minnesota Timberwolves", "ph": 115, "pa": 122, "hwp": 0.297, "vegas_spread": 3.5, "vegas_total": 230.5, "factors": ["NOP has high scoring volatility \u2014 wider boom/bust range", "NOP could generate extra possessions through offensive rebounding", "MIN could generate extra possessions through offensive rebounding"], "final": false, "ah": null, "aa": null, "correct": null, "playoff": false}, {"home": "LAL", "away": "POR", "home_name": "Los Angeles Lakers", "away_name": "Portland Trail Blazers", "ph": 119, "pa": 114, "hwp": 0.64, "vegas_spread": -3.5, "vegas_total": 231.5, "factors": ["POR has high scoring volatility \u2014 wider boom/bust range", "LAL has high scoring volatility \u2014 wider boom/bust range", "POR could generate extra possessions through offensive rebounding"], "final": false, "ah": null, "aa": null, "correct": null, "playoff": false}, {"home": "SAC", "away": "SAS", "home_name": "Sacramento Kings", "away_name": "San Antonio Spurs", "ph": 111, "pa": 121, "hwp": 0.228, "vegas_spread": 17.5, "vegas_total": 231.5, "factors": ["SAC has high scoring volatility \u2014 wider boom/bust range", "SAC shows spread value \u2014 model margin differs from market by 7.5", "SAC could generate extra possessions through offensive rebounding"], "final": false, "ah": null, "aa": null, "correct": null, "playoff": false}]}, "live": {"by_season": [{"season": "2026-27", "n": 19, "wins": 11, "margin_mae": 11.21, "team_mae": 7.87}, {"season": "2025-26", "n": 23, "wins": 14, "margin_mae": 13.0, "team_mae": 10.5}], "games": [{"date": "2026-11-05", "season": "2026-27", "home": "GSW", "away": "MIA", "ph": 119, "pa": 118, "ah": 120, "aa": 100, "correct": true, "playoff": false, "hwp": 0.524}, {"date": "2026-11-05", "season": "2026-27", "home": "PHX", "away": "ORL", "ph": 117, "pa": 112, "ah": 117, "aa": 104, "correct": true, "playoff": false, "hwp": 0.64}, {"date": "2026-11-04", "season": "2026-27", "home": "LAC", "away": "MIA", "ph": 116, "pa": 120, "ah": 116, "aa": 117, "correct": true, "playoff": false, "hwp": 0.42}, {"date": "2026-11-04", "season": "2026-27", "home": "SAC", "away": "LAL", "ph": 112, "pa": 124, "ah": 103, "aa": 116, "correct": true, "playoff": false, "hwp": 0.234}, {"date": "2026-11-04", "season": "2026-27", "home": "SAS", "away": "DAL", "ph": 117, "pa": 108, "ah": 112, "aa": 111, "correct": true, "playoff": false, "hwp": 0.746}, {"date": "2026-11-04", "season": "2026-27", "home": "PHX", "away": "POR", "ph": 112, "pa": 114, "ah": 119, "aa": 132, "correct": true, "playoff": false, "hwp": 0.473}, {"date": "2026-11-04", "season": "2026-27", "home": "DEN", "away": "TOR", "ph": 112, "pa": 115, "ah": 128, "aa": 109, "correct": false, "playoff": false, "hwp": 0.446}, {"date": "2026-11-04", "season": "2026-27", "home": "HOU", "away": "MIN", "ph": 118, "pa": 101, "ah": 107, "aa": 117, "correct": false, "playoff": false, "hwp": 0.874}, {"date": "2026-11-04", "season": "2026-27", "home": "OKC", "away": "CLE", "ph": 113, "pa": 110, "ah": 124, "aa": 116, "correct": true, "playoff": false, "hwp": 0.606}, {"date": "2026-11-04", "season": "2026-27", "home": "NOP", "away": "UTA", "ph": 122, "pa": 114, "ah": 120, "aa": 113, "correct": true, "playoff": false, "hwp": 0.725}, {"date": "2026-11-04", "season": "2026-27", "home": "MEM", "away": "IND", "ph": 120, "pa": 114, "ah": 103, "aa": 107, "correct": false, "playoff": false, "hwp": 0.68}, {"date": "2026-11-04", "season": "2026-27", "home": "NYK", "away": "CHI", "ph": 118, "pa": 108, "ah": 135, "aa": 105, "correct": true, "playoff": false, "hwp": 0.765}, {"date": "2026-11-04", "season": "2026-27", "home": "BKN", "away": "CHA", "ph": 103, "pa": 108, "ah": 114, "aa": 104, "correct": false, "playoff": false, "hwp": 0.394}, {"date": "2026-11-04", "season": "2026-27", "home": "BOS", "away": "MIL", "ph": 118, "pa": 110, "ah": 109, "aa": 102, "correct": true, "playoff": false, "hwp": 0.725}, {"date": "2026-11-04", "season": "2026-27", "home": "WAS", "away": "ATL", "ph": 114, "pa": 110, "ah": 105, "aa": 120, "correct": false, "playoff": false, "hwp": 0.631}, {"date": "2026-11-04", "season": "2026-27", "home": "DET", "away": "PHI", "ph": 108, "pa": 106, "ah": 106, "aa": 112, "correct": false, "playoff": false, "hwp": 0.58}, {"date": "2026-10-20", "season": "2026-27", "home": "SAS", "away": "OKC", "ph": 111, "pa": 112, "ah": 104, "aa": 116, "correct": true, "playoff": false, "hwp": 0.5}, {"date": "2026-10-20", "season": "2026-27", "home": "NYK", "away": "PHI", "ph": 116, "pa": 107, "ah": 100, "aa": 106, "correct": false, "playoff": false, "hwp": 0.746}, {"date": "2026-10-20", "season": "2026-27", "home": "DET", "away": "BOS", "ph": 107, "pa": 108, "ah": 121, "aa": 113, "correct": false, "playoff": false, "hwp": 0.5}, {"date": "2026-06-08", "season": "2025-26", "home": "NYK", "away": "SAS", "ph": 112, "pa": 106, "ah": 111, "aa": 115, "correct": false, "playoff": true, "hwp": 0.697}, {"date": "2026-06-05", "season": "2025-26", "home": "SAS", "away": "NYK", "ph": 105, "pa": 108, "ah": 104, "aa": 105, "correct": true, "playoff": true, "hwp": 0.33}, {"date": "2026-05-30", "season": "2025-26", "home": "OKC", "away": "SAS", "ph": 106, "pa": 109, "ah": 103, "aa": 111, "correct": true, "playoff": true, "hwp": 0.33}, {"date": "2026-05-01", "season": "2025-26", "home": "HOU", "away": "LAL", "ph": 109, "pa": 105, "ah": 78, "aa": 98, "correct": false, "playoff": true, "hwp": 0.604}, {"date": "2026-05-01", "season": "2025-26", "home": "TOR", "away": "CLE", "ph": 117, "pa": 111, "ah": 112, "aa": 110, "correct": true, "playoff": true, "hwp": 0.653}, {"date": "2026-05-01", "season": "2025-26", "home": "ORL", "away": "DET", "ph": 114, "pa": 109, "ah": 79, "aa": 93, "correct": false, "playoff": true, "hwp": 0.629}, {"date": "2026-04-30", "season": "2025-26", "home": "MIN", "away": "DEN", "ph": 112, "pa": 119, "ah": 110, "aa": 98, "correct": false, "playoff": true, "hwp": 0.324}, {"date": "2026-04-30", "season": "2025-26", "home": "ATL", "away": "NYK", "ph": 108, "pa": 110, "ah": 89, "aa": 140, "correct": true, "playoff": true, "hwp": 0.448}, {"date": "2026-04-30", "season": "2025-26", "home": "PHI", "away": "BOS", "ph": 109, "pa": 113, "ah": 106, "aa": 93, "correct": false, "playoff": true, "hwp": 0.396}, {"date": "2026-04-27", "season": "2025-26", "home": "DEN", "away": "MIN", "ph": 118, "pa": 114, "ah": 125, "aa": 113, "correct": true, "playoff": true, "hwp": 0.604}, {"date": "2026-04-27", "season": "2025-26", "home": "PHX", "away": "OKC", "ph": 108, "pa": 112, "ah": 122, "aa": 131, "correct": true, "playoff": true, "hwp": 0.396}, {"date": "2026-04-27", "season": "2025-26", "home": "ORL", "away": "DET", "ph": 111, "pa": 109, "ah": 94, "aa": 88, "correct": true, "playoff": true, "hwp": 0.552}, {"date": "2026-04-26", "season": "2025-26", "home": "HOU", "away": "LAL", "ph": 108, "pa": 102, "ah": 115, "aa": 96, "correct": true, "playoff": true, "hwp": 0.653}, {"date": "2026-04-26", "season": "2025-26", "home": "PHI", "away": "BOS", "ph": 102, "pa": 109, "ah": 96, "aa": 128, "correct": true, "playoff": true, "hwp": 0.324}, {"date": "2026-04-26", "season": "2025-26", "home": "POR", "away": "SAS", "ph": 107, "pa": 109, "ah": 93, "aa": 114, "correct": true, "playoff": true, "hwp": 0.448}, {"date": "2026-04-26", "season": "2025-26", "home": "TOR", "away": "CLE", "ph": 113, "pa": 110, "ah": 93, "aa": 89, "correct": true, "playoff": true, "hwp": 0.578}, {"date": "2026-04-25", "season": "2025-26", "home": "MIN", "away": "DEN", "ph": 116, "pa": 119, "ah": 112, "aa": 96, "correct": false, "playoff": true, "hwp": 0.422}, {"date": "2026-04-25", "season": "2025-26", "home": "ATL", "away": "NYK", "ph": 106, "pa": 109, "ah": 98, "aa": 114, "correct": true, "playoff": true, "hwp": 0.422}, {"date": "2026-04-25", "season": "2025-26", "home": "PHX", "away": "OKC", "ph": 105, "pa": 112, "ah": 109, "aa": 121, "correct": true, "playoff": true, "hwp": 0.324}, {"date": "2026-04-25", "season": "2025-26", "home": "ORL", "away": "DET", "ph": 110, "pa": 112, "ah": 113, "aa": 105, "correct": false, "playoff": true, "hwp": 0.448}, {"date": "2026-04-24", "season": "2025-26", "home": "POR", "away": "SAS", "ph": 106, "pa": 104, "ah": 108, "aa": 120, "correct": false, "playoff": true, "hwp": 0.552}], "n": 42, "wins": 25}, "backtest": {"all": {"n": 5254, "win": 65.1, "margin_mae": 11.01, "total_mae": 15.02, "team_mae": 9.4, "brier": 0.218, "home_win": 55.7}, "seasons": [{"season": "2022-23", "all": {"n": 1314, "win": 62.0, "margin_mae": 10.34, "total_mae": 14.92, "team_mae": 9.19, "brier": 0.231, "home_win": 58.1}, "regular": {"n": 1230, "win": 62.0, "margin_mae": 10.27, "total_mae": 14.89, "team_mae": 9.15, "brier": 0.23, "home_win": 58.0}, "playoffs": {"n": 84, "win": 61.9, "margin_mae": 11.36, "total_mae": 15.24, "team_mae": 9.83, "brier": 0.243, "home_win": 59.5}}, {"season": "2023-24", "all": {"n": 1312, "win": 64.3, "margin_mae": 11.25, "total_mae": 15.08, "team_mae": 9.52, "brier": 0.223, "home_win": 54.6}, "regular": {"n": 1230, "win": 64.6, "margin_mae": 11.14, "total_mae": 15.13, "team_mae": 9.52, "brier": 0.222, "home_win": 54.3}, "playoffs": {"n": 82, "win": 59.8, "margin_mae": 12.78, "total_mae": 14.24, "team_mae": 9.57, "brier": 0.234, "home_win": 58.5}}, {"season": "2024-25", "all": {"n": 1314, "win": 66.8, "margin_mae": 11.03, "total_mae": 14.89, "team_mae": 9.34, "brier": 0.211, "home_win": 54.6}, "regular": {"n": 1230, "win": 67.5, "margin_mae": 10.93, "total_mae": 14.85, "team_mae": 9.29, "brier": 0.209, "home_win": 54.4}, "playoffs": {"n": 84, "win": 57.1, "margin_mae": 12.52, "total_mae": 15.48, "team_mae": 10.05, "brier": 0.233, "home_win": 57.1}}, {"season": "2025-26", "all": {"n": 1314, "win": 67.4, "margin_mae": 11.44, "total_mae": 15.18, "team_mae": 9.56, "brier": 0.207, "home_win": 55.3}, "regular": {"n": 1230, "win": 67.5, "margin_mae": 11.33, "total_mae": 15.28, "team_mae": 9.57, "brier": 0.205, "home_win": 55.3}, "playoffs": {"n": 84, "win": 65.5, "margin_mae": 12.95, "total_mae": 13.79, "team_mae": 9.46, "brier": 0.234, "home_win": 56.0}}], "calibration": [{"lo": 0.5, "hi": 0.55, "n": 937, "predicted": 52.6, "actual": 53.3}, {"lo": 0.55, "hi": 0.6, "n": 1080, "predicted": 57.2, "actual": 58.6}, {"lo": 0.6, "hi": 0.65, "n": 1042, "predicted": 62.3, "actual": 62.3}, {"lo": 0.65, "hi": 0.7, "n": 864, "predicted": 67.6, "actual": 66.7}, {"lo": 0.7, "hi": 0.75, "n": 502, "predicted": 72.6, "actual": 74.7}, {"lo": 0.75, "hi": 0.8, "n": 455, "predicted": 77.5, "actual": 82.0}, {"lo": 0.8, "hi": 0.85, "n": 261, "predicted": 82.3, "actual": 83.1}, {"lo": 0.85, "hi": 1.0, "n": 113, "predicted": 87.8, "actual": 88.5}], "miss_hist": [{"lo": 0, "hi": 2, "n": 1053}, {"lo": 2, "hi": 4, "n": 1412}, {"lo": 4, "hi": 6, "n": 1326}, {"lo": 6, "hi": 8, "n": 1203}, {"lo": 8, "hi": 10, "n": 1096}, {"lo": 10, "hi": 12, "n": 940}, {"lo": 12, "hi": 14, "n": 802}, {"lo": 14, "hi": 16, "n": 705}, {"lo": 16, "hi": 18, "n": 540}, {"lo": 18, "hi": 20, "n": 418}, {"lo": 20, "hi": 22, "n": 334}, {"lo": 22, "hi": 24, "n": 214}, {"lo": 24, "hi": 26, "n": 141}, {"lo": 26, "hi": 28, "n": 110}, {"lo": 28, "hi": 30, "n": 82}, {"lo": 30, "hi": null, "n": 132}], "miss_median": 8.0, "within5": 36.0, "within10": 62.0, "exact": [{"date": "2023-01-14", "home": "UTA", "away": "PHI", "ah": 117, "aa": 118, "playoff": false}, {"date": "2023-02-04", "home": "GSW", "away": "DAL", "ah": 119, "aa": 113, "playoff": false}, {"date": "2023-03-18", "home": "NYK", "away": "DEN", "ah": 116, "aa": 110, "playoff": false}, {"date": "2023-04-02", "home": "NYK", "away": "WAS", "ah": 118, "aa": 109, "playoff": false}, {"date": "2023-12-21", "home": "POR", "away": "WAS", "ah": 117, "aa": 118, "playoff": false}, {"date": "2024-02-04", "home": "DEN", "away": "POR", "ah": 112, "aa": 103, "playoff": false}, {"date": "2024-12-28", "home": "UTA", "away": "PHI", "ah": 111, "aa": 114, "playoff": false}, {"date": "2025-02-03", "home": "DEN", "away": "NOP", "ah": 125, "aa": 113, "playoff": false}, {"date": "2025-04-24", "home": "MEM", "away": "OKC", "ah": 108, "aa": 114, "playoff": true}, {"date": "2026-01-11", "home": "OKC", "away": "MIA", "ah": 124, "aa": 112, "playoff": false}, {"date": "2026-02-21", "home": "NYK", "away": "HOU", "ah": 108, "aa": 106, "playoff": false}]}, "model": {"trained": "Nov 7, 2026", "n_features": 21, "groups": [{"group": "Team strength", "share": 47.4, "features": [{"name": "Home Elo", "share": 4.6}, {"name": "Away Elo", "share": 5.0}, {"name": "Elo gap (incl. home court)", "share": 16.6}, {"name": "Home season margin", "share": 4.7}, {"name": "Away season margin", "share": 5.4}, {"name": "Home games played", "share": 3.9}, {"name": "Away games played", "share": 7.2}]}, {"group": "Recent form (last 10)", "share": 42.0, "features": [{"name": "Home offensive rating", "share": 3.7}, {"name": "Away offensive rating", "share": 3.9}, {"name": "Home defensive rating", "share": 7.5}, {"name": "Away defensive rating", "share": 6.1}, {"name": "Combined pace", "share": 20.8}]}, {"group": "Availability", "share": 6.9, "features": [{"name": "Home points missing (injuries)", "share": 3.9}, {"name": "Away points missing (injuries)", "share": 3.0}]}, {"group": "Rest", "share": 0.8, "features": [{"name": "Home rest days", "share": 0.5}, {"name": "Away rest days", "share": 0.3}, {"name": "Home back-to-back", "share": 0.0}, {"name": "Away back-to-back", "share": 0.0}]}, {"group": "Playoff series", "share": 2.9, "features": [{"name": "Home series wins", "share": 1.5}, {"name": "Elimination game", "share": 0.2}, {"name": "Series pressure", "share": 1.2}]}], "history_from": "2021-10-19", "history_to": "2026-11-05", "games_in_db": 6694}, "coverage": [{"season": "2021-22", "games": 1317, "dates": 210, "box": 1317, "reports": 210}, {"season": "2022-23", "games": 1314, "dates": 209, "box": 1314, "reports": 209}, {"season": "2023-24", "games": 1312, "dates": 204, "box": 1312, "reports": 204}, {"season": "2024-25", "games": 1314, "dates": 210, "box": 1314, "reports": 210}, {"season": "2025-26", "games": 1314, "dates": 207, "box": 1314, "reports": 207}, {"season": "2026-27", "games": 123, "dates": 16, "box": 123, "reports": 17}]};
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const pct = (x, d = 1) => (x == null ? "–" : `${Number(x).toFixed(d)}%`);
+const fmtDate = (s) => {
+  const d = new Date(s + "T12:00:00");
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+};
+const shortDate = (s) => new Date(s + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" });
+
+/* Tooltip */
+const tip = $("tip");
+function showTip(html, e) {
+  tip.innerHTML = html;
+  tip.style.opacity = 1;
+  const pad = 14, w = tip.offsetWidth, h = tip.offsetHeight;
+  let x = e.clientX + pad, y = e.clientY + pad;
+  if (x + w > window.innerWidth - 8) x = e.clientX - w - pad;
+  if (y + h > window.innerHeight - 8) y = e.clientY - h - pad;
+  tip.style.left = x + "px"; tip.style.top = y + "px";
+}
+function hideTip() { tip.style.opacity = 0; }
+function bindTip(el, html) {
+  el.addEventListener("pointermove", (e) => showTip(html, e));
+  el.addEventListener("pointerleave", hideTip);
+  el.setAttribute("tabindex", "0");
+  el.addEventListener("focus", () => { const r = el.getBoundingClientRect(); showTip(html, { clientX: r.right, clientY: r.top }); });
+  el.addEventListener("blur", hideTip);
+}
+
+const NS = "http://www.w3.org/2000/svg";
+function svgEl(tag, attrs, parent) {
+  const el = document.createElementNS(NS, tag);
+  for (const k in attrs) el.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(el);
+  return el;
+}
+function txt(parent, x, y, s, attrs = {}) {
+  const t = svgEl("text", { x, y, ...attrs }, parent);
+  t.textContent = s;
+  return t;
+}
+/* Column path: square at the baseline, 4px rounded data end */
+function colPath(x, yTop, w, yBase) {
+  const r = Math.min(4, w / 2, Math.max(0, yBase - yTop));
+  return `M${x},${yBase} L${x},${yTop + r} Q${x},${yTop} ${x + r},${yTop} L${x + w - r},${yTop} Q${x + w},${yTop} ${x + w},${yTop + r} L${x + w},${yBase} Z`;
+}
+
+/* Header */
+$("generated").textContent = DATA.generated;
+$("trained").textContent = `Model trained ${DATA.model.trained}`;
+
+/* Slate */
+(function renderSlate() {
+  const s = DATA.slate;
+  if (!s) { $("slate-meta").textContent = "No official predictions yet."; return; }
+  const finals = s.games.filter((g) => g.final);
+  const hits = finals.filter((g) => g.correct).length;
+  $("slate-meta").innerHTML =
+    `<span><b>${esc(fmtDate(s.date))}</b> · ${s.games.length} games · locked ${esc(s.made_at)}</span>` +
+    (finals.length ? `<span>${hits} of ${finals.length} final games picked correctly</span>` : `<span>Results appear here once games are final.</span>`);
+  $("games").innerHTML = s.games.map((g) => {
+    const homeFav = g.ph > g.pa;
+    const favP = homeFav ? g.hwp : 1 - g.hwp;
+    const row = (side) => {
+      const isHome = side === "home";
+      const fav = isHome === homeFav;
+      return `<div class="row ${fav ? "fav" : ""}">
+        <span class="abbr">${esc(isHome ? g.home : g.away)}</span>
+        <span class="name">${esc(isHome ? g.home_name : g.away_name)}${isHome ? " · home" : ""}</span>
+        <span class="pred">${isHome ? g.ph : g.pa}</span>
+        <span class="actual" title="Final score">${g.final ? (isHome ? g.ah : g.aa) : ""}</span>
+      </div>`;
+    };
+    const status = g.final ? (g.correct ? `<span class="pill hit">Hit</span>` : `<span class="pill miss">Miss</span>`) : `<span class="pill pending">Pending</span>`;
+    let market = "";
+    if (g.vegas_spread != null) {
+      const fav = g.vegas_spread <= 0 ? g.home : g.away;
+      const pts = Math.abs(g.vegas_spread);
+      market = `Market: ${esc(fav)} −${pts}${g.vegas_total ? ` · O/U ${g.vegas_total}` : ""} <span title="Shown for comparison. Not used by the model.">(not used)</span>`;
+    }
+    const factors = g.factors.length ? `<ul class="factors">${g.factors.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>` : "";
+    const awayShare = Math.round((1 - g.hwp) * 100), homeShare = 100 - awayShare;
+    return `<article class="game" aria-label="${esc(g.away)} at ${esc(g.home)}">
+      ${row("away")}${row("home")}
+      <div class="wp">
+        <div class="wp-bar" aria-hidden="true">
+          <span class="${homeFav ? "dog" : "fav"}" style="flex:${awayShare}"></span>
+          <span class="${homeFav ? "fav" : "dog"}" style="flex:${homeShare}"></span>
+        </div>
+        <div class="wp-labels"><span class="num">${esc(g.away)} ${awayShare}%</span><span class="num">${homeShare}% ${esc(g.home)}</span></div>
+      </div>
+      ${factors}
+      <div class="foot"><span class="market">${market || "No market line stored"}</span>${g.playoff ? `<span class="pill po">Playoffs</span>` : ""}${status}</div>
+    </article>`;
+  }).join("");
+})();
+
+/* KPIs */
+(function renderKpis() {
+  const b = DATA.backtest.all, live = DATA.live.by_season[0];
+  const k = [
+    { label: "Winners picked, walk-forward", value: `${b.win}<small>%</small>`, note: `${b.n.toLocaleString()} games · always picking home: ${b.home_win}%` },
+    { label: "Margin miss", value: `${b.margin_mae.toFixed(1)}<small> pts</small>`, note: "average, predicted vs final margin" },
+    { label: "Team score miss", value: `${b.team_mae.toFixed(1)}<small> pts</small>`, note: "average, per team" },
+    { label: "Brier score", value: `${b.brier.toFixed(3)}`, note: "win probability error, lower is better (0.25 = coin flip)" },
+    live ? { label: `Live record, ${live.season}`, value: `${live.wins}–${live.n - live.wins}`, note: `${pct(100 * live.wins / live.n, 0)} · pre-game picks only` } : null,
+  ].filter(Boolean);
+  $("kpis").innerHTML = k.map((x) => `<div class="kpi"><span class="label">${x.label}</span><span class="value">${x.value}</span><span class="note">${x.note}</span></div>`).join("");
+})();
+
+/* Live record */
+(function renderLive() {
+  const L = DATA.live;
+  $("record-chips").innerHTML = L.by_season.map((s, i) => `<div class="chip">
+      <span class="eyebrow">${esc(s.season)}${i > 0 ? " · earlier model" : ""}</span>
+      <span class="big num">${s.wins}–${s.n - s.wins}</span>
+      <span class="small">${pct(100 * s.wins / s.n, 0)} winners · ${s.margin_mae.toFixed(1)} pt margin miss</span></div>`).join("");
+  $("live-rows").innerHTML = L.games.map((g) => {
+    const winnerPred = g.ph > g.pa ? g.home : g.away;
+    const conf = g.hwp == null ? "–" : pct(100 * Math.max(g.hwp, 1 - g.hwp), 0);
+    return `<tr>
+      <td class="num">${esc(shortDate(g.date))}</td>
+      <td>${esc(g.away)} @ ${esc(g.home)}${g.playoff ? ` <span class="pill po">PO</span>` : ""}</td>
+      <td class="r num">${g.pa}–${g.ph}</td>
+      <td class="r num">${g.aa}–${g.ah}</td>
+      <td class="r num">${esc(winnerPred)} ${conf}</td>
+      <td>${g.correct ? `<span class="pill hit">Hit</span>` : `<span class="pill miss">Miss</span>`}</td></tr>`;
+  }).join("");
+})();
+
+/* Backtest: dot plot by season */
+(function renderSeasons() {
+  const S = DATA.backtest.seasons;
+  $("bt-n").textContent = DATA.backtest.all.n.toLocaleString();
+  const svg = $("chart-seasons");
+  const W = 560, H = 300, m = { l: 40, r: 12, t: 12, b: 34 };
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  const vals = S.flatMap((s) => [s.regular.win, s.playoffs.win, s.all.home_win]);
+  const lo = Math.floor(Math.min(...vals) / 5) * 5, hi = Math.ceil(Math.max(...vals) / 5) * 5;
+  const y = (v) => m.t + (H - m.t - m.b) * (1 - (v - lo) / (hi - lo));
+  for (let v = lo; v <= hi; v += 5) {
+    svgEl("line", { x1: m.l, x2: W - m.r, y1: y(v), y2: y(v), class: "grid" }, svg);
+    txt(svg, m.l - 8, y(v) + 4, `${v}%`, { "text-anchor": "end" });
+  }
+  const band = (W - m.l - m.r) / S.length;
+  S.forEach((s, i) => {
+    const cx = m.l + band * (i + 0.5);
+    txt(svg, cx, H - 10, s.season, { "text-anchor": "middle", class: "axis-label" });
+    const base = s.all.home_win;
+    const ref = svgEl("line", { x1: cx - 34, x2: cx + 34, y1: y(base), y2: y(base), class: "ref", "stroke-linecap": "round" }, svg);
+    const pts = [
+      { v: s.regular.win, c: "var(--model)", dx: -12, lab: "Regular season", d: s.regular },
+      { v: s.playoffs.win, c: "var(--playoff)", dx: 12, lab: "Playoffs", d: s.playoffs },
+    ];
+    pts.forEach((p) => {
+      const g = svgEl("g", {}, svg);
+      svgEl("circle", { cx: cx + p.dx, cy: y(p.v), r: 14, fill: "transparent" }, g);
+      svgEl("circle", { cx: cx + p.dx, cy: y(p.v), r: 6, fill: p.c, stroke: "var(--surface)", "stroke-width": 2 }, g);
+      bindTip(g, `<b>${s.season} · ${p.lab}</b><br>${pct(p.v)} winners of ${p.d.n.toLocaleString()} games<br>Margin miss ${p.d.margin_mae} pts`);
+    });
+    if (i === S.length - 1) {
+      txt(svg, cx + 22, y(s.regular.win) + 4, pct(s.regular.win), { fill: "var(--ink)" }).style.fill = "var(--ink)";
+    }
+    const rg = svgEl("g", {}, svg);
+    svgEl("rect", { x: cx - 36, y: y(base) - 6, width: 72, height: 12, fill: "transparent" }, rg);
+    bindTip(rg, `<b>${s.season}</b><br>Always picking the home team: ${pct(base)}`);
+  });
+
+  $("season-rows").innerHTML = S.map((s) => `
+    <tr><td><b>${esc(s.season)}</b></td><td class="r num">${s.all.n.toLocaleString()}</td><td class="r num">${pct(s.all.win)}</td><td class="r num">${s.all.margin_mae.toFixed(1)}</td><td class="r num">${s.all.brier.toFixed(3)}</td></tr>
+    <tr class="sub-row"><td>Playoffs</td><td class="r num">${s.playoffs.n}</td><td class="r num">${pct(s.playoffs.win)}</td><td class="r num">${s.playoffs.margin_mae.toFixed(1)}</td><td class="r num">${s.playoffs.brier.toFixed(3)}</td></tr>`).join("") +
+    `<tr><td><b>All</b></td><td class="r num"><b>${DATA.backtest.all.n.toLocaleString()}</b></td><td class="r num"><b>${pct(DATA.backtest.all.win)}</b></td><td class="r num"><b>${DATA.backtest.all.margin_mae.toFixed(1)}</b></td><td class="r num"><b>${DATA.backtest.all.brier.toFixed(3)}</b></td></tr>`;
+  const first = S[0], last = S[S.length - 1];
+  $("bt-callout").textContent = `Accuracy climbs as the model gets more history to learn from: ${pct(first.all.win)} in ${first.season} (one season of training) to ${pct(last.all.win)} in ${last.season} (four). Playoffs are the hardest games to call every year.`;
+})();
+
+/* Calibration */
+(function renderCalib() {
+  const C = DATA.backtest.calibration;
+  const svg = $("chart-calib");
+  const W = 440, H = 320, m = { l: 44, r: 14, t: 12, b: 40 };
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  const lo = 50, hi = 90;
+  const x = (v) => m.l + (W - m.l - m.r) * (v - lo) / (hi - lo);
+  const y = (v) => m.t + (H - m.t - m.b) * (1 - (v - lo) / (hi - lo));
+  for (let v = lo; v <= hi; v += 10) {
+    svgEl("line", { x1: m.l, x2: W - m.r, y1: y(v), y2: y(v), class: "grid" }, svg);
+    txt(svg, m.l - 8, y(v) + 4, `${v}%`, { "text-anchor": "end" });
+    txt(svg, x(v), H - m.b + 18, `${v}%`, { "text-anchor": "middle" });
+  }
+  txt(svg, (m.l + W - m.r) / 2, H - 4, "Model's confidence in its pick", { "text-anchor": "middle", class: "axis-label" });
+  svgEl("line", { x1: x(lo), y1: y(lo), x2: x(hi), y2: y(hi), class: "ref", "stroke-dasharray": "0" }, svg);
+  txt(svg, x(hi) - 4, y(hi) + 16, "perfectly honest", { "text-anchor": "end" });
+  const path = C.map((c, i) => `${i ? "L" : "M"}${x(c.predicted)},${y(c.actual)}`).join(" ");
+  svgEl("path", { d: path, fill: "none", stroke: "var(--model)", "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round", opacity: 0.5 }, svg);
+  C.forEach((c) => {
+    const g = svgEl("g", {}, svg);
+    svgEl("circle", { cx: x(c.predicted), cy: y(c.actual), r: 14, fill: "transparent" }, g);
+    svgEl("circle", { cx: x(c.predicted), cy: y(c.actual), r: 5, fill: "var(--model)", stroke: "var(--surface)", "stroke-width": 2 }, g);
+    const range = c.hi >= 1 ? `${Math.round(c.lo * 100)}%+` : `${Math.round(c.lo * 100)}–${Math.round(c.hi * 100)}%`;
+    bindTip(g, `<b>Picks at ${range} confidence</b><br>Model said ${pct(c.predicted)} on average<br>They won ${pct(c.actual)} · ${c.n.toLocaleString()} games`);
+  });
+})();
+
+/* Team score miss histogram */
+(function renderMiss() {
+  const B = DATA.backtest;
+  $("miss-note").textContent = `Typical miss ${B.miss_median} points. ${B.within5}% of team scores land within 5, ${B.within10}% within 10. Both teams in all ${B.all.n.toLocaleString()} games.`;
+  const H_ = B.miss_hist, total = H_.reduce((a, b) => a + b.n, 0);
+  const svg = $("chart-miss");
+  const W = 440, H = 320, m = { l: 40, r: 10, t: 12, b: 40 };
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  const maxP = Math.ceil(Math.max(...H_.map((h) => 100 * h.n / total)) / 2) * 2;
+  const y = (p) => m.t + (H - m.t - m.b) * (1 - p / maxP);
+  for (let p = 0; p <= maxP; p += 2) {
+    svgEl("line", { x1: m.l, x2: W - m.r, y1: y(p), y2: y(p), class: "grid" }, svg);
+    txt(svg, m.l - 8, y(p) + 4, `${p}%`, { "text-anchor": "end" });
+  }
+  const band = (W - m.l - m.r) / H_.length;
+  const bw = Math.min(24, band - 2);
+  H_.forEach((h, i) => {
+    const p = 100 * h.n / total, x0 = m.l + band * i + (band - bw) / 2;
+    const g = svgEl("g", {}, svg);
+    svgEl("rect", { x: m.l + band * i, y: m.t, width: band, height: H - m.t - m.b, fill: "transparent" }, g);
+    svgEl("path", { d: colPath(x0, y(p), bw, y(0)), fill: "var(--model)" }, g);
+    const lab = h.hi == null ? `${h.lo}+ points` : `${h.lo}–${h.hi - 1} points`;
+    bindTip(g, `<b>Missed by ${lab}</b><br>${pct(p)} of team scores · ${h.n.toLocaleString()}`);
+    if (i % 3 === 0) txt(svg, m.l + band * i + band / 2, H - m.b + 18, h.hi == null ? `${h.lo}+` : `${h.lo}`, { "text-anchor": "middle" });
+  });
+  txt(svg, (m.l + W - m.r) / 2, H - 4, "Points missed on a team's final score", { "text-anchor": "middle", class: "axis-label" });
+
+  const E = B.exact;
+  $("exact-note").textContent = `${E.length} times in ${B.all.n.toLocaleString()} games, about 1 in ${Math.round(B.all.n / Math.max(E.length, 1))}. Roughly what luck alone predicts for a model this accurate.`;
+  $("exact-rows").innerHTML = E.map((g) => {
+    const homeWon = g.ah > g.aa;
+    const line = homeWon ? `${g.home} ${g.ah}–${g.aa}` : `${g.away} ${g.aa}–${g.ah}`;
+    return `<tr><td class="num">${esc(fmtDate(g.date))}</td><td>${esc(g.away)} @ ${esc(g.home)}</td><td class="r num">${esc(line)}</td><td>${g.playoff ? `<span class="pill po">Playoffs</span>` : ""}</td></tr>`;
+  }).join("");
+})();
+
+/* Features */
+(function renderFeatures() {
+  const M = DATA.model;
+  $("n-features").textContent = M.n_features;
+  const max = Math.max(...M.groups.flatMap((g) => g.features.map((f) => f.share)));
+  $("features").innerHTML = M.groups.map((g) => `
+    <div class="feat-group">
+      <h4><span>${esc(g.group)}</span><span class="num">${g.share.toFixed(1)}%</span></h4>
+      ${g.features.slice().sort((a, b) => b.share - a.share).map((f) => `
+        <div class="bar-row"><span>${esc(f.name)}</span><span class="track"><span style="width:${(100 * f.share / max).toFixed(1)}%"></span></span><span class="num">${f.share.toFixed(1)}%</span></div>`).join("")}
+    </div>`).join("");
+  $("coverage-rows").innerHTML = DATA.coverage.filter((c) => c.games > 0).map((c) =>
+    `<tr><td>${esc(c.season)}</td><td class="r num">${c.games.toLocaleString()}</td><td class="r num">${c.box.toLocaleString()}</td><td class="r num">${c.reports} days</td></tr>`).join("");
+})();
+
+/* Active nav link */
+(function navSpy() {
+  const links = [...document.querySelectorAll("nav.sections a")];
+  const map = new Map(links.map((a) => [a.getAttribute("href").slice(1), a]));
+  const obs = new IntersectionObserver((entries) => {
+    entries.forEach((e) => {
+      if (e.isIntersecting) { links.forEach((a) => a.classList.remove("active")); map.get(e.target.id)?.classList.add("active"); }
+    });
+  }, { rootMargin: "-40% 0px -55% 0px" });
+  map.forEach((_, id) => { const el = document.getElementById(id); if (el) obs.observe(el); });
+})();
+</script>
+
+</body>
+</html>

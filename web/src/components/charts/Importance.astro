@@ -1,0 +1,41 @@
+---
+// Average absolute contribution to the projected margin, by input group and by
+// input, over every forecast with a verified explanation (TreeSHAP).
+import ex from "../../data/explanations.json";
+
+const groups = Object.entries(ex.group_importance).sort((a, b) => b[1] - a[1]);
+const feats = Object.entries(ex.importance).filter(([, v]) => v != null).sort((a, b) => b[1] - a[1]).slice(0, 8);
+const max = Math.max(...groups.map(([, v]) => v));
+const W = 560, rowH = 26, L = 190, R = 60;
+const x = (v) => ((W - L - R) * v) / max;
+const sections = [
+  { title: "By input group", rows: groups.map(([k, v]) => [ex.groups[k], v]) },
+  { title: "Largest single inputs", rows: feats.map(([k, v]) => [ex.meta[k].label, v]) },
+];
+---
+<div class="cols cols-2 imp" data-reveal>
+  {sections.map((s, si) => (
+    <figure class="chart">
+      <p class="chart-title">{s.title}</p>
+      <div class="chart-scroll">
+        <svg viewBox={`0 0 ${W} ${s.rows.length * rowH + 8}`} role="img" aria-label={`${s.title}: ${s.rows.map(([l, v]) => `${l} ${v.toFixed(1)}`).join(", ")} points`}>
+          {s.rows.map(([l, v], i) => (
+            <g style={`--d:${i * 60}ms`}>
+              <text x={L - 10} y={i * rowH + 18} text-anchor="end" class="lbl">{l}</text>
+              <rect x={L} y={i * rowH + 6} width={Math.max(1, x(v))} height="16" rx="2" fill="var(--model)" opacity={si ? 0.75 : 1} />
+              <text x={L + x(v) + 6} y={i * rowH + 18} class="strong">{v.toFixed(1)}</text>
+            </g>
+          ))}
+        </svg>
+      </div>
+    </figure>
+  ))}
+</div>
+<p class="note">Average size of each input's push on the projected margin, in points, across the {ex.n_verified} forecasts whose model could be verified (mostly {Object.keys(ex.stats).filter((k) => ex.stats[k].verified).join(" and ")}). Group values add up the inputs in the group, so they can exceed the largest single input.</p>
+
+<style>
+  .imp :global(svg) { min-width: 420px !important; }
+  :global(html.js) .imp rect { transform: scaleX(0); transform-box: fill-box; transform-origin: left; }
+  :global(html.js) .imp.in rect { transform: none; transition: transform 0.8s var(--ease-out) var(--d); }
+  @media (prefers-reduced-motion: reduce) { :global(html.js) .imp rect { transform: none; } }
+</style>

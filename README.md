@@ -460,6 +460,9 @@ python pipeline/run_daily.py
 # Skip model retraining (faster, uses existing pkl files)
 python pipeline/run_daily.py --skip-retrain
 
+# Only fetch/compute what today's games need (no history backfill, no retrain)
+python pipeline/run_daily.py --today-only
+
 # Only predict, skip all data fetching
 python pipeline/run_daily.py --predict-only
 ```

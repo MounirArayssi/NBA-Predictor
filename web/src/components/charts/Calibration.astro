@@ -1,0 +1,40 @@
+---
+// Reliability diagram: stated confidence in the picked team vs how often it won.
+interface Props { bins: any[] }
+const { bins } = Astro.props;
+const W = 520, H = 400, m = { l: 52, r: 16, t: 16, b: 52 };
+const lo = 50, hi = 92;
+const x = (v) => m.l + (W - m.l - m.r) * (v - lo) / (hi - lo);
+const y = (v) => m.t + (H - m.t - m.b) * (1 - (v - lo) / (hi - lo));
+const ticks = [50, 60, 70, 80, 90];
+const maxN = Math.max(...bins.map((b) => b.n));
+const r = (n) => 3 + 6 * Math.sqrt(n / maxN);
+const path = bins.map((b, i) => `${i ? "L" : "M"}${x(b.predicted).toFixed(1)},${y(b.actual).toFixed(1)}`).join(" ");
+const range = (b) => (b.hi >= 1 ? `${Math.round(b.lo * 100)}%+` : `${Math.round(b.lo * 100)}–${Math.round(b.hi * 100)}%`);
+---
+<figure class="chart">
+  <div class="chart-scroll">
+    <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-labelledby="cal-t">
+      <title id="cal-t">Calibration: forecast confidence in the picked team against the share of those picks that won</title>
+      {ticks.map((v) => (<g>
+        <line class="grid" x1={m.l} x2={W - m.r} y1={y(v)} y2={y(v)} />
+        <text x={m.l - 8} y={y(v) + 4} text-anchor="end">{v}%</text>
+        <text x={x(v)} y={H - m.b + 18} text-anchor="middle">{v}%</text>
+      </g>))}
+      <line x1={x(lo)} y1={y(lo)} x2={x(hi)} y2={y(hi)} stroke="var(--neutral-mark)" stroke-width="1.5" stroke-dasharray="4 3" />
+      <text x={x(88)} y={y(88) + 18} text-anchor="end">Perfect calibration</text>
+      <path d={path} fill="none" stroke="var(--model)" stroke-width="1.5" opacity="0.6" />
+      {bins.map((b) => (<circle cx={x(b.predicted)} cy={y(b.actual)} r={r(b.n)} fill="var(--model)" fill-opacity="0.85" stroke="var(--surface)" stroke-width="1.5" />))}
+      <text x={(m.l + W - m.r) / 2} y={H - 10} text-anchor="middle" class="lbl">Forecast confidence in the picked team</text>
+      <text transform={`translate(14 ${(m.t + H - m.b) / 2}) rotate(-90)`} text-anchor="middle" class="lbl">Share of picks that won</text>
+    </svg>
+  </div>
+  <figcaption>Dot size reflects the number of games in each confidence band. Points above the dashed line mean the favorite won more often than forecast.</figcaption>
+  <details class="data" open>
+    <summary>Calibration table</summary>
+    <table>
+      <thead><tr><th>Confidence band</th><th class="r">Games</th><th class="r">Average forecast</th><th class="r">Picks that won</th></tr></thead>
+      <tbody>{bins.map((b) => (<tr><td>{range(b)}</td><td class="r num">{b.n.toLocaleString()}</td><td class="r num">{b.predicted}%</td><td class="r num">{b.actual}%</td></tr>))}</tbody>
+    </table>
+  </details>
+</figure>

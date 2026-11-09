@@ -345,3 +345,36 @@ class PlayerRollingStats(Base):
             name='uq_player_rolling_stats'
         ),
     )
+
+class InjuryReportFetch(Base):
+    """One row per official NBA injury report PDF we tried to download."""
+    __tablename__ = "injury_report_fetches"
+
+    fetch_id     = Column(Integer, primary_key=True)
+    report_date  = Column(Date, nullable=False)       # ET date of the report
+    report_time  = Column(String(8), nullable=False)  # ET wall time, e.g. '17:30'
+    url          = Column(String(200), nullable=False, unique=True)
+    http_status  = Column(Integer)
+    n_entries    = Column(Integer)
+    fetched_at   = Column(DateTime, default=func.now())
+
+
+class InjuryReportEntry(Base):
+    """A player row from an official NBA injury report."""
+    __tablename__ = "injury_report_entries"
+
+    entry_id     = Column(Integer, primary_key=True)
+    fetch_id     = Column(Integer, ForeignKey("injury_report_fetches.fetch_id"), nullable=False)
+    game_date    = Column(Date, nullable=False)
+    matchup      = Column(String(10))
+    team_id      = Column(Integer, ForeignKey("teams.team_id"), nullable=False)
+    player_id    = Column(Integer, ForeignKey("players.player_id"))  # null if unmatched
+    player_name  = Column(String(100), nullable=False)  # 'First Last' (spaces as in players table when matched)
+    raw_name     = Column(String(100), nullable=False)  # as printed, e.g. 'ButlerIII,Jimmy'
+    status       = Column(String(20), nullable=False)   # Out/Doubtful/Questionable/Probable/Available
+    reason       = Column(String(200))
+
+    __table_args__ = (
+        UniqueConstraint('fetch_id', 'team_id', 'raw_name', 'game_date',
+                         name='uq_injury_report_entry'),
+    )

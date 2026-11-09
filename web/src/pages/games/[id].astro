@@ -1,0 +1,250 @@
+---
+import Base from "../../layouts/Base.astro";
+import GameCourt from "../../components/GameCourt.astro";
+import InsideForecast from "../../components/InsideForecast.astro";
+import ForecastMiss from "../../components/ForecastMiss.astro";
+import { teamVars } from "../../lib/teamColors.js";
+import { games, gameById, teamByAbbr, teamUrl, gameUrl, fmtLongDate, fmtShortDate, fmtTime, fmtDateTime, favorite, signed, fixed } from "../../lib/data.js";
+
+export function getStaticPaths() {
+  return games.map((g) => ({ params: { id: g.id } }));
+}
+
+const g = gameById[Astro.params.id];
+const H = teamByAbbr[g.home], A = teamByAbbr[g.away];
+const p = g.fc;
+const fav = favorite(p, g);
+const final = g.status === "final";
+const winner = final ? (g.score.h > g.score.a ? g.home : g.away) : null;
+
+// Neighbouring games for each team among the pages that exist.
+const sorted = [...games].sort((x, y) => (x.date + (x.tip || "")).localeCompare(y.date + (y.tip || "")));
+function neighbours(abbr) {
+  const list = sorted.filter((x) => x.home === abbr || x.away === abbr);
+  const i = list.findIndex((x) => x.id === g.id);
+  return { prev: list[i - 1], next: list[i + 1] };
+}
+const nb = { [g.away]: neighbours(g.away), [g.home]: neighbours(g.home) };
+
+const I = g.inputs;
+const inputRows = I ? [
+  ["Elo rating", "elo", 0, "higher"],
+  ["Season scoring margin", "season_margin", 1, "higher"],
+  ["Offensive rating, last 10", "off_rating", 1, "higher"],
+  ["Defensive rating, last 10", "def_rating", 1, "lower"],
+  ["Points per game missing (Out/Doubtful)", "missing_pts", 1, "lower"],
+  ["Rest days", "rest_days", 0, null],
+  ["Second night of a back-to-back", "back_to_back", 0, null],
+  ["Games played this season", "games_played", 0, null],
+] : [];
+const fmtIn = (k, v, d) => (v == null ? "–" : k === "back_to_back" ? (v ? "Yes" : "No") : k === "season_margin" ? signed(v, d) : Number(v).toFixed(d));
+
+// Plain factual comparisons only (no attribution of the forecast to any input).
+const notes = [];
+if (I) {
+  const e = [I.away.elo, I.home.elo];
+  if (e[0] != null && e[1] != null && Math.abs(e[0] - e[1]) >= 25) {
+    const hi = e[0] > e[1] ? A : H;
+    notes.push(`${hi.name} entered with the higher Elo rating (${Math.round(Math.max(...e))} to ${Math.round(Math.min(...e))}).`);
+  }
+  for (const [t, side] of [[A, "away"], [H, "home"]]) {
+    if ((I[side].missing_pts ?? 0) >= 10) notes.push(`${t.name} were missing ${I[side].missing_pts.toFixed(1)} points per game of rotation scoring on the injury report used for the forecast.`);
+    if (I[side].back_to_back) notes.push(`${t.name} were on the second night of a back-to-back.`);
+  }
+}
+
+const desc = p
+  ? `${A.name} at ${H.name}, ${fmtLongDate(g.date)}: forecast ${fav.abbr} ${Math.round(100 * fav.p)}% (projected ${g.away} ${Math.round(p.pa)}, ${g.home} ${Math.round(p.ph)})${final ? `; final ${g.away} ${g.score.a}, ${g.home} ${g.score.h}` : ""}.`
+  : `${A.name} at ${H.name}, ${fmtLongDate(g.date)}.`;
+---
+<Base title={`${g.away} at ${g.home}, ${fmtShortDate(g.date)}`} description={desc} section="forecasts" type="article">
+  <div class="wrap">
+    <header class="page-head">
+      <a class="back" href={`/forecasts/?date=${g.date}`}>← Forecasts for {fmtShortDate(g.date)}</a>
+      <p class="kicker">{g.season} · {g.stype} · {final ? "Final" : g.status === "scheduled" ? "Scheduled" : "Result not recorded"}</p>
+      <h1><a class="tn" href={teamUrl(g.away)}>{A.name}</a> at <a class="tn" href={teamUrl(g.home)}>{H.name}</a></h1>
+      <p class="lede">{fmtLongDate(g.date)}{g.tip ? ` · tip-off ${fmtTime(g.tip)}` : " · tip-off time not recorded"}</p>
+    </header>
+
+    {p && <GameCourt away={g.away} home={g.home} hwp={p.hwp} pa={p.pa} ph={p.ph} fa={g.score?.a} fh={g.score?.h} />}
+
+    <section class="section top" aria-labelledby="h-fc">
+      <div class="cols cols-main">
+        <div>
+          <h2 id="h-fc" class="sr-only">Forecast and result</h2>
+          <div class="table-scroll">
+            <table class="scoretable">
+              <thead><tr><th>Team</th><th class="r">Projected</th><th class="r">Final</th>{final && p && <th class="r">Difference</th>}</tr></thead>
+              <tbody>
+                {[[A, g.away, p?.pa, g.score?.a], [H, g.home, p?.ph, g.score?.h]].map(([t, abbr, proj, fin]) => (
+                  <tr class={winner === abbr ? "won" : ""}>
+                    <th scope="row"><i class="chip" style={teamVars(abbr)} aria-hidden="true"></i> <span class="ab">{abbr}</span> {t.name}{abbr === g.home ? <span class="muted"> (home)</span> : null}</th>
+                    <td class="r num proj">{proj != null ? Math.round(proj) : "–"}</td>
+                    <td class="r num">{fin ?? "–"}</td>
+                    {final && p && <td class="r num">{signed(fin - proj, 0)}</td>}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {p ? (
+            <div class="forecast">
+              <p class="big">Forecast: <strong>{teamByAbbr[fav.abbr].name}</strong> to win, <span class="num">{Math.round(100 * fav.p)}%</span> win probability, projected margin <span class="num">{Math.abs(Math.round(p.ph) - Math.round(p.pa))}</span>.</p>
+            </div>
+          ) : (
+            <p class="state">{final ? "No forecast is stored for this game." : "The forecast for this game has not been published yet."}</p>
+          )}
+        </div>
+        <aside class="meta-box" aria-label="Forecast record">
+          {p ? (
+            <dl>
+              {p.origin === "walkforward"
+                ? <><dt>Forecast type</dt><dd>Walk-forward: produced after the game by a model trained only on earlier seasons</dd></>
+                : <><dt>Forecast made</dt><dd class="num">{fmtDateTime(p.at) ?? "–"}</dd></>}
+              <dt>Scheduled tip-off</dt><dd class="num">{g.tip ? fmtDateTime(g.tip) : "Not recorded"}</dd>
+              {final && <><dt>Winner</dt><dd class={`res ${p.correct ? "ok" : "miss"}`}>{p.correct ? "✓ Correct pick" : "✗ Missed pick"}</dd></>}
+            </dl>
+          ) : <p class="note">No forecast is stored for this game.</p>}
+        </aside>
+      </div>
+    </section>
+
+    {p && <InsideForecast g={g} />}
+    {final && p && <ForecastMiss g={g} />}
+
+    {final && p && (
+      <section class="section" aria-labelledby="h-rev">
+        <h2 id="h-rev">Where the forecast differed from the result</h2>
+        <div class="table-scroll narrow">
+          <table>
+            <thead><tr><th>Measure</th><th class="r">Forecast</th><th class="r">Actual</th><th class="r">Actual − forecast</th></tr></thead>
+            <tbody>
+              <tr><td>Home margin ({g.home})</td><td class="r num">{signed(p.ph - p.pa, 0)}</td><td class="r num">{signed(g.score.h - g.score.a, 0)}</td><td class="r num">{signed(p.margin_err, 0)}</td></tr>
+              <tr><td>Total points</td><td class="r num">{Math.round(p.ph + p.pa)}</td><td class="r num">{g.score.h + g.score.a}</td><td class="r num">{signed(p.total_err, 0)}</td></tr>
+              <tr><td>{g.away} points</td><td class="r num">{Math.round(p.pa)}</td><td class="r num">{g.score.a}</td><td class="r num">{signed(p.away_err, 0)}</td></tr>
+              <tr><td>{g.home} points</td><td class="r num">{Math.round(p.ph)}</td><td class="r num">{g.score.h}</td><td class="r num">{signed(p.home_err, 0)}</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    )}
+
+    {final && g.quarters?.h && g.quarters?.a && (
+      <section class="section" aria-labelledby="h-q">
+        <h2 id="h-q">Score by quarter</h2>
+        <div class="table-scroll narrow">
+          <table>
+            <thead><tr><th>Team</th><th class="r">Q1</th><th class="r">Q2</th><th class="r">Q3</th><th class="r">Q4</th><th class="r">OT</th><th class="r">Final</th></tr></thead>
+            <tbody>
+              {[[g.away, g.quarters.a], [g.home, g.quarters.h]].map(([abbr, q]) => (
+                <tr><th scope="row">{abbr}</th>{q.q.map((v) => <td class="r num">{v}</td>)}<td class="r num">{q.total - q.q.reduce((s, v) => s + v, 0) || "–"}</td><td class="r num"><strong>{q.total}</strong></td></tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    )}
+
+    <div class="cols cols-2 lower">
+      {g.injuries && (
+        <section class="section" aria-labelledby="h-inj">
+          <h2 id="h-inj">Injury report</h2>
+          <p class="note">Official NBA injury report, {g.injuries.report} (the latest stored report before the forecast was saved). Two-way and G League assignments are omitted. The model counts players listed Out or Doubtful; Questionable players are treated as available.</p>
+          {[[A, g.injuries.away], [H, g.injuries.home]].map(([t, list]) => (
+            <div class="inj">
+              <h3>{t.name}</h3>
+              {list.length ? (
+                <ul>{list.map((e) => <li><span class="st">{e.status}</span> {e.name}{e.reason && <span class="muted"> · {e.reason}</span>}</li>)}</ul>
+              ) : <p class="muted">No players listed.</p>}
+            </div>
+          ))}
+        </section>
+      )}
+    </div>
+
+    <div class="cols cols-2 lower">
+      <section class="section" aria-labelledby="h-form">
+        <h2 id="h-form">Recent form before this game</h2>
+        {[[A, g.away, g.form.away], [H, g.home, g.form.home]].map(([t, abbr, list]) => (
+          <div class="form">
+            <h3>{t.name}</h3>
+            {list.length ? (
+              <table>
+                <thead><tr><th>Date</th><th>Opponent</th><th>Result</th></tr></thead>
+                <tbody>{list.map((r) => (
+                  <tr>
+                    <td class="num">{gameById[r.id] ? <a href={gameUrl(r.id)}>{fmtShortDate(r.date)}</a> : fmtShortDate(r.date)}</td>
+                    <td>{r.home ? "vs" : "at"} <a href={teamUrl(r.opp)}>{r.opp}</a></td>
+                    <td class="num">{r.won ? "W" : "L"} {r.pts}–{r.opp_pts}</td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            ) : <p class="muted">No earlier games in the data.</p>}
+          </div>
+        ))}
+      </section>
+
+      <section class="section" aria-labelledby="h-h2h">
+        <h2 id="h-h2h">Previous meetings</h2>
+        {g.h2h.length ? (
+          <table>
+            <thead><tr><th>Date</th><th>Matchup</th><th class="r">Score</th></tr></thead>
+            <tbody>{g.h2h.map((r) => (
+              <tr>
+                <td class="num">{gameById[r.id] ? <a href={gameUrl(r.id)}>{fmtShortDate(r.date)}</a> : fmtShortDate(r.date)}<span class="muted"> {r.season}</span></td>
+                <td>{r.away} at {r.home}</td>
+                <td class="r num">{r.away} {r.as_} – {r.hs} {r.home}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+        ) : <p class="muted">No earlier meetings since 2021-22 in the data.</p>}
+      </section>
+    </div>
+
+    <nav class="section related" aria-label="Related pages">
+      {[[A, g.away], [H, g.home]].map(([t, abbr]) => (
+        <div>
+          <p class="kicker">{t.name}</p>
+          <p><a href={teamUrl(abbr)}>Team profile</a></p>
+          {nb[abbr].prev && <p>Previous: <a href={gameUrl(nb[abbr].prev.id)}>{nb[abbr].prev.away} at {nb[abbr].prev.home}, {fmtShortDate(nb[abbr].prev.date)}</a></p>}
+          {nb[abbr].next && <p>Next: <a href={gameUrl(nb[abbr].next.id)}>{nb[abbr].next.away} at {nb[abbr].next.home}, {fmtShortDate(nb[abbr].next.date)}</a></p>}
+        </div>
+      ))}
+      <div>
+        <p class="kicker">More</p>
+        <p><a href={`/forecasts/?date=${g.date}`}>All games on {fmtShortDate(g.date)}</a></p>
+        <p><a href="/forecasts/archive/">Forecast archive</a></p>
+      </div>
+    </nav>
+  </div>
+</Base>
+
+<style>
+  .tn { color: inherit; text-decoration: none; }
+  .tn:hover { text-decoration: underline; }
+  .top { border-top: 0; padding-top: 0; }
+  .scoretable { font-size: 1.05rem; }
+  .scoretable th[scope="row"] { font-weight: 500; }
+  .scoretable .ab { font-weight: 600; display: inline-block; min-width: 3ch; }
+  .scoretable td { font-size: 1.4rem; }
+  .scoretable .proj { color: var(--model); }
+  .scoretable tr.won td:nth-child(3) { font-weight: 600; }
+  .forecast { margin-top: var(--s5); }
+  .big { font-size: 1.05rem; }
+  .meta-box { border-top: 2px solid var(--rule-heavy); padding-top: var(--s3); }
+  dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--s2) var(--s4); margin: 0 0 var(--s4); font-size: 0.9rem; }
+  dt { color: var(--muted); }
+  dd { margin: 0; }
+  .narrow { max-width: 680px; }
+  .lower > .section { border-top: 1px solid var(--rule); }
+  .facts { margin: var(--s4) 0 0; padding-left: 1.1em; color: var(--ink-2); font-size: 0.95rem; }
+  .inj + .inj, .form + .form { margin-top: var(--s5); }
+  .lower h2 + .note, .lower h2 + .form, .lower h2 + table { margin-top: var(--s2); }
+  .inj h3, .form h3 { margin-bottom: var(--s2); }
+  .inj ul { list-style: none; margin: 0; padding: 0; font-size: 0.95rem; }
+  .inj li { padding: 4px 0; border-bottom: 1px solid var(--rule); }
+  .st { display: inline-block; min-width: 9.5em; font-size: 0.75rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--ink-2); }
+  .related { display: grid; gap: var(--s5); }
+  @media (min-width: 800px) { .related { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  .related p { margin-bottom: var(--s1); font-size: 0.95rem; }
+</style>

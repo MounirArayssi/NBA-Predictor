@@ -1,0 +1,86 @@
+---
+import { TITLE, site } from "../lib/data.js";
+interface Props { section: string }
+const { section } = Astro.props;
+const links = [
+  ["home", "/", "Home"],
+  ["forecasts", "/forecasts/", "Forecasts"],
+  ["teams", "/teams/", "Teams"],
+  ["surprises", "/surprises/", "Surprises"],
+  ["performance", "/performance/", "Performance"],
+  ["notebook", "/notebook/", "Notebook"],
+  ["about", "/about/", "About"],
+];
+---
+<header class="site-header instrument">
+  <div class="wrap bar">
+    <a class="title" href="/"><svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10.5" fill="#e8773a"/><g fill="none" stroke="#080b0e" stroke-width="1.4"><circle cx="12" cy="12" r="10.5"/><path d="M12 1.5v21M1.5 12h21M5 4.6q4 7.4 0 14.8M19 4.6q-4 7.4 0 14.8"/></g></svg>{TITLE}</a>
+    <span class="season"><i class="led" aria-hidden="true"></i>{site.season} season</span>
+    <button class="menu-btn" type="button" aria-expanded="false" aria-controls="site-nav">Menu</button>
+    <nav id="site-nav" aria-label="Primary">
+      <ul>
+        {links.map(([key, href, label]) => (
+          <li><a href={href} aria-current={section === key ? "page" : undefined}>{label}</a></li>
+        ))}
+      </ul>
+    </nav>
+  </div>
+</header>
+
+<script>
+  const btn = document.querySelector(".menu-btn");
+  const nav = document.getElementById("site-nav");
+  btn?.addEventListener("click", () => {
+    const open = btn.getAttribute("aria-expanded") === "true";
+    btn.setAttribute("aria-expanded", String(!open));
+    nav?.classList.toggle("open", !open);
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && btn?.getAttribute("aria-expanded") === "true") {
+      btn.setAttribute("aria-expanded", "false");
+      nav?.classList.remove("open");
+      (btn as HTMLElement).focus();
+    }
+  });
+</script>
+
+<style>
+  .mark { width: 1.15em; height: 1.15em; vertical-align: -0.2em; margin-right: 0.4em; }
+  .site-header { background: var(--header); color: var(--header-ink); position: relative; }
+  /* A single thin trace that runs once along the header's bottom edge. */
+  .site-header::after { content: ""; position: absolute; left: 0; bottom: -1px; height: 1px; width: 100%; background: var(--accent); transform: scaleX(0); transform-origin: left; animation: trace 1.4s var(--ease-out) 0.2s forwards; opacity: 0.7; }
+  @keyframes trace { to { transform: scaleX(1); opacity: 0.35; } }
+  .led { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--led); margin-right: 8px; vertical-align: 1px; box-shadow: 0 0 6px var(--led); animation: pulse 2.8s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: 0.35; box-shadow: 0 0 2px var(--led); } }
+  @media (prefers-reduced-motion: reduce) { .site-header::after { transform: none; opacity: 0.35; } }
+  .bar { display: flex; align-items: center; gap: var(--s4); min-height: 56px; flex-wrap: wrap; }
+  .title {
+    color: var(--header-ink); text-decoration: none; font-family: var(--serif); font-weight: 600;
+    font-size: 1.25rem; letter-spacing: -0.005em;
+  }
+  .season { font-size: 0.75rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--header-muted); }
+  nav { margin-left: auto; }
+  nav ul { list-style: none; margin: 0; padding: 0; display: flex; gap: 2px; }
+  nav a {
+    display: block; padding: 18px 10px 15px; color: var(--header-muted); text-decoration: none;
+    font-size: 0.9rem; font-weight: 500; border-bottom: 3px solid transparent;
+  }
+  nav a:hover { color: var(--header-ink); }
+  nav a[aria-current="page"] { color: var(--header-ink); border-bottom-color: var(--accent); }
+  nav a:focus-visible, .title:focus-visible, .menu-btn:focus-visible { outline-color: var(--accent); }
+  .menu-btn {
+    display: none; margin-left: auto; font: inherit; font-size: 0.875rem; color: var(--header-ink);
+    background: transparent; border: 1px solid var(--rule-strong); border-radius: var(--radius); padding: 6px 12px; min-height: 40px; cursor: pointer;
+  }
+  @media (max-width: 760px) {
+    .season { display: none; }
+    :global(html.js) .menu-btn { display: inline-block; }
+    :global(html.js) nav { display: none; width: 100%; margin: 0; }
+    :global(html.js) nav.open { display: block; }
+    nav { width: 100%; }
+    nav ul { flex-direction: column; padding-bottom: var(--s2); }
+    :global(html:not(.js)) nav ul { flex-direction: row; flex-wrap: wrap; }
+    nav a { padding: 12px 0; border-bottom: 1px solid var(--rule); }
+    nav a[aria-current="page"] { border-bottom-color: var(--rule); box-shadow: inset 3px 0 0 var(--accent); padding-left: 12px; }
+  }
+</style>

@@ -1,0 +1,39 @@
+---
+// Horizontal bars for shares (0-100%). One series, labeled directly.
+interface Props { rows: { label: string; value: number; n?: number }[]; title: string; sub?: string; caption?: string; nLabel?: string; highlight?: string }
+const { rows, title, sub, caption, nLabel = "listings", highlight } = Astro.props;
+const W = 600, rowH = 34, m = { l: 118, r: 120, t: 8, b: 26 };
+const H = m.t + m.b + rowH * rows.length;
+const x = (v) => m.l + (W - m.l - m.r) * v / 100;
+const id = "br-" + title.replace(/\W+/g, "").slice(0, 20);
+---
+<figure class="chart nb-chart">
+  <p class="chart-title">{title}</p>
+  {sub && <p class="chart-sub">{sub}</p>}
+  <div class="chart-scroll">
+    <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-labelledby={id}>
+      <title id={id}>{title}</title>
+      {[0, 25, 50, 75, 100].map((v) => (<g><line class="grid" x1={x(v)} x2={x(v)} y1={m.t} y2={H - m.b} /><text x={x(v)} y={H - 8} text-anchor="middle">{v}%</text></g>))}
+      {rows.map((r, i) => {
+        const yy = m.t + rowH * i + 7, hh = rowH - 14;
+        const hl = highlight === r.label;
+        return (
+          <g>
+            <title>{`${r.label}: ${r.value}%${r.n != null ? ` of ${r.n.toLocaleString()} ${nLabel}` : ""}`}</title>
+            <rect x={0} y={yy - 7} width={W} height={rowH} fill="transparent" />
+            <text x={m.l - 10} y={yy + hh / 2 + 4} text-anchor="end" class={hl ? "strong" : "lbl"}>{r.label}</text>
+            <rect x={m.l} y={yy} width={Math.max(2, x(r.value) - m.l)} height={hh} rx="2" fill={hl ? "var(--accent)" : "var(--model)"} />
+            <text x={x(r.value) + 6} y={yy + hh / 2 + 4} class="strong">{r.value}%</text>
+            {r.n != null && <text x={W - 4} y={yy + hh / 2 + 4} text-anchor="end">{`n = ${r.n.toLocaleString()}`}</text>}
+          </g>
+        );
+      })}
+      <line class="axis" x1={m.l} x2={m.l} y1={m.t} y2={H - m.b} />
+    </svg>
+  </div>
+  {caption && <figcaption>{caption}</figcaption>}
+  <details class="data"><summary>Data table</summary>
+    <table><thead><tr><th></th><th class="r">Share</th>{rows[0]?.n != null && <th class="r">{nLabel}</th>}</tr></thead>
+      <tbody>{rows.map((r) => <tr><td>{r.label}</td><td class="r num">{r.value}%</td>{r.n != null && <td class="r num">{r.n.toLocaleString()}</td>}</tr>)}</tbody></table>
+  </details>
+</figure>

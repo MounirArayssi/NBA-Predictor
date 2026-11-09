@@ -1,0 +1,71 @@
+---
+title: "Elo plus a season-margin blend, in a lean 21-feature model"
+date: 2026-11-05
+topic: Model Development
+summary: "Replacing a 42-feature set with Elo, a blended season margin and a short list of form, rest and availability inputs improved every headline metric out of sample."
+outcome: Kept
+---
+import CodeFile from "../../components/notebook/CodeFile.astro";
+import EloPaths from "../../components/notebook/EloPaths.astro";
+import EloCalibration from "../../components/notebook/EloCalibration.astro";
+import BlendWeight from "../../components/notebook/BlendWeight.astro";
+
+## The problem with 42 features
+
+The earlier model had 42 inputs: shooting splits, free throw and rebound rates, home and road splits, scoring variance, and products of one team's offense with the other's defense. Most of them were different ways of saying the same thing, that one team is better than the other, and each one carried its own noise. Gradient boosting will happily split on noise, so a wide feature set was costing accuracy.
+
+The idea was to measure team strength once, well, and then add only the inputs that describe something strength cannot: who is missing, how rested each team is, and the state of a playoff series.
+
+## Elo: one number per team, updated after every game
+
+Elo gives each team a rating that starts at 1500. After every final game, the winner takes points from the loser. How many depends on how surprising the result was and how big the margin was. The update in the model:
+
+<CodeFile file="data/ingestion/team_strength.py" def="update" />
+
+Three details matter:
+
+- **Expected result.** `exp` is the home team's win probability implied by the rating gap, with 70 Elo points of home advantage added. An expected win moves the ratings very little. An upset moves them a lot.
+- **Margin of victory.** `mov_mult` grows with the final margin, but with diminishing returns (the 0.8 power). The `0.006 * dr_winner` term shrinks it when a heavy favorite wins big, so a strong team cannot run up its rating against weak opponents.
+- **Season carry-over.** Between seasons each rating keeps 75% of its distance from 1500 (`ELO_CARRY = 0.75`), to allow for roster turnover.
+
+Here is what that produces over a full season:
+
+<EloPaths highlight={["NYK", "SAS", "OKC", "WAS"]} />
+
+The ratings carry real information about margins. Grouping every game since 2021-22 by its pregame Elo gap shows the average home margin rising almost in a straight line with the gap:
+
+<EloCalibration />
+
+The points follow the reference line of 28 Elo points per point of margin (`ELO_PER_POINT`) closely in the middle, where most games are, and spread out a little at the extremes, where there are fewer games.
+
+## The season-margin blend
+
+Elo is slow on purpose. To give the model a faster read on the current season, each team also gets its average point margin so far. Five games in, though, that average is mostly noise, so early in the season it is blended with last season's average margin:
+
+<CodeFile file="data/ingestion/team_strength.py" def="features" />
+
+<BlendWeight games={20} />
+
+After 20 games the input is entirely this season. Before that, last season fades out in a straight line. `games_played` is also passed to the model, so it can learn how far to trust the number.
+
+## The final feature list
+
+<CodeFile file="model/train.py" from="FEATURE_COLS = [" to="]" caption="Every input the score models see. The same list is used in training, in the daily forecast and in the backtest." />
+
+## Results
+
+Two separate tests compared the 21-feature set against the 42-feature set:
+
+| Test | Metric | 42 features | 21 features |
+|---|---|---|---|
+| Walk-forward cross-validation, 3 seeds | Margin error (mean absolute) | 12.05 | 11.65 |
+| | Winners picked | 63.8% | 66.1% |
+| Held-out 2026-27 games | Margin error (mean absolute) | 12.63 | 11.64 |
+| | Winners picked | 59.5% | 61.2% |
+| | Brier score | 0.244 | 0.223 |
+
+The smaller set was better on every seed and every metric. A lower Brier score means better-calibrated win probabilities; 0.25 is what a coin flip scores.
+
+## Interpretation
+
+Once team strength is measured well, shooting splits, matchup products and scoring variance add nothing. They mostly re-describe team strength with extra noise. The inputs that survived are ones Elo cannot see: injuries, rest and series state.

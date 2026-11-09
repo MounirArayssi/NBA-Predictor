@@ -274,6 +274,12 @@ def get_team_roster(team_id, game_date=None, is_playoff=False, season=CURRENT_SE
     min_minutes = 10 if is_playoff else 15
     min_games = 3 if is_playoff else 7
 
+    # Early in the season a team may have played fewer than `min_games`, which
+    # would exclude everyone new (rookies, offseason signings). Require at least
+    # half of the team's games in the lookback window instead, capped at min_games.
+    team_games = get_team_games_in_window(team_id, game_date, season)
+    min_games = min(min_games, max(1, -(-team_games // 2)))
+
     query = text("""
         SELECT
             p.player_id,
@@ -380,8 +386,33 @@ JOIN player_rolling_stats prs5
             columns=result.keys()
         )
 
-
+    roster['team_games'] = team_games
     return roster
+
+
+def get_team_games_in_window(team_id, game_date, season):
+    """Final games the team played in the roster lookback window (same 65 days)."""
+    query = text("""
+        SELECT COUNT(DISTINCT g.game_id)
+        FROM games g
+        WHERE g.season = :season
+          AND g.is_final = TRUE
+          AND g.game_date <= :game_date
+          AND (g.home_team_id = :team_id OR g.away_team_id = :team_id)
+          AND g.game_date >= (
+                SELECT MAX(g2.game_date) - INTERVAL '65 days'
+                FROM games g2
+                WHERE g2.season = :season
+                  AND g2.is_final = TRUE
+                  AND g2.game_date <= :game_date
+          )
+    """)
+    with engine.connect() as conn:
+        return int(conn.execute(query, {
+            "team_id": int(team_id),
+            "game_date": str(game_date),
+            "season": season,
+        }).scalar() or 0)
 
 def get_injury_familiarity_factor(injured_rows, team_games=82):
     """
@@ -744,19 +775,8 @@ def predict_team_player_stats(team_id, opponent_team_id,
                 pred_ast *= 1.03
                 hot_flag = True
 
-        # Only anchor top 4 players by usage
-        player_props_filtered = (
-            player_props if player['full_name'] in top_4_names else {}
-        )
-
-        pred_pts, pred_reb, pred_ast = apply_vegas_props_anchor(
-            pred_pts,
-            pred_reb,
-            pred_ast,
-            player['full_name'],
-            player_props_filtered
-        )
-
+        # No anchoring to sportsbook player props: predictions are independent
+        # of the market so they can be compared against it.
         pred_pts = float(pred_pts)
         pred_reb = float(pred_reb)
         pred_ast = float(pred_ast)
@@ -772,7 +792,10 @@ def predict_team_player_stats(team_id, opponent_team_id,
             pred_pts = baseline_pts * 0.75 + pred_pts * 0.25
 
         recent_games = int(player.get('recent_games', 20) or 20)
-        returning_from_injury = recent_games < 7
+        # Relative to games the team has played, so early-season rosters
+        # aren't all flagged as returning from injury
+        team_games = int(player.get('team_games', 20) or 20)
+        returning_from_injury = recent_games < min(7, 0.6 * team_games)
 
         all_players.append({
             'player_id': int(player['player_id']),

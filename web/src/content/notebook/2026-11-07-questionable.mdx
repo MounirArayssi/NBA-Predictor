@@ -1,0 +1,67 @@
+---
+title: "How often does a Questionable player actually play?"
+date: 2026-11-07
+topic: Data Quality
+summary: "About half the time. Players listed Questionable on the 5:30 PM ET injury report played in 49% of cases, yet the model currently counts them as fully available."
+outcome: Open
+---
+import CodeFile from "../../components/notebook/CodeFile.astro";
+import BarRows from "../../components/notebook/BarRows.astro";
+import fig from "../../data/notebook_figures.json";
+export const Q = fig.questionable;
+export const qs = Q.status.find((s) => s.label === "Questionable");
+
+## Why it came up
+
+On November 6 a player listed Questionable was ruled out shortly before tip-off. The forecast still picked the right winner, but it raised a fair question: what does the model do with a Questionable tag?
+
+## What the model does today
+
+Only two statuses count as missing:
+
+<CodeFile file="data/ingestion/fetch_official_injuries.py" from="STATUSES = " to="UNAVAILABLE = " />
+
+<CodeFile file="model/predict.py" def="add_live_availability" caption="Live forecasts: only Out and Doubtful players are added to a team's missing points. Training uses the same rule." />
+
+So a Questionable player counts as fully available. Treating him as fully out would be just as wrong in the other direction. The real question is how often he plays.
+
+## Method
+
+Every player listing on the 5:30 PM ET official injury report since 2021-22 was matched to that night's box score. "Played" means logged minutes. Each player's scoring tier is his season points per game before that night, so the tier uses no information from the game itself.
+
+<CodeFile file="web/scripts/notebook_figures.py" section="questionable" />
+
+## Findings
+
+<BarRows
+  title="Share of listed players who played"
+  sub="By status on the 5:30 PM ET report, 2021-22 to date."
+  rows={Q.status.map((s) => ({ label: s.label, value: s.played, n: s.n }))}
+  highlight="Questionable"
+/>
+
+Questionable means about a coin flip: {qs.played}% of {qs.n.toLocaleString()} listings played. The other statuses behave as their names suggest. Doubtful players almost never play, and Probable players almost always do.
+
+<BarRows
+  title="Questionable players who played, by scoring"
+  sub="Season points per game before that night."
+  rows={Q.tier.map((s) => ({ label: s.label + " ppg", value: s.played, n: s.n }))}
+/>
+
+Stars play through a Questionable tag more often than bench players: 65% for 20-point scorers against 39% for players under 8. That matters because the missing-points input is weighted by scoring, so the players who most affect a forecast are also the most likely to play.
+
+<table>
+  <thead><tr><th>Season</th><th class="r">Questionable listings</th><th class="r">Played</th></tr></thead>
+  <tbody>{Q.season.map((s) => <tr><td>{s.label}</td><td class="r num">{s.n.toLocaleString()}</td><td class="r num">{s.played}%</td></tr>)}</tbody>
+</table>
+
+The rate is steady across seasons, between about 45% and 55%, so a single historical estimate is reasonable.
+
+## Next
+
+Two options to test against each other in walk-forward cross-validation:
+
+1. **Partial absence.** Count a Questionable player as partly missing, weighted by how often players in his scoring tier sit (about 35% for 20-point scorers, about 60% for players under 8).
+2. **Separate input.** Give the model a `questionable_pts` input next to `missing_pts` and let it learn the weight.
+
+A third idea depends on timing rather than modeling: rerun each forecast closer to tip-off, after most Questionable players have been confirmed in or out.

@@ -1,0 +1,42 @@
+---
+title: "Schedule load, travel and per-team home court"
+date: 2026-11-05
+topic: Experiments
+summary: "Games in the last four or six nights, travel distance, time zones and team-specific home-court strength were each tested and did not improve accuracy."
+outcome: Rejected
+---
+import CodeFile from "../../components/notebook/CodeFile.astro";
+
+## Hypothesis
+
+Fatigue and travel are a staple of NBA analysis: the fourth game in six nights, a West Coast trip, a team flying in from three time zones away. Some arenas, Denver and Utah in particular, are also said to give a bigger home edge than others. If any of that is real and the model does not already capture it, adding it should help.
+
+## What the model already knows
+
+Rest is already in the model, as days since each team's last game (capped at 5) plus a back-to-back flag:
+
+<CodeFile file="data/ingestion/build_features.py" def="add_rest_days" />
+
+Home advantage is already in two places: the 70-point home bonus inside the Elo gap, and the model itself, which learns home and away scores separately.
+
+## What was tested
+
+Each candidate was added on its own to the lean feature set and run through the same paired walk-forward cross-validation (three seeds) used for every feature decision:
+
+| Candidate | Definition |
+|---|---|
+| Schedule load | Games played in the previous 4 nights, and in the previous 6 nights |
+| Travel | Miles between the previous game's arena and tonight's, and time zones crossed |
+| Per-team home court | Each team's own historical home-minus-road margin, in place of one league-wide edge |
+
+## Finding
+
+None improved margin error or winners picked. The decision is recorded next to the feature list, so it is not re-tested by accident:
+
+<CodeFile file="model/train.py" from="# Lean set (2026-11-05)" to="time zones and per-team home-court strength" />
+
+The most likely reason is overlap. Heavy schedule stretches usually include a back-to-back, which the model already sees. Per-team home strength is a small number estimated from a few hundred games, so it is mostly noise.
+
+## Still open
+
+A separate question is whether the betting market overreacts to these spots even though they do not help the forecast. If the market adjusts a line two points for a fourth game in six nights and the true effect is close to zero, that would show up as a disagreement worth tracking. Testing it needs historical odds, which the project does not have yet.

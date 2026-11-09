@@ -1,0 +1,47 @@
+---
+title: "Team model only; the player model is kept for display"
+date: 2026-11-05
+topic: Model Development
+summary: "Blending summed player predictions into the game score cost correct winners in every slice tested, so official forecasts now use the team model alone."
+outcome: Kept
+---
+import CodeFile from "../../components/notebook/CodeFile.astro";
+import Dumbbell from "../../components/notebook/Dumbbell.astro";
+
+## Two ways to get a final score
+
+The project has two ways to reach a final score:
+
+- **Team model.** Two gradient-boosted regressors, one for the home score and one for the away score, trained on the 21 team-level inputs.
+- **Player model.** A separate model predicts points for each player, and the team total is the sum over the expected lineup.
+
+The published forecast used to blend the two, along with a third model that predicted the margin directly. The question was whether the blend helped.
+
+## Test
+
+Each layer was turned off in turn, and the forecasts were re-run out of sample on three slices: 116 games of 2026-27 and 411 games from February to June 2026, which split into February to April and the playoffs.
+
+<Dumbbell
+  title="Winners picked: team model alone vs the published blend"
+  aLabel="Team model only" bLabel="Published blend" diff="a-b" unit="%"
+  rows={[
+    { label: "2026-27", a: 65.5, b: 62.9 },
+    { label: "Feb–Apr", a: 75.2, b: 74.6 },
+    { label: "Playoffs", a: 59.5, b: 54.8 },
+  ]}
+  caption="The difference column is team model minus blend, in percentage points. Positive favors the team model."
+/>
+
+## Why the player model hurt
+
+Summed player predictions came out 20 to 60 points below real team totals. The likely reason is that it predicts each expected player separately, so points from players outside that lineup, garbage time and overtime are missed. Blending it in helped only when that low bias happened to cancel a bias in the team model. That is luck, not signal.
+
+## Decision
+
+Official forecasts use the team model only. The decision and the numbers live next to the switch:
+
+<CodeFile file="model/predict.py" from="# Game scores come from the team model alone" to="TEAM_MODEL_ONLY = True" />
+
+Player-level information still matters. It now enters through the availability input instead of a separate model: the points per game of rotation players listed Out or Doubtful.
+
+<CodeFile file="data/ingestion/build_features.py" def="compute_live_availability" caption="The live version of the availability input. Training uses the same rotation definition, applied to each archived injury report." />

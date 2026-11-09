@@ -1,0 +1,32 @@
+---
+// Homepage basketball: one dot per graded game, every season since 2022-23.
+import fs from "node:fs";
+import path from "node:path";
+import DotBall from "../DotBall.astro";
+
+const dir = path.resolve(process.cwd(), "public", "data");
+const files = fs.readdirSync(dir).filter((f) => /^archive-\d{4}-\d{2}\.json$/.test(f)).sort();
+const rows = files.flatMap((f) => JSON.parse(fs.readFileSync(path.join(dir, f), "utf8")))
+  .sort((a, b) => a.d.localeCompare(b.d) || a.id.localeCompare(b.id));
+const last = rows.at(-1)?.s;
+const balls = rows.map((r) => ({ ok: r.ok, g: r.s === last ? `${r.s} (in progress)` : r.s }));
+const hits = rows.filter((r) => r.ok).length;
+---
+<figure class="ball">
+  <DotBall rows={balls} label={`${hits} of ${rows.length} forecasts picked the winner.`} hint="Hover the ball to see a season." />
+  <figcaption>
+    <span class="key"><i class="dot hit"></i>{hits.toLocaleString()} winners picked</span>
+    <span class="key"><i class="dot miss"></i>{(rows.length - hits).toLocaleString()} missed</span>
+    <span class="how">Each dot is one of {rows.length.toLocaleString()} games, oldest at the center ({rows[0].s}) and spiraling out to {last}.</span>
+  </figcaption>
+</figure>
+
+<style>
+  .ball { margin: 0; display: grid; gap: var(--s2); justify-items: center; }
+  figcaption { display: flex; flex-wrap: wrap; gap: 6px 16px; justify-content: center; font-size: 0.85rem; color: var(--ink-2); max-width: 420px; text-align: center; }
+  .key { display: inline-flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 0.8rem; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .dot.hit { background: var(--ball-hit); }
+  .dot.miss { background: var(--ball-miss); }
+  .how { color: var(--muted); font-size: 0.8rem; }
+</style>

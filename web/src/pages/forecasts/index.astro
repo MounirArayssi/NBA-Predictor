@@ -1,0 +1,205 @@
+---
+import Base from "../../layouts/Base.astro";
+import GameList from "../../components/GameList.astro";
+import { site, games, teams, etDate, fmtLongDate, fmtDateTime } from "../../lib/data.js";
+
+const current = games.filter((g) => g.season === site.season).sort((a, b) => (a.date + (a.tip || "")).localeCompare(b.date + (b.tip || "")));
+const dates = [...new Set(current.map((g) => g.date))].sort();
+const byDate = Object.fromEntries(dates.map((d) => [d, current.filter((g) => g.date === d)]));
+const counts = Object.fromEntries(dates.map((d) => [d, { n: byDate[d].length, f: byDate[d].filter((g) => g.fc).length }]));
+const buildDay = etDate(new Date(site.generated_at));
+const first = dates[0], last = dates[dates.length - 1];
+---
+<Base title="Forecasts" description={`NBA game forecasts for the ${site.season} season by date: projected scores, win probabilities and final results.`} section="forecasts">
+  <div class="wrap">
+    <header class="page-head">
+      <p class="kicker accent">{site.season} season</p>
+      <h1>Forecasts</h1>
+      <p class="lede">Projected scores and win probabilities for each game. Final scores appear beside the forecast once games end; a forecast is never revised after the game.</p>
+    </header>
+
+    <div class="toolbar" id="toolbar" hidden>
+      <div class="datenav">
+        <div class="seg" role="group" aria-label="Change date">
+          <button class="btn" type="button" data-step="-7" aria-label="Previous week">« Week</button>
+          <button class="btn" type="button" data-step="-1" aria-label="Previous day">‹ Day</button>
+          <button class="btn" type="button" data-today>Today</button>
+          <button class="btn" type="button" data-step="1" aria-label="Next day">Day ›</button>
+          <button class="btn" type="button" data-step="7" aria-label="Next week">Week »</button>
+        </div>
+        <div class="field">
+          <label for="f-date">Date</label>
+          <input id="f-date" type="date" min={first} max={last} />
+        </div>
+      </div>
+      <ol class="week" id="week" aria-label="Days in the selected week"></ol>
+      <div class="controls">
+        <div class="field">
+          <span class="label" id="l-view">View</span>
+          <div class="seg" role="group" aria-labelledby="l-view">
+            <button class="btn" type="button" data-view="day" aria-pressed="true">Day</button>
+            <button class="btn" type="button" data-view="week" aria-pressed="false">Week</button>
+          </div>
+        </div>
+        <div class="field">
+          <label for="f-team">Team</label>
+          <select id="f-team">
+            <option value="">All teams</option>
+            {teams.map((t) => <option value={t.abbr}>{t.name}</option>)}
+          </select>
+        </div>
+        <div class="field">
+          <label for="f-status">Status</label>
+          <select id="f-status">
+            <option value="">All games</option>
+            <option value="scheduled">Upcoming</option>
+            <option value="final">Final</option>
+          </select>
+        </div>
+        <a class="archive-link" href="/forecasts/archive/">Search the forecast archive</a>
+      </div>
+      <p class="note">Data covers {fmtLongDate(first)} to {fmtLongDate(last)}. Exported {fmtDateTime(site.generated_at)}. Games inside that window with no forecast are marked as such; nothing is filled in after the fact.</p>
+    </div>
+
+    <p class="state" id="empty" hidden aria-live="polite"></p>
+
+    <div id="days">
+      {dates.map((d) => (
+        <section class="day" data-date={d} aria-labelledby={`h-${d}`}>
+          <div class="section-head">
+            <h2 id={`h-${d}`}>{fmtLongDate(d)}</h2>
+            <span class="meta">{counts[d].n} games · {counts[d].f ? `${counts[d].f} forecast` : "no forecasts published"}</span>
+          </div>
+          <GameList games={byDate[d]} label={`Games on ${d}`} />
+        </section>
+      ))}
+    </div>
+  </div>
+</Base>
+
+<script define:vars={{ dates, counts, first, last, buildDay }}>
+  const $ = (s) => document.querySelector(s);
+  const tz = "America/New_York";
+  const toolbar = $("#toolbar");
+  toolbar.hidden = false;
+  const etToday = () => {
+    const p = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date());
+    const g = (t) => p.find((x) => x.type === t).value;
+    return `${g("year")}-${g("month")}-${g("day")}`;
+  };
+  const addDays = (ymd, n) => { const d = new Date(ymd + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+  const fmt = (ymd, o) => new Date(ymd + "T12:00:00Z").toLocaleDateString("en-US", { timeZone: "UTC", ...o });
+  const weekStart = (ymd) => { const d = new Date(ymd + "T12:00:00Z"); const wd = (d.getUTCDay() + 6) % 7; return addDays(ymd, -wd); }; // Monday
+
+  const params = new URLSearchParams(location.search);
+  const today = etToday();
+  const nearest = (d) => dates.find((x) => x >= d) || dates[dates.length - 1];
+  const state = {
+    date: params.get("date") || (counts[today] ? today : nearest(today)),
+    view: params.get("view") === "week" ? "week" : "day",
+    team: params.get("team") || "",
+    status: params.get("status") || "",
+  };
+
+  const elDate = $("#f-date"), elTeam = $("#f-team"), elStatus = $("#f-status"), elWeek = $("#week"), elEmpty = $("#empty");
+  elTeam.value = state.team; elStatus.value = state.status;
+
+  function render() {
+    elDate.value = state.date;
+    document.querySelectorAll("[data-view]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.view === state.view)));
+    const ws = weekStart(state.date);
+    const range = state.view === "week" ? Array.from({ length: 7 }, (_, i) => addDays(ws, i)) : [state.date];
+
+    // Week strip
+    elWeek.innerHTML = "";
+    for (let i = 0; i < 7; i++) {
+      const d = addDays(ws, i), c = counts[d];
+      const li = document.createElement("li");
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "day-btn";
+      if (d === state.date) b.setAttribute("aria-current", "date");
+      if (d === today) b.classList.add("is-today");
+      b.innerHTML = `<span class="wd">${fmt(d, { weekday: "short" })}</span><span class="dd">${fmt(d, { month: "short", day: "numeric" })}</span><span class="cnt">${c ? `${c.n} game${c.n > 1 ? "s" : ""}` : "—"}</span>`;
+      b.setAttribute("aria-label", `${fmt(d, { weekday: "long", month: "long", day: "numeric" })}: ${c ? c.n + " games" : "no games in data"}`);
+      b.addEventListener("click", () => { state.date = d; update(); });
+      li.appendChild(b); elWeek.appendChild(li);
+    }
+
+    // Day sections and rows
+    let shown = 0;
+    document.querySelectorAll(".day").forEach((sec) => {
+      const inRange = range.includes(sec.dataset.date);
+      let visible = 0;
+      sec.querySelectorAll(".grow").forEach((row) => {
+        const ok = (!state.team || row.dataset.teams.split(" ").includes(state.team)) &&
+                   (!state.status || row.dataset.status === state.status);
+        row.hidden = !ok; if (ok && inRange) visible++;
+      });
+      sec.hidden = !inRange || visible === 0;
+      shown += sec.hidden ? 0 : visible;
+    });
+
+    // Honest empty states
+    let msg = "";
+    if (!shown) {
+      const label = state.view === "week" ? `the week of ${fmt(ws, { month: "long", day: "numeric" })}` : fmt(state.date, { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+      const outside = range.every((d) => d < first || d > last);
+      const anyGames = range.some((d) => counts[d]);
+      if (outside) msg = `This edition of the data has no schedule for ${label}. It covers ${fmt(first, { month: "short", day: "numeric" })} to ${fmt(last, { month: "short", day: "numeric", year: "numeric" })}.`;
+      else if (!anyGames) msg = `No NBA games are scheduled on ${label}.`;
+      else msg = `No games on ${label} match the selected filters.`;
+    }
+    elEmpty.textContent = msg; elEmpty.hidden = !msg;
+
+    document.querySelectorAll("[data-step]").forEach((b) => {
+      const target = addDays(state.date, +b.dataset.step);
+      b.disabled = (+b.dataset.step < 0 && target < addDays(first, -6)) || (+b.dataset.step > 0 && target > addDays(last, 6));
+    });
+  }
+
+  function update() {
+    const p = new URLSearchParams();
+    p.set("date", state.date);
+    if (state.view === "week") p.set("view", "week");
+    if (state.team) p.set("team", state.team);
+    if (state.status) p.set("status", state.status);
+    history.replaceState(null, "", `${location.pathname}?${p}`);
+    render();
+  }
+
+  document.querySelectorAll("[data-step]").forEach((b) => b.addEventListener("click", () => { state.date = addDays(state.date, +b.dataset.step); update(); }));
+  $("[data-today]").addEventListener("click", () => { state.date = today; update(); });
+  document.querySelectorAll("[data-view]").forEach((b) => b.addEventListener("click", () => { state.view = b.dataset.view; update(); }));
+  elDate.addEventListener("change", () => { if (elDate.value) { state.date = elDate.value; update(); } });
+  elTeam.addEventListener("change", () => { state.team = elTeam.value; update(); });
+  elStatus.addEventListener("change", () => { state.status = elStatus.value; update(); });
+  render();
+</script>
+
+<style>
+  .toolbar { border-top: 2px solid var(--rule-heavy); padding-top: var(--s4); margin-bottom: var(--s5); }
+  .datenav { display: flex; flex-wrap: wrap; gap: var(--s3) var(--s5); align-items: end; margin-bottom: var(--s4); }
+  .week { list-style: none; margin: 0 0 var(--s4); padding: 0; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
+  .week :global(.day-btn) {
+    all: unset; box-sizing: border-box; cursor: pointer; width: 100%; display: flex; flex-direction: column; gap: 1px;
+    padding: 8px 6px; border-bottom: 3px solid transparent; font-size: 0.8rem; color: var(--ink-2); min-height: 44px;
+  }
+  .week :global(.day-btn:hover) { background: var(--surface); }
+  .week :global(.day-btn:focus-visible) { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .week :global(.day-btn[aria-current="date"]) { border-bottom-color: var(--accent); color: var(--ink); background: var(--surface); }
+  .week :global(.wd) { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+  .week :global(.is-today .wd)::after { content: " · today"; color: var(--accent); }
+  .week :global(.dd) { font-weight: 600; }
+  .week :global(.cnt) { font-size: 0.72rem; color: var(--muted); }
+  .archive-link { margin-left: auto; font-size: 0.9rem; align-self: center; }
+  .day { padding-block: var(--s5) var(--s4); }
+  .day h2 { font-size: 1.3rem; }
+  .meta { font-size: 0.875rem; color: var(--muted); }
+  @media (max-width: 560px) {
+    .datenav .seg { width: 100%; }
+    .datenav .seg .btn { flex: 1; justify-content: center; padding-inline: 4px; font-size: 0.8rem; }
+    .week :global(.cnt) { display: none; }
+    .week :global(.is-today .wd)::after { content: ""; }
+    .archive-link { margin-left: 0; }
+  }
+</style>

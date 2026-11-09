@@ -1,0 +1,78 @@
+---
+// A to-scale NBA court (94 x 50 ft, 10 units per foot) with the home half
+// marked, beside what the record says about home court.
+import fs from "node:fs";
+import path from "node:path";
+
+const dir = path.resolve(process.cwd(), "public", "data");
+const rows = fs.readdirSync(dir).filter((f) => /^archive-\d{4}-\d{2}\.json$/.test(f))
+  .flatMap((f) => JSON.parse(fs.readFileSync(path.join(dir, f), "utf8")));
+const n = rows.length;
+const mean = (f) => rows.reduce((s, r) => s + f(r), 0) / n;
+const homeWin = 100 * mean((r) => (r.hs > r.as_ ? 1 : 0));
+const actual = mean((r) => r.hs - r.as_);
+const forecast = mean((r) => r.ph - r.pa);
+const favHome = 100 * mean((r) => (r.ph > r.pa ? 1 : 0));
+
+const L = 940, Wd = 500, mid = L / 2, hy = 250;
+// One half of the court, drawn for the left basket and mirrored for the right.
+const half = (flip) => {
+  const X = (x) => (flip ? L - x : x);
+  const hoop = X(52.5);
+  const arcEndX = X(140);
+  return { hoop, key: flip ? L - 190 : 0, ft: X(190), arcEndX, flip };
+};
+const sides = [half(false), half(true)];
+---
+<div class="court-wrap" data-reveal>
+  <svg viewBox={`-12 -12 ${L + 24} ${Wd + 24}`} class="court instrument" role="img" aria-labelledby="court-t">
+    <title id="court-t">Basketball court with the home half shaded</title>
+    <rect x={mid} y="0" width={mid} height={Wd} class="home-half" />
+    <rect x="0" y="0" width={L} height={Wd} class="line" pathLength="1" />
+    <line x1={mid} y1="0" x2={mid} y2={Wd} class="line" pathLength="1" />
+    <circle cx={mid} cy={hy} r="60" class="line" pathLength="1" />
+    <circle cx={mid} cy={hy} r="20" class="line" pathLength="1" />
+    {sides.map((s) => (
+      <g>
+        <rect x={s.key} y="170" width="190" height="160" class={s.flip ? "line paint" : "line"} pathLength="1" />
+        <circle cx={s.ft} cy={hy} r="60" class="line" pathLength="1" />
+        <path class="line" pathLength="1" d={`M ${s.flip ? L : 0} 30 H ${s.arcEndX} A 237.5 237.5 0 0 ${s.flip ? 0 : 1} ${s.arcEndX} 470 H ${s.flip ? L : 0}`} />
+        <path class="line" pathLength="1" d={`M ${s.hoop} ${hy - 40} A 40 40 0 0 ${s.flip ? 0 : 1} ${s.hoop} ${hy + 40}`} />
+        <line x1={s.flip ? L - 40 : 40} y1="220" x2={s.flip ? L - 40 : 40} y2="280" class="line board" pathLength="1" />
+        <circle cx={s.hoop} cy={hy} r="7.5" class="rim" pathLength="1" />
+      </g>
+    ))}
+    <text x={mid - 88} y="72" text-anchor="middle" class="side">ROAD</text>
+    <text x={mid + 88} y="72" text-anchor="middle" class="side home">HOME</text>
+  </svg>
+  <div class="court-stats figures">
+    <div class="figure"><div class="v">{homeWin.toFixed(1)}%</div><div class="l">home teams won</div><div class="d">{n.toLocaleString()} games</div></div>
+    <div class="figure"><div class="v">+{actual.toFixed(1)}<small> pts</small></div><div class="l">average home margin</div><div class="d">actual results</div></div>
+    <div class="figure"><div class="v">+{forecast.toFixed(1)}<small> pts</small></div><div class="l">average forecast margin</div><div class="d">what the model expected</div></div>
+    <div class="figure"><div class="v">{favHome.toFixed(0)}%</div><div class="l">home team favored</div><div class="d">share of forecasts</div></div>
+  </div>
+</div>
+
+<style>
+  .court-wrap { display: grid; gap: var(--s5); }
+  @media (min-width: 900px) { .court-wrap { grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); align-items: center; } }
+  .court { width: 100%; height: auto; display: block; background: var(--board); border-radius: 6px; }
+  .home-half { fill: rgba(240, 140, 79, 0.08); }
+  .line { fill: none; stroke: #6f7c86; stroke-width: 2.5; }
+  .paint { fill: rgba(240, 140, 79, 0.14); }
+  .board { stroke-width: 5; stroke: var(--ink); }
+  .rim { fill: none; stroke: var(--accent); stroke-width: 3; }
+  .side { font-family: var(--mono); font-size: 26px; letter-spacing: 0.25em; fill: var(--muted); font-weight: 500; }
+  .side.home { fill: var(--accent); }
+  .court-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  /* Lines draw themselves in, then the home half lights up. */
+  :global(html.js) .court-wrap .line, :global(html.js) .court-wrap .rim { stroke-dasharray: 1; stroke-dashoffset: 1; }
+  :global(html.js) .court-wrap .home-half, :global(html.js) .court-wrap .paint, :global(html.js) .court-wrap .side { opacity: 0; }
+  :global(html.js) .court-wrap.in .line, :global(html.js) .court-wrap.in .rim { stroke-dashoffset: 0; transition: stroke-dashoffset 1.6s var(--ease-out); }
+  :global(html.js) .court-wrap.in .home-half, :global(html.js) .court-wrap.in .paint, :global(html.js) .court-wrap.in .side { opacity: 1; transition: opacity 0.8s ease 1.1s; }
+  :global(html.js) .court-wrap.in .rim { transition-delay: 0.6s; }
+  @media (prefers-reduced-motion: reduce) {
+    :global(html.js) .court-wrap .line, :global(html.js) .court-wrap .rim { stroke-dasharray: none; stroke-dashoffset: 0; }
+    :global(html.js) .court-wrap .home-half, :global(html.js) .court-wrap .paint, :global(html.js) .court-wrap .side { opacity: 1; }
+  }
+</style>

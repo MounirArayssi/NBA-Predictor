@@ -1,0 +1,37 @@
+---
+// Every team's Elo through one season; a few teams highlighted and labeled.
+import fig from "../../data/notebook_figures.json";
+interface Props { highlight?: string[] }
+const { highlight = ["NYK", "SAS", "OKC", "WAS"] } = Astro.props;
+const { paths, season } = fig.elo;
+const W = 640, H = 340, m = { l: 48, r: 72, t: 14, b: 32 };
+const all = Object.values(paths).flat();
+const t = (d) => Date.parse(d + "T00:00:00Z");
+const t0 = Math.min(...all.map((p) => t(p[0]))), t1 = Math.max(...all.map((p) => t(p[0])));
+const lo = 1150, hi = 1850;
+const x = (d) => m.l + (W - m.l - m.r) * (t(d) - t0) / (t1 - t0);
+const y = (v) => m.t + (H - m.t - m.b) * (1 - (v - lo) / (hi - lo));
+const line = (pts) => pts.map((p, i) => `${i ? "L" : "M"}${x(p[0]).toFixed(1)} ${y(p[1]).toFixed(1)}`).join("");
+const months = [];
+for (const d = new Date(t0); +d <= t1; d.setUTCMonth(d.getUTCMonth() + 1, 1)) if (d.getUTCDate() === 1 || months.length === 0) months.push(d.toISOString().slice(0, 10));
+const colors = ["var(--accent)", "var(--model)", "var(--model)", "var(--ink-2)"];
+const dashes = [undefined, undefined, "5 3", undefined];
+const ends = highlight.map((a, i) => ({ a, i, p: paths[a].at(-1) })).sort((p, q) => q.p[1] - p.p[1]);
+let last = -99;
+ends.forEach((e) => { e.ly = Math.max(y(e.p[1]) + 4, last + 14); last = e.ly; });
+---
+<figure class="chart nb-chart">
+  <p class="chart-title">Elo rating of all 30 teams, {season}</p>
+  <p class="chart-sub">Every final game moves both teams. Grey lines are the other {Object.keys(paths).length - highlight.length} teams; 1500 is average.</p>
+  <div class="chart-scroll">
+    <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-labelledby="elo-t">
+      <title id="elo-t">Elo ratings of every team through the {season} season, regular season and playoffs</title>
+      {[1200, 1300, 1400, 1500, 1600, 1700, 1800].map((v) => (<g><line class={v === 1500 ? "axis" : "grid"} x1={m.l} x2={W - m.r} y1={y(v)} y2={y(v)} /><text x={m.l - 8} y={y(v) + 4} text-anchor="end">{v}</text></g>))}
+      {months.filter((d) => d.endsWith("-01")).map((d) => <text x={x(d)} y={H - 10} text-anchor="middle">{new Date(d + "T00:00:00Z").toLocaleString("en-US", { month: "short", timeZone: "UTC" })}</text>)}
+      {Object.entries(paths).filter(([a]) => !highlight.includes(a)).map(([a, p]) => <path d={line(p)} fill="none" stroke="var(--rule-strong)" stroke-width="1.2"><title>{`${a}: ended at ${Math.round(p.at(-1)[1])}`}</title></path>)}
+      {highlight.map((a, i) => <path d={line(paths[a])} fill="none" stroke={colors[i]} stroke-width="2.2" stroke-dasharray={dashes[i]}><title>{`${a}: ended at ${Math.round(paths[a].at(-1)[1])}`}</title></path>)}
+      {ends.map((e) => <text x={x(e.p[0]) + 6} y={e.ly} class="strong">{e.a} {Math.round(e.p[1])}</text>)}
+    </svg>
+  </div>
+  <figcaption>Ratings come from replaying every game since October 2021 through the same <code>TeamStrength</code> class the model uses. Each line ends at the team's last game, so playoff teams run longer.</figcaption>
+</figure>

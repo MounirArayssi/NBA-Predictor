@@ -1,0 +1,6 @@
+---
+// A small label naming the sample a number comes from (a season, or the full record).
+interface Props { text: string; kind?: string }
+const { text } = Astro.props;
+---
+<span class="source backtest">{text}</span>

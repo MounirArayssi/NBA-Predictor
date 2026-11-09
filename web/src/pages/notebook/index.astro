@@ -1,0 +1,74 @@
+---
+import { getCollection } from "astro:content";
+import Base from "../../layouts/Base.astro";
+import { fmtLongDate } from "../../lib/data.js";
+const entries = (await getCollection("notebook")).sort((a, b) => +b.data.date - +a.data.date || a.data.title.localeCompare(b.data.title));
+const topics = [...new Set(entries.map((e) => e.data.topic))].sort();
+---
+<Base title="Notebook" description="Research notes from building the NBA forecast model: experiments that worked, ideas that did not, and open questions." section="notebook">
+  <div class="wrap">
+    <header class="page-head read">
+      <p class="kicker accent">Research notes</p>
+      <h1>Notebook</h1>
+      <p class="lede">A working log of changes to the model and the questions behind them, including the ideas that were tested and dropped.</p>
+    </header>
+
+    <div class="controls" id="nb-controls" hidden>
+      <div class="field">
+        <label for="nb-topic">Topic</label>
+        <select id="nb-topic"><option value="">All topics</option>{topics.map((t) => <option>{t}</option>)}</select>
+      </div>
+    </div>
+
+    <ol class="entries">
+      {entries.map((e) => {
+        const d = e.data.date.toISOString().slice(0, 10);
+        return (
+          <li data-topic={e.data.topic}>
+            <div class="meta">
+              <time datetime={d}>{fmtLongDate(d)}</time>
+              <span>{e.data.topic}</span>
+              <span class={`outcome o-${e.data.outcome.toLowerCase()}`}>{e.data.outcome}</span>
+            </div>
+            <div>
+              <h2><a href={`/notebook/${e.id}/`}>{e.data.title}</a></h2>
+              <p>{e.data.summary}</p>
+            </div>
+          </li>
+        );
+      })}
+    </ol>
+  </div>
+</Base>
+
+<script>
+  const sel = document.getElementById("nb-topic") as HTMLSelectElement;
+  (document.getElementById("nb-controls") as HTMLElement).hidden = false;
+  const items = [...document.querySelectorAll<HTMLElement>(".entries li")];
+  const q = new URLSearchParams(location.search).get("topic");
+  if (q) sel.value = q;
+  const apply = () => {
+    items.forEach((li) => (li.hidden = !!sel.value && li.dataset.topic !== sel.value));
+    const u = new URL(location.href);
+    sel.value ? u.searchParams.set("topic", sel.value) : u.searchParams.delete("topic");
+    history.replaceState(null, "", u);
+  };
+  sel.addEventListener("change", apply);
+  apply();
+</script>
+
+<style>
+  .entries { list-style: none; margin: 0; padding: 0; border-top: 2px solid var(--rule-heavy); max-width: 980px; }
+  .entries li { display: grid; gap: var(--s2) var(--s6); padding: var(--s5) 0; border-bottom: 1px solid var(--rule); }
+  @media (min-width: 760px) { .entries li { grid-template-columns: 200px minmax(0, 1fr); } }
+  .meta { display: flex; flex-direction: column; gap: 2px; font-size: 0.85rem; color: var(--muted); }
+  .meta time { color: var(--ink-2); font-weight: 500; }
+  .outcome { font-size: 0.72rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+  .o-kept { color: var(--model); }
+  .o-rejected { color: var(--accent); }
+  .o-open, .o-note { color: var(--muted); }
+  h2 { font-size: 1.35rem; margin-bottom: var(--s2); }
+  h2 a { color: var(--ink); text-decoration: none; }
+  h2 a:hover { text-decoration: underline; }
+  .entries p { color: var(--ink-2); margin: 0; max-width: 68ch; }
+</style>

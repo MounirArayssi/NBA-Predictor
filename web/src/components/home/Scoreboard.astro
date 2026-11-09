@@ -1,0 +1,24 @@
+---
+// Arena-scoreboard style strip of headline counts. Every number comes from the data.
+interface Props { cells: { v: string; l: string }[] }
+const { cells } = Astro.props;
+---
+<div class="board" role="list">
+  {cells.map((c, i) => (
+    <div class="cell" role="listitem" style={`--i:${i}`}>
+      <div class="digits">{c.v}</div>
+      <div class="lab">{c.l}</div>
+    </div>
+  ))}
+</div>
+<style>
+  .board { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1px; background: #36424c; border: 1px solid #36424c; border-radius: 6px; overflow: hidden; }
+  .cell { position: relative; background-color: var(--board); padding: 18px 16px 14px; text-align: center; background-image: radial-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1.4px); background-size: 6px 6px; }
+  .digits { font-family: var(--mono); font-size: clamp(1.6rem, 3.4vw, 2.2rem); font-weight: 500; color: var(--led); letter-spacing: 0.04em; font-variant-numeric: tabular-nums; text-shadow: 0 0 12px rgba(245, 185, 76, 0.35); line-height: 1.1; }
+  .lab { margin-top: 6px; font-size: 0.72rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--header-muted); }
+  /* LED power-on: each panel flickers on in turn when the strip enters view. */
+  :global(html.js) .board .digits { opacity: 0; }
+  :global(html.js) .board.in .digits { animation: power 0.5s steps(1, end) forwards; animation-delay: calc(var(--i) * 90ms); }
+  @keyframes power { 0% { opacity: 0.25; } 30% { opacity: 0.9; } 45% { opacity: 0.4; } 60%, 100% { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { :global(html.js) .board .digits { opacity: 1; } }
+</style>

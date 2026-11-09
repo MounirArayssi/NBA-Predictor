@@ -1,0 +1,162 @@
+---
+import { getCollection } from "astro:content";
+import Base from "../layouts/Base.astro";
+import SlateBoard from "../components/home/SlateBoard.astro";
+import DataBall from "../components/home/DataBall.astro";
+import CourtHome from "../components/home/CourtHome.astro";
+import Scoreboard from "../components/home/Scoreboard.astro";
+import WeekSurprise from "../components/home/WeekSurprise.astro";
+import fs from "node:fs";
+import path from "node:path";
+import { TITLE, site, games, performance, etDate, fmtLongDate, fmtDateTime, fmtShortDate, pct100, fixed } from "../lib/data.js";
+
+const buildDay = etDate(new Date(site.generated_at));
+const current = games.filter((g) => g.season === site.season);
+const byDate = Map.groupBy ? Map.groupBy(current, (g) => g.date) : current.reduce((m, g) => m.set(g.date, [...(m.get(g.date) || []), g]), new Map());
+const dates = [...byDate.keys()].sort();
+
+// Slates embedded for the client to choose "today" in ET: the build day and the next week.
+const slateDates = dates.filter((d) => d >= buildDay).slice(0, 8);
+const defaultDate = slateDates[0] ?? null;
+
+const bt = performance.record;
+const cur = bt.seasons.find((s) => s.season === site.season);
+const board = [
+  { v: bt.all.n.toLocaleString(), l: "games graded" },
+  { v: `${bt.all.win}%`, l: "winners picked" },
+  { v: String(bt.seasons.length), l: "seasons" },
+  ...(cur ? [{ v: `${cur.all.wins}–${cur.all.n - cur.all.wins}`, l: `${site.season} record` }, { v: `${cur.all.win}%`, l: `${site.season} winners` }] : []),
+];
+const entries = (await getCollection("notebook")).sort((a, b) => +b.data.date - +a.data.date).slice(0, 3);
+---
+<Base title={TITLE} description="NBA game forecasts: projected scores and win probabilities for every game, graded against final results for every season since 2022-23, with research notes." section="home">
+  <div class="wrap">
+    <section class="opening">
+      <div class="hero-text">
+        <p class="kicker accent">NBA game forecasting</p>
+        <h1>Forecasts, results, and the numbers behind the game.</h1>
+        <p class="lede">An independent NBA prediction model. Every game gets a projected score and a win probability from a model trained only on games before it, and every forecast is graded against the final. The record covers every season since 2022-23.</p>
+        <p class="hero-links"><a class="btn primary" href="/forecasts/">Today's forecasts</a> <a class="btn" href="/performance/">How accurate is it?</a></p>
+      </div>
+      <DataBall />
+    </section>
+    <Scoreboard cells={board} />
+
+    <section class="section" aria-labelledby="h-today">
+      <div class="section-head">
+        <h2 id="h-today">Forecasts <span id="slate-label">{defaultDate ? `for ${fmtLongDate(defaultDate)}` : ""}</span></h2>
+        <a href="/forecasts/">All dates and filters</a>
+      </div>
+      <div id="stale" class="state warn" hidden></div>
+      {slateDates.length === 0 && <p class="state">No upcoming games are in this edition of the data. See the <a href="/forecasts/">forecast calendar</a>.</p>}
+      {slateDates.map((d) => {
+        const list = byDate.get(d);
+        const n = list.filter((g) => g.fc).length;
+        return (
+          <div class="slate" data-date={d} hidden={d !== defaultDate}>
+            <p class="meta">{list.length} games · {n ? `${n} with a published forecast` : "forecasts not yet published for this date"}</p>
+            <SlateBoard games={list} label={`Games on ${d}`} />
+          </div>
+        );
+      })}
+    </section>
+
+    <WeekSurprise />
+
+    <section class="section" aria-labelledby="h-perf">
+      <div class="section-head">
+        <h2 id="h-perf">How the model has done</h2>
+        <a href="/performance/">Full evaluation</a>
+      </div>
+      <div class="figures">
+        <div class="figure"><div class="v">{pct100(bt.all.win)}</div><div class="l">winners picked</div><div class="d">{bt.all.n.toLocaleString()} games, {bt.seasons[0].season} to {bt.seasons.at(-1).season}</div></div>
+        <div class="figure"><div class="v">{pct100(bt.all.home_win)}</div><div class="l">picking the home team</div><div class="d">the simple baseline</div></div>
+        <div class="figure"><div class="v">{fixed(bt.all.margin_mae)}<small> pts</small></div><div class="l">average margin miss</div></div>
+        <div class="figure"><div class="v">{fixed(bt.all.brier, 3)}</div><div class="l">Brier score</div><div class="d">0.25 = coin flip</div></div>
+        {cur && <div class="figure"><div class="v">{cur.all.wins}–{cur.all.n - cur.all.wins}</div><div class="l">{site.season} so far</div><div class="d">{cur.all.n} graded games</div></div>}
+      </div>
+      <p class="note">Each game is forecast by a model trained only on games before it.</p>
+    </section>
+
+    <section class="section" aria-labelledby="h-court">
+      <div class="section-head">
+        <h2 id="h-court">Home court, measured</h2>
+        <a href="/notebook/2026-11-06-home-court-gap/">Does it shrink against better teams?</a>
+      </div>
+      <p class="lede court-lede">Home teams win more often, and the model knows it: Elo adds 70 rating points, about 2.5 points of margin, to every home team before the score models take over.</p>
+      <CourtHome />
+    </section>
+
+    <section class="section observation" aria-labelledby="h-obs">
+      <div class="cols cols-side">
+        <div>
+          <p class="kicker">From the evaluation</p>
+          <h2 id="h-obs">The model's margins are narrower than real games</h2>
+        </div>
+        <div class="read">
+          <p>Across the {bt.all.n.toLocaleString()}-game record, predicted home margins had a standard deviation of <span class="num">{bt.pred_margin_sd}</span> points. Actual margins had <span class="num">{bt.actual_margin_sd}</span>. A forecast is an average outcome, so it should be narrower than the games themselves, but the gap means blowouts are rarely forecast as blowouts.</p>
+          <p><a href="/performance/#margins">Predicted against actual margins</a></p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="h-notes">
+      <div class="section-head">
+        <h2 id="h-notes">From the Notebook</h2>
+        <a href="/notebook/">All entries</a>
+      </div>
+      <ol class="notes">
+        {entries.map((e) => (
+          <li>
+            <p class="kicker">{e.data.topic} · <time datetime={e.data.date.toISOString().slice(0, 10)}>{fmtShortDate(e.data.date.toISOString().slice(0, 10))}</time></p>
+            <h3><a href={`/notebook/${e.id}/`}>{e.data.title}</a></h3>
+            <p>{e.data.summary}</p>
+          </li>
+        ))}
+      </ol>
+    </section>
+  </div>
+</Base>
+
+<script define:vars={{ generated: site.generated_at, slateDates }}>
+  // Show today's slate in US Eastern time (or the next date with games), and say
+  // so plainly when this edition of the data is old.
+  const tz = "America/New_York";
+  const p = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date());
+  const today = `${p.find((x) => x.type === "year").value}-${p.find((x) => x.type === "month").value}-${p.find((x) => x.type === "day").value}`;
+  const pick = slateDates.find((d) => d >= today);
+  document.querySelectorAll(".slate").forEach((el) => { el.hidden = el.dataset.date !== pick; });
+  const label = document.getElementById("slate-label");
+  if (pick && label) {
+    label.textContent = "for " + new Date(pick + "T12:00:00Z").toLocaleDateString("en-US", { timeZone: "UTC", weekday: "long", month: "long", day: "numeric", year: "numeric" });
+  }
+  const hours = (Date.now() - Date.parse(generated)) / 3.6e6;
+  const stale = document.getElementById("stale");
+  if (stale && (hours > 30 || !pick)) {
+    const when = new Date(generated).toLocaleString("en-US", { timeZone: tz, month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+    stale.textContent = `This edition of the data was exported ${when} ET. Newer forecasts and results may exist but are not shown here.`;
+    stale.hidden = false;
+  }
+</script>
+
+<style>
+  .opening { padding-block: var(--s6) var(--s6); display: grid; gap: var(--s6); align-items: center; }
+  @media (min-width: 900px) { .opening { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); } }
+  .hero-text { max-width: 640px; }
+  .hero-links { margin-top: var(--s5); display: flex; gap: var(--s3); flex-wrap: wrap; }
+  .hero-links .btn { text-decoration: none; display: inline-flex; align-items: center; }
+  .hero-links .btn.primary { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+  .hero-links .btn.primary:hover { background: var(--accent); border-color: var(--accent); }
+  .court-lede { margin-bottom: var(--s5); }
+  :global(.board) { margin-bottom: var(--s6); }
+  .opening h1 { margin: var(--s3) 0 var(--s4); font-size: clamp(2rem, 4.6vw, 3rem); }
+  .meta { font-size: 0.875rem; color: var(--muted); margin-bottom: var(--s3); }
+  .sub { margin-bottom: var(--s3); }
+  .observation h2 { margin-top: var(--s2); }
+  .notes { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s5); border-top: 2px solid var(--rule-heavy); padding-top: var(--s4); }
+  @media (min-width: 900px) { .notes { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s6); } }
+  .notes h3 { font-family: var(--serif); font-size: 1.2rem; margin: var(--s2) 0; }
+  .notes h3 a { color: var(--ink); text-decoration: none; }
+  .notes h3 a:hover { text-decoration: underline; }
+  .notes p:last-child { color: var(--ink-2); font-size: 0.95rem; }
+</style>

@@ -1,0 +1,263 @@
+---
+import Base from "../../layouts/Base.astro";
+import GameList from "../../components/GameList.astro";
+import SourceLabel from "../../components/SourceLabel.astro";
+import ExpectedWins from "../../components/charts/ExpectedWins.astro";
+import ErrorBars from "../../components/charts/ErrorBars.astro";
+import EloLadder from "../../components/EloLadder.astro";
+import DotBall from "../../components/DotBall.astro";
+import EloTrend from "../../components/EloTrend.astro";
+import ErrorHistogram from "../../components/charts/ErrorHistogram.astro";
+import LeagueMae from "../../components/charts/LeagueMae.astro";
+import SurpriseList from "../../components/SurpriseList.astro";
+import predictability from "../../data/predictability.json";
+import surprises from "../../data/surprises.json";
+import { teamVars, teamColor, contrast } from "../../lib/teamColors.js";
+import { site, teams, games, teamAnalytics, teamUrl, gameUrl, fmtShortDate, signed, fixed } from "../../lib/data.js";
+
+export function getStaticPaths() {
+  return teams.map((t) => ({ params: { slug: t.slug }, props: { team: t } }));
+}
+const { team: t } = Astro.props;
+const mine = games.filter((g) => g.season === site.season && (g.home === t.abbr || g.away === t.abbr))
+  .sort((a, b) => (a.date + (a.tip || "")).localeCompare(b.date + (b.tip || "")));
+const upcoming = mine.filter((g) => g.status === "scheduled").slice(0, 5);
+const recent = mine.filter((g) => g.status === "final").slice(-5).reverse();
+
+const sources = teamAnalytics.sources.map((s) => ({ ...s, data: teamAnalytics.teams[t.abbr]?.[s.key], league: teamAnalytics.league[s.key] }))
+  .filter((s) => s.data && s.data.metrics.n > 0);
+// Default to this season when it has games, else the latest complete one.
+const defaultKey = (sources.find((s) => s.season === site.season) ?? sources.find((s) => s.complete) ?? sources[0])?.key;
+const tc = teamColor(t.abbr);
+// Team color for lines on the light page; near-black team colors fall back to the model color.
+const chartColor = contrast(tc.light, "#1b1f22") > 2 ? tc.light : "var(--model)";
+// One dot per graded game for this team, oldest season first.
+const ballRows = [...sources].sort((a, b) => a.season.localeCompare(b.season))
+  .flatMap((s) => s.data.games.map((g) => ({ ok: g.ok, g: `${s.season}${s.complete ? "" : " (in progress)"}` })));
+const ballHits = ballRows.filter((r) => r.ok).length;
+
+// Predictability panels: every season, plus all seasons combined. Metrics come
+// from web/analytics/metrics.py via the exporter; nothing is recomputed here
+// except the cumulative wins for the combined panel's chart.
+const scopeOf = (key) => predictability.scopes.find((x) => x.key === key);
+const panels = sources.map((s) => ({ key: s.key, label: s.label, m: s.data.metrics, note: s.data.note, games: s.data.games, scope: scopeOf(`${s.season}|all`) }));
+if (sources.length > 1) {
+  const all = scopeOf("all|all");
+  let ce = 0, ca = 0;
+  const gs = [...sources].sort((a, b) => a.season.localeCompare(b.season)).flatMap((s) => s.data.games)
+    .map((g) => { ce += g.p; ca += g.won ? 1 : 0; return { ...g, ce: +ce.toFixed(2), ca }; });
+  panels.push({ key: "all", label: all.label, m: all.teams[t.abbr], note: null, games: gs, scope: all });
+}
+// Open on the largest sample (all seasons) so comparisons are stable; seasons are in the selector.
+const panelKey = panels.some((p) => p.key === "all") ? "all" : defaultKey;
+const TS = surprises.teams[t.abbr];
+const fmtCi = (ci) => (ci ? `90% interval ${ci[0].toFixed(1)} to ${ci[1].toFixed(1)}` : "too few games for an interval");
+const ordinal = (n) => { const x = ["th", "st", "nd", "rd"], v = n % 100; return n + (x[(v - 20) % 10] || x[v] || x[0]); };
+---
+<Base title={t.name} description={`${t.name}: ${site.season} record, recent form, and the model's forecast history, expected wins and forecast error for ${t.abbr}.`} section="teams">
+  <div class="wrap">
+    <a class="back top-back" href="/teams/">← All teams</a>
+    <header class="team-band" style={teamVars(t.abbr)} data-reveal>
+      <p class="kicker">{t.conference}ern Conference · {site.season}</p>
+      <h1>{t.name} <span class="hab">{t.abbr}</span></h1>
+      <div class="figures summary">
+        <div class="figure"><div class="v">{t.wins}–{t.losses}</div><div class="l">{site.season} record</div></div>
+        <div class="figure"><div class="v">{t.elo ? t.elo.elo : "–"}</div><div class="l">Elo rating</div><div class="d">{t.elo ? `with the forecast of ${fmtShortDate(t.elo.date)}` : "not available"}</div></div>
+        <div class="figure"><div class="v">{fixed(t.rolling?.ortg)}</div><div class="l">Offensive rating</div><div class="d">last 10 games</div></div>
+        <div class="figure"><div class="v">{fixed(t.rolling?.drtg)}</div><div class="l">Defensive rating</div><div class="d">last 10, lower is better</div></div>
+        <div class="figure"><div class="v">{fixed(t.rolling?.pace)}</div><div class="l">Pace</div><div class="d">possessions per game</div></div>
+      </div>
+    </header>
+
+    <section class="visuals" aria-label={`${t.abbr} in pictures`}>
+      {ballRows.length > 0 && (
+        <figure class="tball">
+          <DotBall rows={ballRows} hit={tc.ui} size={340} label={`${ballHits} of ${ballRows.length} forecasts for ${t.abbr} games picked the winner.`} hint="Hover the ball to see a season." />
+          <figcaption>Every graded {t.abbr} game, one dot each, oldest at the center. {ballHits} of {ballRows.length} forecasts picked the winner (colored dots).</figcaption>
+        </figure>
+      )}
+      {t.elo_hist?.length > 1 && (
+        <div class="trend">
+          <p class="chart-title">Elo rating, recent games</p>
+          <EloTrend hist={t.elo_hist} abbr={t.abbr} color={chartColor} />
+        </div>
+      )}
+    </section>
+    {t.elo && <div class="team-ladder"><EloLadder highlight={t.abbr} /></div>}
+
+    <div class="cols cols-2">
+      <section class="section" aria-labelledby="h-up">
+        <div class="section-head"><h2 id="h-up">Upcoming</h2><a href={`/forecasts/?team=${t.abbr}&view=week`}>Schedule</a></div>
+        {upcoming.length ? <GameList games={upcoming} showDate label={`Upcoming ${t.abbr} games`} /> : <p class="state">No upcoming games in this edition of the data.</p>}
+      </section>
+      <section class="section" aria-labelledby="h-rec">
+        <div class="section-head"><h2 id="h-rec">Recent results</h2><a href={`/forecasts/archive/?team=${t.abbr}`}>Archive</a></div>
+        {recent.length ? <GameList games={recent} showDate label={`Recent ${t.abbr} results`} /> : <p class="state">No completed games this season yet.</p>}
+      </section>
+    </div>
+
+    <section class="section" id="predictability" aria-labelledby="h-pred">
+      <div class="section-head">
+        <h2 id="h-pred">Predictability</h2>
+        <div class="field" id="src-field" hidden>
+          <label for="src">Sample</label>
+          <select id="src">
+            {panels.map((p) => <option value={p.key} selected={p.key === panelKey}>{p.label} ({p.m.n} games)</option>)}
+          </select>
+        </div>
+      </div>
+      <p class="lede pred-lede">How closely the forecasts tracked {t.abbr} games. A team can be hard for this model to forecast whether it is good or bad: misses come from the model's limits, roster changes, missing information and ordinary game-to-game variation. <a href="/teams/predictability/">Compare all 30 teams</a></p>
+
+      {panels.length === 0 && <p class="state">No graded forecasts involving {t.name} are available.</p>}
+      {panels.map((p) => {
+        const m = p.m, gs = p.games, sc = p.scope;
+        const rank = sc ? 1 + Object.values(sc.teams).filter((x: any) => x.n && x.mae < m.mae).length : null;
+        return (
+          <div class="panel" data-src={p.key} data-default={p.key === panelKey ? "1" : undefined}>
+            <h3 class="panel-title"><SourceLabel text={p.label} /></h3>
+            {m.tier === "small" && <p class="state warn">Small sample: {m.n} games. These figures are a running log, not a measurement, and no ranking is shown.</p>}
+            {m.tier === "moderate" && <p class="state">Moderate sample: {m.n} games. Comparisons with other teams are exploratory.</p>}
+            {p.note && <p class="finding">{p.note}</p>}
+            <div class="figures">
+              <div class="figure"><div class="v">{m.mae.toFixed(1)}<small> pts</small></div><div class="l">average margin miss</div><div class="d">{fmtCi(m.mae_ci)}{sc && m.tier !== "small" ? `; ${ordinal(rank)} smallest of 30` : ""}</div></div>
+              <div class="figure"><div class="v">{signed(m.bias)}</div><div class="l">average margin error</div><div class="d">+ = better than forecast; {fmtCi(m.bias_ci)}</div></div>
+              <div class="figure"><div class="v">{m.sd != null ? m.sd.toFixed(1) : "–"}<small> pts</small></div><div class="l">error variability</div><div class="d">std. deviation{sc?.league ? `; league margin miss ${sc.league.mae.toFixed(1)}` : ""}</div></div>
+              <div class="figure"><div class="v">{m.acc.toFixed(0)}%</div><div class="l">winner picked</div><div class="d">{m.n} games involving {t.abbr}</div></div>
+              <div class="figure"><div class="v">{m.act_w}<small> / {m.exp_w.toFixed(1)}</small></div><div class="l">actual / expected wins</div><div class="d">gap {signed(m.gap)}</div></div>
+              <div class="figure"><div class="v">{m.brier.toFixed(3)}</div><div class="l">Brier score</div><div class="d">0.25 = coin flip; lower is better</div></div>
+            </div>
+            {gs.length > 1 && (
+              <div class="cols cols-2 charts" style={`--team-line:${chartColor}`}>
+                <div>
+                  <p class="chart-title">Expected and actual wins</p>
+                  <ExpectedWins games={gs} abbr={t.abbr} id={`${t.abbr}-${p.key}`} />
+                </div>
+                <div>
+                  <p class="chart-title">Margin error, game by game</p>
+                  <ErrorBars games={gs} abbr={t.abbr} id={`${t.abbr}-${p.key}`} />
+                </div>
+                <div>
+                  <p class="chart-title">How the errors are spread</p>
+                  <ErrorHistogram games={gs} abbr={t.abbr} id={`${t.abbr}-${p.key}`} color={chartColor} />
+                </div>
+                {sc && (
+                  <div>
+                    <p class="chart-title">{t.abbr} against the league</p>
+                    <LeagueMae scope={sc} highlight={t.abbr} id={`${t.abbr}-${p.key}`} compact />
+                  </div>
+                )}
+              </div>
+            )}
+            <details class="data games-table">
+              <summary>All {gs.length} games in this sample</summary>
+              <div class="table-scroll">
+                <table data-sortable>
+                  <thead><tr><th>Date</th><th>Opponent</th><th class="r" data-type="num">{t.abbr} win prob.</th><th class="r" data-nosort>Projected</th><th class="r" data-nosort>Final</th><th>Pick</th><th class="r" data-type="num">Margin error</th></tr></thead>
+                  <tbody>{gs.slice().reverse().map((r) => (
+                    <tr>
+                      <td class="num" data-v={r.d}>{r.page ? <a href={gameUrl(r.id)}>{fmtShortDate(r.d)}</a> : fmtShortDate(r.d)}{r.po ? <span class="muted"> PO</span> : null}</td>
+                      <td data-v={r.opp}>{r.home ? "vs" : "at"} <a href={teamUrl(r.opp)}>{r.opp}</a></td>
+                      <td class="r num" data-v={r.p}>{Math.round(100 * r.p)}%</td>
+                      <td class="r num">{r.tp}–{r.op}</td>
+                      <td class="r num">{r.won ? "W" : "L"} {r.ts}–{r.os}</td>
+                      <td><span class={`res ${r.ok ? "ok" : "miss"}`}>{r.ok ? "✓" : "✗"}<span class="sr-only">{r.ok ? "correct" : "missed"}</span></span></td>
+                      <td class="r num" data-v={r.me}>{signed(r.me, 0)}</td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </div>
+            </details>
+          </div>
+        );
+      })}
+    </section>
+
+    {TS && (
+      <section class="section" id="surprises" aria-labelledby="h-sur">
+        <div class="section-head">
+          <h2 id="h-sur">Surprise games</h2>
+          <a href={`/surprises/?team=${t.abbr}`}>All {t.abbr} surprises</a>
+        </div>
+        <p class="note">Across every graded season. The percentage is the pregame chance the forecast gave the team that won.</p>
+        <div class="cols cols-2 sgrid">
+          <div><h3>Most unexpected {t.abbr} wins</h3><SurpriseList rows={TS.wins} label={`Most unexpected ${t.abbr} wins`} showSeason /></div>
+          <div><h3>Most unexpected {t.abbr} losses</h3><SurpriseList rows={TS.losses} label={`Most unexpected ${t.abbr} losses`} showSeason /></div>
+          <div><h3>Largest margin misses</h3><SurpriseList rows={TS.scoreline} label={`Largest margin misses in ${t.abbr} games`} showSeason /></div>
+          <div><h3>Recent results the forecast got wrong</h3><SurpriseList rows={TS.recent} label={`Recent ${t.abbr} games where the forecast favorite lost`} showSeason empty="None yet." /></div>
+        </div>
+      </section>
+    )}
+
+    <section class="section defs" aria-labelledby="h-defs">
+      <h2 id="h-defs">Definitions</h2>
+      <dl>
+        <dt>Expected wins</dt><dd>The sum of the team's pregame win probabilities over the games in the sample (home: the stored home win probability; road: one minus it).</dd>
+        <dt>Wins vs expectation</dt><dd>Actual wins minus expected wins. It describes results relative to the forecasts, not why they differed.</dd>
+        <dt>Margin error</dt><dd>The team's actual margin minus its forecast margin, in points. Positive means the team did better than forecast.</dd>
+        <dt>Error variability</dt><dd>The sample standard deviation of margin errors. Higher means the forecasts for this team's games were less consistent.</dd>
+        <dt>Winner picked</dt><dd>The share of the team's games in which the forecast winner won, whichever team that was. Teams play different mixes of close and lopsided games, so this alone is not a fair measure of how hard a team is to forecast.</dd>
+        <dt>Average margin miss</dt><dd>The mean absolute margin error. This is the headline measure of how hard a team's games were for this model to forecast.</dd>
+        <dt>Average margin error</dt><dd>The mean signed margin error. Consistently positive means the model underrated the team in this sample; negative, overrated.</dd>
+        <dt>Brier score</dt><dd>The mean squared difference between the team's pregame win probability and the result (1 for a win, 0 for a loss). It rewards confident correct forecasts and penalises confident wrong ones.</dd>
+        <dt>Intervals and samples</dt><dd>Ranges are 90% bootstrap intervals (1,000 resamples of the team's games). Under 20 games no ranking is shown; 20 to 59 games is exploratory; 60 or more is roughly a full season.</dd>
+      </dl>
+      <p class="note">More on how forecasts are made and tested: <a href="/methodology/">Methodology</a>.</p>
+    </section>
+  </div>
+</Base>
+
+<script>
+  import { enableSorting } from "../../lib/sortable.js";
+  enableSorting();
+  const sel = document.getElementById("src") as HTMLSelectElement | null;
+  const field = document.getElementById("src-field");
+  const panels = [...document.querySelectorAll<HTMLElement>(".panel")];
+  if (sel && field && panels.length > 1) {
+    field.hidden = false;
+    const fromUrl = new URLSearchParams(location.search).get("sample");
+    if (fromUrl && panels.some((p) => p.dataset.src === fromUrl)) sel.value = fromUrl;
+    const show = () => {
+      panels.forEach((p) => (p.hidden = p.dataset.src !== sel.value));
+      const u = new URL(location.href); u.searchParams.set("sample", sel.value); history.replaceState(null, "", u);
+    };
+    sel.addEventListener("change", show);
+    show();
+  }
+</script>
+
+<style>
+  .summary { margin-top: var(--s5); }
+  .top-back { margin-top: var(--s5); }
+  .team-band {
+    position: relative; margin-top: var(--s2); padding: var(--s5) var(--s5) calc(var(--s4) + 8px);
+    background: var(--tp); color: var(--tf); border-radius: 8px; overflow: hidden;
+  }
+  .team-band::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 8px; background: var(--ts); }
+  .team-band .kicker { color: inherit; opacity: 0.9; }
+  .team-band h1 { margin-top: var(--s2); font-size: clamp(2rem, 5vw, 3rem); }
+  .hab { font-family: var(--mono); font-size: 0.5em; font-weight: 500; letter-spacing: 0.06em; opacity: 0.85; vertical-align: 0.2em; }
+  .team-band .figures { border-top-color: currentColor; margin-top: var(--s5); }
+  .team-band :global(.figure) { border-bottom: 0; }
+  .team-band :global(.figure .l), .team-band :global(.figure .d), .team-band :global(.figure .v small) { color: inherit; }
+  :global(html.js) .team-band::after { transform: scaleX(0); transform-origin: left; }
+  :global(html.js) .team-band.in::after { transform: none; transition: transform 0.9s var(--ease-out) 0.2s; }
+  @media (prefers-reduced-motion: reduce) { :global(html.js) .team-band::after { transform: none; } }
+  .visuals { display: grid; gap: var(--s6); margin-top: var(--s6); align-items: center; }
+  @media (min-width: 900px) { .visuals { grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); } }
+  .tball { margin: 0; display: grid; gap: var(--s2); justify-items: center; }
+  .tball figcaption { font-size: 0.85rem; color: var(--muted); text-align: center; max-width: 360px; }
+  .charts > div:first-child :global(.chart) { --model: var(--team-line); }
+  .team-ladder { margin-top: var(--s5); }
+  .panel { margin-top: var(--s5); }
+  .panel-title { margin-bottom: var(--s3); }
+  .pred-lede { font-size: 1rem; margin-bottom: var(--s4); }
+  .finding { font-family: var(--serif); font-size: 1.15rem; max-width: 70ch; margin: var(--s2) 0 var(--s4); }
+  .sgrid h3 { margin-bottom: var(--s2); }
+  .sgrid > div { margin-bottom: var(--s5); }
+  .charts { margin-top: var(--s5); }
+  .games-table { margin-top: var(--s4); }
+  .defs dl { display: grid; gap: var(--s2) var(--s5); max-width: 900px; margin: var(--s4) 0; }
+  @media (min-width: 700px) { .defs dl { grid-template-columns: 220px minmax(0, 1fr); } }
+  .defs dt { font-weight: 600; }
+  .defs dd { margin: 0; color: var(--ink-2); }
+</style>

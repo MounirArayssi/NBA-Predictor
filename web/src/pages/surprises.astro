@@ -1,0 +1,152 @@
+---
+// Surprise Games: results furthest from the forecast. Two separate rankings:
+//   outcome surprise  = -ln(pregame probability of the team that won)   [nats]
+//   scoreline miss    = |actual home margin - forecast home margin|      [points]
+// Both are computed in web/analytics/metrics.py and stored on every archive row
+// (fields pw, su, se); this page only filters and sorts them.
+import fs from "node:fs";
+import path from "node:path";
+import Base from "../layouts/Base.astro";
+import SurpriseList from "../components/SurpriseList.astro";
+import { site, teams } from "../lib/data.js";
+
+const dir = path.resolve(process.cwd(), "public", "data");
+const all = site.seasons.flatMap((s) => JSON.parse(fs.readFileSync(path.join(dir, `archive-${s}.json`), "utf8")));
+const top = [...all].sort((a, b) => b.su - a.su).slice(0, 25);
+const slugs = Object.fromEntries(teams.map((t) => [t.abbr, t.slug]));
+const seasons = [...site.seasons].reverse();
+---
+<Base title="Surprise Games" description="The NBA results furthest from the model's forecast: winners the forecast gave the lowest chance, and the largest misses on the final margin, by season and team." section="surprises">
+  <div class="wrap">
+    <header class="page-head">
+      <p class="kicker accent">Forecast vs result</p>
+      <h1>Surprise Games</h1>
+      <p class="lede">The games that went furthest from what this model expected. "Surprising" here means surprising to this forecast, which is not perfectly calibrated, not necessarily to everyone watching.</p>
+    </header>
+
+    <div id="explorer" hidden>
+      <div class="controls">
+        <div class="field">
+          <span class="label" id="l-view">Ranking</span>
+          <div class="seg" role="group" aria-labelledby="l-view">
+            <button class="btn" type="button" data-view="outcome" aria-pressed="true">Unexpected winners</button>
+            <button class="btn" type="button" data-view="scoreline" aria-pressed="false">Margin misses</button>
+            <button class="btn" type="button" data-view="recent" aria-pressed="false">Most recent</button>
+          </div>
+        </div>
+        <div class="field">
+          <label for="s-season">Season</label>
+          <select id="s-season"><option value="">All seasons</option>{seasons.map((s) => <option value={s}>{s}</option>)}</select>
+        </div>
+        <div class="field">
+          <label for="s-team">Team</label>
+          <select id="s-team"><option value="">All teams</option>{teams.map((t) => <option value={t.abbr}>{t.name}</option>)}</select>
+        </div>
+        <div class="field">
+          <label for="s-type">Games</label>
+          <select id="s-type"><option value="">All games</option><option value="rs">Regular season</option><option value="po">Playoffs</option></select>
+        </div>
+        <div class="field"><label for="s-from">From</label><input id="s-from" type="date" /></div>
+        <div class="field"><label for="s-to">To</label><input id="s-to" type="date" /></div>
+      </div>
+      <p class="note" id="s-explain"></p>
+      <p class="summary" id="s-summary" aria-live="polite"></p>
+      <div class="table-scroll">
+        <table class="stable">
+          <thead><tr><th class="r">#</th><th>Date</th><th>Matchup</th><th>Forecast<br><span class="hint">favorite, chance, away–home</span></th><th class="r">Final<br><span class="hint">away–home</span></th><th class="r">Winner's pregame chance</th><th class="r">Margin miss</th><th class="r">Surprise</th></tr></thead>
+          <tbody id="s-body"></tbody>
+        </table>
+      </div>
+      <p><button class="btn" type="button" id="s-more" hidden>Show 50 more</button></p>
+    </div>
+
+    <div id="static">
+      <h2 class="h-static">Most unexpected winners, all seasons</h2>
+      <SurpriseList rows={top} label="Most unexpected winners, all seasons" showSeason />
+    </div>
+
+    <section class="section defs" aria-labelledby="h-defs">
+      <h2 id="h-defs">How surprise is measured</h2>
+      <dl>
+        <dt>Unexpected winners</dt><dd>Ranked by the pregame win probability the forecast gave the team that won, lowest first. The technical measure is −ln(p): 0.22 for an 80% winner, 0.69 for a coin flip, 2.30 for a 10% winner. Probabilities are bounded at 0.0001 inside the logarithm only, to keep it finite; displayed probabilities are the stored ones.</dd>
+        <dt>Margin misses</dt><dd>Ranked by the absolute difference between the forecast home margin and the final home margin, in points. A forecast of a 5-point home win followed by a 20-point home loss is a 25-point miss. This is a separate ranking: a big margin miss can still have the right winner.</dd>
+        <dt>Most recent</dt><dd>Games where the forecast favorite lost, newest first.</dd>
+        <dt>Which games</dt><dd>Every completed game with a stored forecast, one forecast per game (see <a href="/methodology/">Methodology</a>). Games not yet played are never included.</dd>
+      </dl>
+    </section>
+  </div>
+</Base>
+
+<script define:vars={{ seasons, slugs, defaultSeason: "" }}>
+  const $ = (id) => document.getElementById(id);
+  $("explorer").hidden = false;
+  $("static").hidden = true;
+  const PER = 50;
+  const cache = {};
+  const qs = new URLSearchParams(location.search);
+  const st = { view: ["outcome", "scoreline", "recent"].includes(qs.get("view")) ? qs.get("view") : "outcome",
+    season: qs.get("season") || defaultSeason, team: qs.get("team") || "", type: qs.get("type") || "",
+    from: qs.get("from") || "", to: qs.get("to") || "", shown: PER };
+  const ids = { season: "s-season", team: "s-team", type: "s-type", from: "s-from", to: "s-to" };
+  Object.entries(ids).forEach(([k, id]) => { $(id).value = st[k]; });
+  const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const fd = (ymd) => new Date(ymd + "T12:00:00Z").toLocaleDateString("en-US", { timeZone: "UTC", month: "short", day: "numeric", year: "numeric" });
+  const load = (s) => (cache[s] ??= fetch(`/data/archive-${s}.json`).then((r) => { if (!r.ok) throw new Error(s); return r.json(); }));
+  const EXPLAIN = {
+    outcome: "Ranked by the forecast's pregame chance for the team that won, lowest first.",
+    scoreline: "Ranked by how far the final margin was from the forecast margin, in points.",
+    recent: "Games where the forecast favorite lost, newest first.",
+  };
+  const team = (a) => `<a href="/teams/${esc(slugs[a])}/#predictability">${esc(a)}</a>`;
+  async function render() {
+    document.querySelectorAll("[data-view]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.view === st.view)));
+    $("s-explain").textContent = EXPLAIN[st.view];
+    let rows;
+    try {
+      $("s-summary").textContent = "Loading…";
+      rows = (await Promise.all((st.season ? [st.season] : seasons).map(load))).flat();
+    } catch (e) { $("s-summary").textContent = "The game data could not be loaded. Try reloading the page."; return; }
+    let f = rows.filter((r) => (!st.team || r.h === st.team || r.a === st.team) &&
+      (!st.type || (st.type === "po" ? r.po : !r.po)) && (!st.from || r.d >= st.from) && (!st.to || r.d <= st.to));
+    if (st.view === "recent") f = f.filter((r) => r.pw < 0.5).sort((a, b) => (b.d + b.id).localeCompare(a.d + a.id));
+    else if (st.view === "scoreline") f.sort((a, b) => b.se - a.se || b.d.localeCompare(a.d));
+    else f.sort((a, b) => b.su - a.su || b.d.localeCompare(a.d));
+    $("s-summary").innerHTML = f.length ? `<strong>${f.length.toLocaleString()}</strong> games${st.view === "recent" ? " where the forecast favorite lost" : ""}` : "No games match these filters.";
+    $("s-body").innerHTML = f.slice(0, st.shown).map((r, i) => {
+      const homeFav = r.ph > r.pa || (r.ph === r.pa && r.p >= 0.5);
+      const fav = homeFav ? r.h : r.a, fp = Math.round(100 * (homeFav ? r.p : 1 - r.p));
+      const date = r.page ? `<a href="/games/${esc(r.id)}/">${fd(r.d)}</a>` : fd(r.d);
+      const won = (a) => (r.w === a ? `<strong>${team(a)}</strong>` : team(a));
+      return `<tr>
+        <td class="r num muted">${i + 1}</td>
+        <td class="num">${date}${r.po ? ' <span class="muted">PO</span>' : ""}</td>
+        <td>${won(r.a)} at ${won(r.h)}</td>
+        <td class="num">${esc(fav)} ${fp}% <span class="muted">${r.pa}–${r.ph}</span></td>
+        <td class="r num">${r.as_}–${r.hs}</td>
+        <td class="r num pw">${Math.round(100 * r.pw)}% <span class="muted">${esc(r.w)}</span></td>
+        <td class="r num">${r.se.toFixed(0)}</td>
+        <td class="r num muted">${r.su.toFixed(2)}</td>
+      </tr>`;
+    }).join("");
+    $("s-more").hidden = f.length <= st.shown;
+    const p = new URLSearchParams();
+    if (st.view !== "outcome") p.set("view", st.view);
+    ["season", "team", "type", "from", "to"].forEach((k) => st[k] && p.set(k, st[k]));
+    history.replaceState(null, "", `${location.pathname}${p.toString() ? "?" + p : ""}`);
+  }
+  document.querySelectorAll("[data-view]").forEach((b) => b.addEventListener("click", () => { st.view = b.dataset.view; st.shown = PER; render(); }));
+  Object.entries(ids).forEach(([k, id]) => $(id).addEventListener("change", () => { st[k] = $(id).value; st.shown = PER; render(); }));
+  $("s-more").addEventListener("click", () => { st.shown += PER; render(); });
+  render();
+</script>
+
+<style>
+  .summary { font-size: 0.95rem; margin: var(--s2) 0 var(--s3); }
+  .stable .pw { font-weight: 600; color: var(--accent); white-space: nowrap; }
+  .stable td { white-space: nowrap; }
+  .h-static { margin-bottom: var(--s3); }
+  .defs dl { display: grid; gap: var(--s2) var(--s5); max-width: 960px; margin: var(--s4) 0; }
+  @media (min-width: 700px) { .defs dl { grid-template-columns: 200px minmax(0, 1fr); } }
+  .defs dt { font-weight: 600; }
+  .defs dd { margin: 0; color: var(--ink-2); }
+</style>

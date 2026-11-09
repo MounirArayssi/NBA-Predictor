@@ -1,0 +1,116 @@
+---
+// A basketball drawn from data: one dot per game, oldest at the center, spiraling
+// outward by date. Filled dots are games where the forecast winner won. Hovering
+// picks out one group (a season or sample) and reports its record. Used for the
+// whole record on the homepage and per team on team pages.
+interface Row { ok: boolean; g: string }   // g: group label (season / sample)
+interface Props { rows: Row[]; hit?: string; size?: number; hint?: string; label: string }
+const { rows, hit = "", size = 400, hint = "Hover to see a season.", label } = Astro.props;
+const bits = rows.map((r) => (r.ok ? "1" : "0")).join("");
+const groups = [];
+rows.forEach((r, i) => {
+  const s = groups.at(-1);
+  if (!s || s.label !== r.g) groups.push({ label: r.g, start: i, n: 0, ok: 0 });
+  groups.at(-1).n++; if (r.ok) groups.at(-1).ok++;
+});
+const S = 400, R = 192, c = S / 2;
+---
+<div class="dotball" style={`--size:${size}px`}>
+  <div class="ball-art instrument">
+    <canvas width={S} height={S} data-bits={bits} data-groups={JSON.stringify(groups)} data-hit={hit} aria-hidden="true"></canvas>
+    <svg viewBox={`0 0 ${S} ${S}`} class="seams" aria-hidden="true">
+      <line x1={c} y1={c - R - 3} x2={c} y2={c + R + 3} />
+      <line x1={c - R - 3} y1={c} x2={c + R + 3} y2={c} />
+      <path d={`M ${c - 128} ${c - 145} Q ${c - 55} ${c} ${c - 128} ${c + 145}`} />
+      <path d={`M ${c + 128} ${c - 145} Q ${c + 55} ${c} ${c + 128} ${c + 145}`} />
+    </svg>
+    <svg class="orbit" viewBox="0 0 100 100" aria-hidden="true">
+      <circle class="ring" cx="50" cy="50" r="46" pathLength="100" />
+      <circle class="runner" cx="50" cy="50" r="46" pathLength="100" />
+    </svg>
+    <span class="sr-only">{label}</span>
+  </div>
+  <p class="tip" role="status" aria-live="polite">{hint}</p>
+</div>
+
+<script>
+  const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  document.querySelectorAll<HTMLCanvasElement>(".dotball canvas").forEach((cv) => {
+    const box = cv.closest(".dotball")!;
+    const tip = box.querySelector(".tip")!;
+    const hint = tip.textContent;
+    const bits = cv.dataset.bits!;
+    const groups = JSON.parse(cv.dataset.groups!);
+    const N = bits.length, S = 400, R = 168, c = S / 2;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    cv.width = S * dpr; cv.height = S * dpr;
+    const ctx = cv.getContext("2d")!;
+    ctx.scale(dpr, dpr);
+    const css = getComputedStyle(cv);
+    const HIT = cv.dataset.hit || css.getPropertyValue("--ball-hit").trim() || "#e8773a";
+    const MISS = css.getPropertyValue("--ball-miss").trim() || "#3a444d";
+    const DIM = "#1b2228";
+    const golden = Math.PI * (3 - Math.sqrt(5));
+    const dotR = Math.min(7, 0.44 * R * Math.sqrt(Math.PI / N));
+    const pos = Array.from({ length: N }, (_, i) => {
+      const r = R * Math.sqrt((i + 0.5) / N), a = i * golden;
+      return [c + r * Math.cos(a), c + r * Math.sin(a)];
+    });
+    const groupOf = (i: number) => groups.findIndex((s: any) => i >= s.start && i < s.start + s.n);
+    function draw(upTo: number, focus = -1) {
+      ctx.clearRect(0, 0, S, S);
+      for (let i = 0; i < upTo; i++) {
+        const inFocus = focus < 0 || groupOf(i) === focus;
+        ctx.fillStyle = inFocus ? (bits[i] === "1" ? HIT : MISS) : DIM;
+        ctx.beginPath(); ctx.arc(pos[i][0], pos[i][1], dotR, 0, 6.2832); ctx.fill();
+      }
+    }
+    let ready = false;
+    const start = () => {
+      if (still) { draw(N); ready = true; return; }
+      const t0 = performance.now(), dur = 2200;
+      const step = (t: number) => {
+        const k = Math.min(1, (t - t0) / dur);
+        draw(Math.round(N * (1 - Math.pow(1 - k, 3))));
+        if (k < 1) requestAnimationFrame(step); else ready = true;
+      };
+      requestAnimationFrame(step);
+    };
+    if ("IntersectionObserver" in window) {
+      const io = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) { io.disconnect(); start(); } }, { threshold: 0.2 });
+      io.observe(cv);
+    } else start();
+    let cur = -1;
+    const reset = () => { if (cur !== -1) { cur = -1; if (ready) draw(N); tip.textContent = hint; } };
+    cv.addEventListener("pointermove", (e) => {
+      if (!ready) return;
+      const b = cv.getBoundingClientRect();
+      const x = ((e.clientX - b.left) / b.width) * S - c, y = ((e.clientY - b.top) / b.height) * S - c;
+      const rr = Math.hypot(x, y);
+      if (rr > R + 4) return reset();
+      const i = Math.min(N - 1, Math.floor((rr / R) ** 2 * N));
+      const s = groupOf(i);
+      if (s !== cur) {
+        cur = s; draw(N, s);
+        const d = groups[s];
+        tip.textContent = `${d.label}: ${d.ok.toLocaleString()} of ${d.n.toLocaleString()} winners picked (${((100 * d.ok) / d.n).toFixed(1)}%)`;
+      }
+    });
+    cv.addEventListener("pointerleave", reset);
+  });
+</script>
+
+<style>
+  .dotball { display: grid; justify-items: center; gap: var(--s2); width: 100%; }
+  .ball-art { position: relative; width: min(100%, var(--size)); aspect-ratio: 1; border-radius: 10px; overflow: hidden; }
+  .ball-art.instrument { background-image: radial-gradient(rgba(255, 255, 255, 0.045) 1px, transparent 1.4px); background-size: 6px 6px; }
+  canvas, .seams, .orbit { position: absolute; inset: 0; width: 100%; height: 100%; }
+  canvas { cursor: crosshair; touch-action: pan-y; }
+  .seams { pointer-events: none; fill: none; stroke: var(--board); stroke-width: 3; stroke-linecap: round; transform: scale(0.875); transform-origin: center; }
+  .orbit { pointer-events: none; }
+  .orbit circle { fill: none; }
+  .ring { stroke: var(--rule-strong); stroke-width: 0.3; stroke-dasharray: 0.6 1.4; animation: orbit 90s linear infinite; }
+  .runner { stroke: var(--accent); stroke-width: 1.5; stroke-linecap: round; stroke-dasharray: 0.01 99.99; animation: orbit 16s linear infinite; filter: drop-shadow(0 0 3px var(--accent)); }
+  @keyframes orbit { to { stroke-dashoffset: -100; } }
+  .tip { margin: 0; min-height: 1.4em; font-family: var(--mono); font-size: 0.78rem; color: var(--ink-2); text-align: center; }
+</style>

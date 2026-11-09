@@ -1,0 +1,216 @@
+---
+import Base from "../layouts/Base.astro";
+import SourceLabel from "../components/SourceLabel.astro";
+import SeasonDots from "../components/charts/SeasonDots.astro";
+import Calibration from "../components/charts/Calibration.astro";
+import Histogram from "../components/charts/Histogram.astro";
+import MarginBuckets from "../components/charts/MarginBuckets.astro";
+import SeasonRibbons from "../components/charts/SeasonRibbons.astro";
+import SeasonSoFar from "../components/charts/SeasonSoFar.astro";
+import Importance from "../components/charts/Importance.astro";
+import surprises from "../data/surprises.json";
+import { performance as P, site, fmtShortDate, fixed, pct100 } from "../lib/data.js";
+const B = P.record, M = P.market;
+const ctx = [
+  ["By predicted margin", B.by_margin.map((r) => ({ ...r, label: `Favored by ${r.label}` }))],
+  ["By which side was favored", B.by_favorite],
+  ["Regular season and playoffs", B.by_type],
+];
+---
+<Base title="Performance" description="How accurate the NBA forecast model is: more than 5,000 graded games with season-by-season accuracy, calibration and error distributions." section="performance">
+  <div class="wrap">
+    <header class="page-head">
+      <p class="kicker accent">Model evaluation</p>
+      <h1>Performance</h1>
+      <p class="lede">One record: every graded game since 2022-23, one forecast each, from a model that had not seen the game. Most of these forecasts were produced after the fact by the walk-forward evaluation; the rest were saved by the daily pipeline before tip-off.</p>
+      <p class="note">How both are produced: <a href="/methodology/">Methodology</a>.</p>
+    </header>
+
+    <section class="section" aria-labelledby="h-over">
+      <div class="section-head">
+        <h2 id="h-over">The record in brief</h2>
+        <SourceLabel text={`${fmtShortDate(B.first)} – ${fmtShortDate(B.last)}`} />
+      </div>
+      <div class="table-scroll">
+        <table class="overview">
+          <thead><tr><th>Measure</th><th class="r">Result</th><th>What it means</th></tr></thead>
+          <tbody>
+            <tr><td>Games evaluated</td><td class="r num">{B.all.n.toLocaleString()}</td><td>Regular season and playoff games from {B.seasons[0].season} to {B.seasons[B.seasons.length - 1].season}, each predicted by a model trained only on earlier seasons.{B.seasons.some((s) => !s.complete) ? ` ${B.seasons.find((s) => !s.complete).season} is in progress.` : ""}</td></tr>
+            <tr><td>Winners picked</td><td class="r num">{pct100(B.all.win)}</td><td>The team with the higher projected score won this often.</td></tr>
+            <tr><td>Home team won</td><td class="r num">{pct100(B.all.home_win)}</td><td>The baseline: picking the home team every time would have been right this often.</td></tr>
+            <tr><td>Margin error</td><td class="r num">{fixed(B.all.margin_mae, 1)} pts</td><td>Average distance between the forecast margin and the final margin.</td></tr>
+            <tr><td>Total points error</td><td class="r num">{fixed(B.all.total_mae, 1)} pts</td><td>Average distance between forecast and actual combined score.</td></tr>
+            <tr><td>Team score error</td><td class="r num">{fixed(B.all.team_mae, 1)} pts</td><td>Average miss on a single team's score. Half of team scores land within {B.team_median} points.</td></tr>
+            <tr><td>Brier score</td><td class="r num">{fixed(B.all.brier, 3)}</td><td>Average squared error of the home win probability. Lower is better; always saying 50% scores 0.250.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="h-sofar">
+      <div class="section-head">
+        <h2 id="h-sofar">This season so far</h2>
+        <span class="meta">{site.season}, in progress</span>
+      </div>
+      <SeasonSoFar season={site.season} />
+    </section>
+
+    <section class="section" aria-labelledby="h-seasons">
+      <div class="cols cols-main">
+        <div>
+          <h2 id="h-seasons">Accuracy by season</h2>
+          <p class="chart-sub">Share of games where the forecast winner won.</p>
+          <SeasonDots seasons={B.seasons} />
+        </div>
+        <div>
+          <div class="table-scroll">
+            <table>
+              <thead><tr><th>Season</th><th class="r">Games</th><th class="r">Winners</th><th class="r">Margin err.</th><th class="r">Brier</th></tr></thead>
+              <tbody>
+                {B.seasons.map((s) => (
+                  <>
+                    <tr><td><strong>{s.season}</strong>{!s.complete && <span class="muted"> (in progress)</span>}</td><td class="r num">{s.all.n.toLocaleString()}</td><td class="r num">{pct100(s.all.win)}</td><td class="r num">{fixed(s.all.margin_mae)}</td><td class="r num">{fixed(s.all.brier, 3)}</td></tr>
+                    {s.playoffs.n > 0 && <tr><td class="sub">Playoffs</td><td class="r num">{s.playoffs.n}</td><td class="r num">{pct100(s.playoffs.win)}</td><td class="r num">{fixed(s.playoffs.margin_mae)}</td><td class="r num">{fixed(s.playoffs.brier, 3)}</td></tr>}
+                  </>
+                ))}
+                <tr class="total"><td>All</td><td class="r num">{B.all.n.toLocaleString()}</td><td class="r num">{pct100(B.all.win)}</td><td class="r num">{fixed(B.all.margin_mae)}</td><td class="r num">{fixed(B.all.brier, 3)}</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="note">Accuracy rose as the training history grew: the 2022-23 model had one earlier season to learn from, the 2025-26 model had four. Playoff samples are small (about 84 games a season), so their year-to-year swings are mostly noise.{B.seasons.some((s) => !s.complete) ? ` The ${B.seasons.find((s) => !s.complete).season} row covers only the games played so far; it is a small sample.` : ""}</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="h-every">
+      <div class="section-head">
+        <h2 id="h-every">Every game, season by season</h2>
+        <span class="meta">Orange: the forecast winner won. Grey: missed. Playoffs after the gap.</span>
+      </div>
+      <SeasonRibbons />
+    </section>
+
+    <section class="section" aria-labelledby="h-deeper">
+      <div class="section-head"><h2 id="h-deeper">Beyond the overall record</h2></div>
+      <div class="cols cols-2 deeper">
+        <div>
+          <h3><a href="/teams/predictability/">Team Predictability</a></h3>
+          <p>Which teams' games this model forecasts well and which it misses: average margin miss with intervals, bias, variability, expected wins and Brier score for all 30 teams, by season.</p>
+        </div>
+        <div>
+          <h3><a href="/surprises/">Surprise Games</a></h3>
+          <p>The results furthest from the forecast, ranked two ways: winners the forecast gave the lowest chance{surprises.week?.outcome ? ` (this week: ${surprises.week.outcome.w} at ${Math.round(100 * surprises.week.outcome.pw)}%)` : ""}, and the biggest misses on the final margin.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="h-imp">
+      <div class="section-head">
+        <h2 id="h-imp">What moves the forecasts</h2>
+        <a href="/methodology/#explanations">How explanations are checked</a>
+      </div>
+      <Importance />
+    </section>
+
+    <section class="section" aria-labelledby="h-cal">
+      <div class="cols cols-main">
+        <div>
+          <h2 id="h-cal">Are the win probabilities honest?</h2>
+          <p class="chart-sub">Games grouped by the forecast's confidence in its pick.</p>
+          <Calibration bins={B.calibration} />
+        </div>
+        <div class="read">
+          <h3>Reading the chart</h3>
+          <p>If a 70% forecast is honest, teams given 70% should win about 70% of the time. Each band's points sit close to the diagonal, with the favorite winning slightly more often than forecast in the 70–80% bands.</p>
+          <div class="state">
+            <strong>Calibration note.</strong> Most of these probabilities come from the walk-forward evaluation's own calibration step. Upcoming forecasts use a probability curve fitted earlier on a much smaller set of games, so this chart describes the method, not a guarantee about any single percentage.
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="margins" aria-labelledby="h-mb">
+      <div class="cols cols-main">
+        <div>
+          <h2 id="h-mb">Predicted against actual margins</h2>
+          <p class="chart-sub">Average home margin, grouped by the forecast margin.</p>
+          <MarginBuckets rows={B.margin_buckets} />
+        </div>
+        <div class="read">
+          <h3>What it shows</h3>
+          <p>On average, games land close to where the forecast put them: when the model favors a team by a given amount, that team's average margin is in the same range. Individual games scatter widely around those averages.</p>
+          <p>Predicted margins have a standard deviation of <span class="num">{B.pred_margin_sd}</span> points against <span class="num">{B.actual_margin_sd}</span> for actual margins. A forecast is an expected outcome, so it is always narrower than real results, but it does mean a 20-point win is almost never forecast as one.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="h-err">
+      <h2 id="h-err">How big are the misses?</h2>
+      <p class="chart-sub">Distribution of errors across all graded games. Positive values mean the home side (margin) or the game (total) finished higher than forecast.</p>
+      <div class="cols cols-2 hist">
+        <div>
+          <p class="chart-title">Margin error</p>
+          <Histogram bins={B.hist_margin} xLabel="Actual minus forecast home margin (points)" title="Distribution of margin errors" zero />
+        </div>
+        <div>
+          <p class="chart-title">Total points error</p>
+          <Histogram bins={B.hist_total} xLabel="Actual minus forecast total (points)" title="Distribution of total-points errors" zero />
+        </div>
+        <div>
+          <p class="chart-title">Team score error</p>
+          <Histogram bins={B.hist_team} xLabel="Points missed on one team's score" title="Distribution of team score misses" />
+          <p class="note">{B.team_within5}% of team scores land within 5 points of the forecast and {B.team_within10}% within 10.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="h-ctx">
+      <h2 id="h-ctx">Performance by context</h2>
+      <p class="chart-sub">All graded games split three ways. Every row shows its own sample size.</p>
+      <div class="cols cols-2">
+        {ctx.map(([title, rows]) => (
+          <div>
+            <h3 class="ctx-title">{title}</h3>
+            <div class="table-scroll">
+              <table>
+                <thead><tr><th>Group</th><th class="r">Games</th><th class="r">Winners</th><th class="r">Margin err.</th><th class="r">Brier</th></tr></thead>
+                <tbody>{rows.map((r) => (<tr><td>{r.label}</td><td class="r num">{r.n.toLocaleString()}</td><td class="r num">{pct100(r.win)}</td><td class="r num">{fixed(r.margin_mae)}</td><td class="r num">{fixed(r.brier, 3)}</td></tr>))}</tbody>
+              </table>
+            </div>
+          </div>
+        ))}
+      </div>
+      <p class="note">Close forecasts are close to coin flips by design; accuracy rises with the size of the predicted margin. Road favorites are picked correctly less often than home favorites.</p>
+    </section>
+
+    {M && (
+      <section class="section market" aria-labelledby="h-mk">
+        <h2 id="h-mk">External benchmark: market lines</h2>
+        <p class="note read">The model does not use betting lines. Where a betting line was stored for a game, it is compared here as a reference point. Lines are available for only {M.n} games ({fmtShortDate(M.first)} – {fmtShortDate(M.last)}), far too few to draw conclusions.</p>
+        <div class="table-scroll narrow">
+          <table>
+            <thead><tr><th>Average error, {M.n} games</th><th class="r">Model</th><th class="r">Market line</th></tr></thead>
+            <tbody>
+              <tr><td>Margin</td><td class="r num">{fixed(M.model_margin_mae)}</td><td class="r num">{fixed(M.market_margin_mae)}</td></tr>
+              {M.model_total_mae != null && <tr><td>Total points</td><td class="r num">{fixed(M.model_total_mae)}</td><td class="r num">{fixed(M.market_total_mae)}</td></tr>}
+              <tr><td>Same favorite as the line</td><td class="r num" colspan="2">{M.same_favorite} of {M.n}</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    )}
+  </div>
+</Base>
+
+<style>
+  .overview td:last-child { color: var(--ink-2); white-space: normal; min-width: 260px; }
+  .overview td:first-child { white-space: nowrap; font-weight: 500; }
+  .read h3 { margin-bottom: var(--s2); }
+  .hist { grid-template-columns: minmax(0, 1fr); }
+  @media (min-width: 900px) { .hist { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  .hist :global(.chart svg) { min-width: 340px; }
+  .ctx-title { margin-bottom: var(--s2); }
+  .counts { padding-left: 1.1em; color: var(--ink-2); }
+  .counts li + li { margin-top: var(--s2); }
+  .narrow { max-width: 560px; }
+</style>

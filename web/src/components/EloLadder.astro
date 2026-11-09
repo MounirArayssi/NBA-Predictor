@@ -1,0 +1,87 @@
+---
+// All 30 teams on one Elo axis, each marked in its official color. Labels that
+// would collide are stacked onto higher rows. With `highlight`, one team is
+// emphasised and the rest recede. Values come from teams.json (the Elo stored
+// with each team's most recent forecast).
+import { teams, teamUrl } from "../lib/data.js";
+import { teamColor } from "../lib/teamColors.js";
+
+interface Props { highlight?: string }
+const { highlight } = Astro.props;
+const rated = teams.filter((t) => t.elo?.elo != null).sort((a, b) => a.elo.elo - b.elo.elo);
+const W = 1000, padX = 34, rowH = 24, gapX = 40;
+const lo = Math.floor((rated[0]?.elo.elo ?? 1400) / 50) * 50;
+const hi = Math.ceil((rated.at(-1)?.elo.elo ?? 1600) / 50) * 50;
+const x = (v) => padX + ((W - 2 * padX) * (v - lo)) / (hi - lo || 1);
+// Greedy row assignment: lowest row whose last label is far enough left.
+const lastX = [];
+const marks = rated.map((t, i) => {
+  const cx = x(t.elo.elo);
+  let r = 0;
+  while (lastX[r] != null && cx - lastX[r] < gapX) r++;
+  lastX[r] = cx;
+  return { t, cx, r, i, c: teamColor(t.abbr) };
+});
+const rows = Math.max(1, lastX.length);
+const axisY = 14 + rows * rowH + 10;
+const H = axisY + 34;
+const ticks = [];
+for (let v = lo; v <= hi; v += 50) ticks.push(v);
+const rank = highlight ? rated.length - rated.findIndex((t) => t.abbr === highlight) : null;
+---
+<figure class={`ladder ${highlight ? "has-hl" : ""}`} data-reveal>
+  <div class="ladder-scroll chart-scroll">
+    <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-labelledby="ladder-t">
+      <title id="ladder-t">{highlight ? `Elo ratings of all 30 teams; ${highlight} ranks ${rank} of ${rated.length}` : `Elo ratings of all ${rated.length} teams, from ${rated[0]?.abbr} (lowest) to ${rated.at(-1)?.abbr} (highest)`}</title>
+      {ticks.map((v) => (
+        <g class="tick">
+          <line x1={x(v)} x2={x(v)} y1={axisY - 4} y2={axisY + 4} />
+          <text x={x(v)} y={axisY + 22} text-anchor="middle">{v}</text>
+        </g>
+      ))}
+      <line class="axis-l" x1={padX} x2={W - padX} y1={axisY} y2={axisY} />
+      {1500 >= lo && 1500 <= hi && <line class="avg" x1={x(1500)} x2={x(1500)} y1="6" y2={axisY} />}
+      {1500 >= lo && 1500 <= hi && <text class="avg-t" x={x(1500) + 6} y="14">1500 average</text>}
+      {marks.map((m) => {
+        const ly = axisY - 14 - m.r * rowH;
+        const hl = m.t.abbr === highlight;
+        return (
+          <a href={teamUrl(m.t.abbr)} class={`mk ${hl ? "hl" : ""}`} style={`--c:${m.c.light};--d:${(m.i * 28)}ms`}>
+            <title>{m.t.name}: {m.t.elo.elo}</title>
+            <line class="stem" x1={m.cx} x2={m.cx} y1={ly + 4} y2={axisY} />
+            <circle cx={m.cx} cy={axisY} r={hl ? 7 : 5} />
+            <text x={m.cx} y={ly} text-anchor="middle" class="ab">{m.t.abbr}</text>
+          </a>
+        );
+      })}
+    </svg>
+  </div>
+  <figcaption>Elo rating recorded with each team's most recent forecast. Higher is stronger; 1500 is the long-run average.{highlight && rank ? ` ${highlight} ranks ${rank} of ${rated.length}.` : ""}</figcaption>
+</figure>
+
+<style>
+  .ladder { margin: 0; }
+  .ladder-scroll { overflow-x: auto; }
+  svg { display: block; width: 100%; min-width: 640px; height: auto; }
+  text { font-family: var(--mono); font-size: 13px; fill: var(--muted); }
+  .axis-l { stroke: var(--rule-strong); stroke-width: 1.5; }
+  .tick line { stroke: var(--rule-strong); }
+  .avg { stroke: var(--neutral-mark); stroke-dasharray: 3 4; }
+  .avg-t { font-size: 11px; }
+  .mk circle { fill: var(--c); stroke: var(--paper); stroke-width: 2; }
+  .mk .stem { stroke: var(--c); stroke-width: 1; opacity: 0.45; }
+  .mk .ab { fill: var(--ink-2); font-weight: 500; }
+  .mk:hover .ab, .mk:focus-visible .ab { fill: var(--ink); }
+  .mk:focus-visible { outline: none; }
+  .mk:focus-visible circle { stroke: var(--accent); stroke-width: 3; }
+  .has-hl .mk:not(.hl) { opacity: 0.38; }
+  .mk.hl .ab { fill: var(--ink); font-weight: 600; font-size: 15px; }
+  .mk.hl .stem { opacity: 1; stroke-width: 2; }
+  .mk.hl circle { filter: drop-shadow(0 0 6px var(--c)); }
+  figcaption { font-size: 0.85rem; color: var(--muted); margin-top: var(--s2); }
+  /* Markers rise from the axis in rating order. */
+  :global(html.js) .ladder .mk { transform: translateY(18px); opacity: 0; }
+  :global(html.js) .ladder.in .mk { transform: none; opacity: 1; transition: transform 0.7s var(--ease-out) var(--d), opacity 0.4s ease var(--d); }
+  :global(html.js) .ladder.in.has-hl .mk:not(.hl) { opacity: 0.38; }
+  @media (prefers-reduced-motion: reduce) { :global(html.js) .ladder .mk { transform: none; opacity: 1; } :global(html.js) .ladder.has-hl .mk:not(.hl) { opacity: 0.38; } }
+</style>

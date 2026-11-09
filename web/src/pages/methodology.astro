@@ -1,0 +1,123 @@
+---
+import Base from "../layouts/Base.astro";
+import Pipeline from "../components/Pipeline.astro";
+import ex from "../data/explanations.json";
+import { site, performance as P, fmtLongDate, fmtDateTime } from "../lib/data.js";
+const C = P.counts, R = P.record;
+const features = [
+  ["Team strength", "Elo rating for each team (margin-of-victory Elo, starting October 2021), the Elo gap including a fixed home-court bonus, each team's season-to-date scoring margin blended with last season early in the year, and games played."],
+  ["Recent form", "Offensive and defensive rating (points scored and allowed per 100 possessions) over each team's last 10 games, and the two teams' combined pace."],
+  ["Availability", "Points per game of each team's regular rotation listed Out or Doubtful on the official NBA injury report."],
+  ["Rest", "Days since each team's previous game and whether it is the second night of a back-to-back."],
+  ["Playoff series", "Home team's series wins, whether the game is an elimination game, and a series-pressure measure."],
+];
+---
+<Base title="Methodology" description="How the NBA forecasts are made and tested: data, the 21 model inputs, score models, win probabilities, prediction timing, and the walk-forward evaluation." section="performance">
+  <div class="wrap">
+    <header class="page-head read">
+      <a class="back" href="/performance/">← Performance</a>
+      <p class="kicker accent">How it works</p>
+      <h1>Methodology</h1>
+      <p class="lede">How each forecast is made, when it is saved, and how the model is tested. Written from the project's code and stored data.</p>
+    </header>
+
+    <div class="layout">
+      <nav class="toc" aria-label="On this page">
+        <ol>
+          <li><a href="#objective">Objective</a></li>
+          <li><a href="#data">Data</a></li>
+          <li><a href="#inputs">Model inputs</a></li>
+          <li><a href="#scores">Score forecasts</a></li>
+          <li><a href="#probability">Win probability</a></li>
+          <li><a href="#timing">Timing and storage</a></li>
+          <li><a href="#evaluation">Evaluation</a></li>
+          <li><a href="#explanations">Explaining a forecast</a></li>
+          <li><a href="#metrics">Metrics</a></li>
+          <li><a href="#limits">Limitations</a></li>
+          <li><a href="#next">Ongoing work</a></li>
+        </ol>
+      </nav>
+
+      <div class="prose">
+        <h2 id="objective">Objective</h2>
+        <p>Forecast the final score of every NBA game before it starts, turn that into a winner and a win probability, and grade every forecast against the result. The model uses basketball information only. Betting lines are not inputs; where they are stored, they serve only as an outside benchmark.</p>
+
+        <Pipeline />
+
+        <h2 id="data">Data</h2>
+        <p>Schedules, final scores and team and player box scores come from NBA Stats (stats.nba.com). Player availability comes from the official NBA injury report, which the league publishes as a PDF several times a day; the project parses and stores each report it uses. All data lives in a local PostgreSQL database. This website is built from a read-only export of it.</p>
+        <table>
+          <thead><tr><th>Season</th><th class="r">Final games</th><th class="r">Box scores</th><th class="r">Days with an injury report</th></tr></thead>
+          <tbody>{site.coverage.map((c) => (<tr><td>{c.season}</td><td class="r num">{c.games.toLocaleString()}</td><td class="r num">{c.box.toLocaleString()}</td><td class="r num">{c.reports}</td></tr>))}</tbody>
+        </table>
+
+        <h2 id="inputs">Model inputs</h2>
+        <p>The model receives 21 inputs for each game, all known before tip-off. Box-score statistics from the game itself are never inputs; they are used only to build rolling averages for later games and to grade the forecast.</p>
+        <table>
+          <thead><tr><th>Group</th><th>Inputs</th></tr></thead>
+          <tbody>{features.map(([g, d]) => (<tr><td><strong>{g}</strong></td><td>{d}</td></tr>))}</tbody>
+        </table>
+        <p>A rotation player is one who played in at least two of the team's last ten games this season, averaging 15 or more minutes. Players listed Questionable are currently treated as available; the <a href="/notebook/2026-11-07-questionable/">Notebook</a> looks at how often they actually play.</p>
+
+        <h2 id="scores">Score forecasts</h2>
+        <p>Two gradient-boosted regression models (scikit-learn, 150 shallow trees each) predict the home score and the away score. The forecast margin and total are derived from those two numbers. Training weights recent games more heavily (weights decay with a time constant of 550 days), and playoff games count three times as much because they make up only a small share of the history.</p>
+        <p>The production models are trained on every completed game since October 2021. A player-level model also exists in the project, but blending it in made forecasts worse in every test, so it does not affect the published scores.</p>
+
+        <h2 id="probability">Win probability</h2>
+        <p>The win probability is a logistic curve applied to the forecast margin: larger projected margins map to higher probabilities. The curve used for live forecasts was fitted on an earlier, small set of graded games. The walk-forward forecasts used their own fitted curve. Refitting the live curve on the full record is planned.</p>
+        <p>The pipeline also assigns a High, Medium or Low confidence label based mostly on the size of the projected margin. That label is a rule of thumb, not a tested probability, so this site shows win probabilities instead.</p>
+
+        <h2 id="timing">Timing and storage</h2>
+        <p>The daily pipeline saves each forecast with the time it was made. The first forecast saved for a game before tip-off becomes the official one; a rerun can replace it only within the last hour before tip-off. A forecast is never revised after the game.</p>
+        <p>Every game on this site has one forecast. Where the daily pipeline saved a forecast for a game, that is the one used ({C.issued} games). Every other game uses the walk-forward forecast described below ({C.walkforward.toLocaleString()} games). Both are graded the same way and counted together in every record. {C.backfill_excluded} forecasts from an older after-the-fact fill, which may have seen information from the games themselves, are left out entirely.</p>
+
+        <h2 id="evaluation">Evaluation</h2>
+        <p>The main test is a walk-forward backtest. Each season from {R.seasons[0].season} to {R.seasons.at(-1).season} was predicted by a model trained only on the seasons before it, through the same code path as the daily forecasts, with the injury report archived for that day (the 5:30 PM ET report) and no betting lines. That makes it an estimate of how the method does on games it has not seen. The current season is included as it is played: its games are predicted after the fact by a model trained on all completed seasons, which has not seen any game from this season.</p>
+        <p>Most of the record is therefore retrospective: those forecasts were produced after the games, by models that had not seen them, rather than published beforehand. The current production model is retrained on all history and is used for upcoming games.</p>
+        <p>Ten games in the source data list the same team as both home and away. They cannot be graded and are left out of every figure on this site.</p>
+
+        <h2 id="explanations">Explaining a forecast</h2>
+        <p>Game pages include an <strong>Inside the Forecast</strong> section. It always shows the inputs saved with the forecast. Where possible it also shows how each input moved the projected home margin, using SHAP values from the two score models (TreeSHAP, which is exact for tree models): an input's effect on the margin is its effect on the home score minus its effect on the away score, and the model's average output plus all effects equals the projected margin. These are points of margin, not percentage points of win probability, which comes from a separate curve.</p>
+        <p>An explanation is shown only when the model that made the forecast can be checked. Stored scores are whole numbers, so a model version counts as verified for a group of forecasts when at least {Math.round(100 * ex.verify_share)}% of them reproduce both stored scores exactly; each forecast in a verified group is then explained if its margin is within the rounding bound. Current status:</p>
+        <ul>
+          {Object.entries(ex.stats).map(([k, s]) => <li><strong>{k}</strong>: {s.n.toLocaleString()} forecasts, {s.verified ? `verified (${Math.round(100 * s.share)}% reproduce exactly), ${s.explained} explained` : s.share != null ? `not verified (${Math.round(100 * s.share)}% reproduce, about what a different model matches by chance)` : "the model files that made them no longer exist"}.</li>)}
+        </ul>
+        <p>Walk-forward models are rebuilt in memory with the same training code for this check and are never saved. Forecasts that fail it keep their saved inputs, labelled as unexplained, rather than being explained with a model that did not make them. These explanations describe how the model used its inputs. They are not evidence of what caused a result.</p>
+
+        <h2 id="metrics">Metrics</h2>
+        <ul>
+          <li><strong>Winners picked</strong>: share of games where the team with the higher projected score won.</li>
+          <li><strong>Margin error</strong>: mean absolute difference between forecast and actual home margin.</li>
+          <li><strong>Total error</strong>: mean absolute difference between forecast and actual combined score.</li>
+          <li><strong>Brier score</strong>: mean of (home win probability − home win as 1 or 0)². Always forecasting 50% scores 0.25.</li>
+          <li><strong>Calibration</strong>: games grouped by the forecast's confidence in its pick, comparing the average forecast with the share of picks that won.</li>
+          <li><strong>Expected wins</strong> (team pages): the sum of a team's pregame win probabilities over a sample of games.</li>
+        </ul>
+
+        <h2 id="limits">Limitations</h2>
+        <ul>
+          <li>Most graded forecasts were produced after the games by models that had not seen them, not published in advance.</li>
+          <li>Forecast margins are much narrower than real margins, so lopsided results are rarely forecast as lopsided.</li>
+          <li>Questionable players are treated as available, and late scratches after the forecast is saved are not captured.</li>
+          <li>A missing player is measured by his points per game, not his overall impact on the floor.</li>
+          <li>The site shows what the model received, not how much each input moved a particular forecast.</li>
+          <li>The site is rebuilt by hand. This edition was exported {fmtDateTime(site.generated_at)}.</li>
+        </ul>
+
+        <h2 id="next">Ongoing work</h2>
+        <p>Ideas are tested with the same walk-forward backtest before they reach the live model. Current candidates: forecasting margin and total directly instead of two team scores, treating Questionable status as a probability, measuring missing players by on/off impact, and refitting the win-probability curve on the full record. The <a href="/notebook/">Notebook</a> records each result.</p>
+      </div>
+    </div>
+  </div>
+</Base>
+<style>
+  .layout { display: grid; gap: var(--s6); }
+  .layout > * { min-width: 0; }
+  @media (min-width: 1000px) { .layout { grid-template-columns: 200px minmax(0, 1fr); } .toc { position: sticky; top: var(--s5); align-self: start; } }
+  .toc ol { list-style: none; margin: 0; padding: 0; border-top: 2px solid var(--rule-heavy); font-size: 0.9rem; }
+  .toc li a { display: block; padding: 6px 0; border-bottom: 1px solid var(--rule); color: var(--ink-2); text-decoration: none; }
+  .toc li a:hover { color: var(--accent); }
+  @media (max-width: 999px) { .toc ol { display: flex; flex-wrap: wrap; gap: 0 var(--s4); border-bottom: 1px solid var(--rule); } .toc li a { border: 0; } }
+  .prose h2:first-child { margin-top: 0; }
+  .prose h2 { scroll-margin-top: var(--s5); }
+</style>

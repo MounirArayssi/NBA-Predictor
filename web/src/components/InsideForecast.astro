@@ -1,0 +1,175 @@
+---
+// Inside the Forecast: (A) the values the model received, side by side, and
+// (B) where the stored forecast can be reproduced exactly, how each input moved
+// the projected home margin (TreeSHAP on the two score models; see
+// web/analytics/explain.py). Contributions are points of margin, not
+// percentage points of win probability.
+import { teamColor } from "../lib/teamColors.js";
+import { teamByAbbr, signed, fixed } from "../lib/data.js";
+import ex from "../data/explanations.json";
+
+interface Props { g: any }
+const { g } = Astro.props;
+const I = g.inputs;
+const e = ex.games[g.id];
+const ok = e?.ok;
+const home = g.home, away = g.away;
+const ch = teamColor(home).light, ca = teamColor(away).light;
+const po = g.stype === "Playoffs";
+const m = ok ? (k) => e.c[k]?.[2] ?? 0 : () => null;
+
+// Input comparison rows: [label, away value, home value, digits, note, margin effect, better]
+const v = (side, k) => I?.[side]?.[k];
+const yn = (x) => (x == null ? "–" : x ? "Yes" : "No");
+const rows = I ? [
+  { g: "strength", label: "Elo rating", a: v("away", "elo"), h: v("home", "elo"), d: 0, eff: ok ? m("home_elo") + m("away_elo") : null, note: "Margin-of-victory Elo; 1500 is average." },
+  { g: "strength", label: "Elo gap, home minus road, incl. home court", single: signed(I.elo_diff, 0), eff: ok ? m("elo_diff") : null },
+  { g: "strength", label: "Season scoring margin", a: v("away", "season_margin"), h: v("home", "season_margin"), d: 1, sign: true, eff: ok ? m("home_season_margin") + m("away_season_margin") : null, note: "Points per game, blended with last season early in the year." },
+  { g: "strength", label: "Games played this season", a: v("away", "games_played"), h: v("home", "games_played"), d: 0, eff: ok ? m("home_games_played") + m("away_games_played") : null },
+  { g: "form", label: "Offensive rating, last 10", a: v("away", "off_rating"), h: v("home", "off_rating"), d: 1, eff: ok ? m("home_off_rating") + m("away_off_rating") : null, note: "Points scored per 100 possessions." },
+  { g: "form", label: "Defensive rating, last 10", a: v("away", "def_rating"), h: v("home", "def_rating"), d: 1, eff: ok ? m("home_def_rating") + m("away_def_rating") : null, note: "Points allowed per 100 possessions; lower is better." },
+  { g: "form", label: "Combined pace, last 10", single: fixed(I.combined_pace, 1), eff: ok ? m("combined_pace") : null, note: "Possessions per game, both teams." },
+  { g: "availability", label: "Rotation points missing", a: v("away", "missing_pts"), h: v("home", "missing_pts"), d: 1, eff: ok ? m("home_missing_pts") + m("away_missing_pts") : null, note: "Points per game of rotation players listed Out or Doubtful." },
+  { g: "rest", label: "Rest days", a: v("away", "rest_days"), h: v("home", "rest_days"), d: 0, eff: ok ? m("home_rest_days") + m("away_rest_days") : null },
+  { g: "rest", label: "Second night of a back-to-back", a: yn(v("away", "back_to_back")), h: yn(v("home", "back_to_back")), text: true, eff: ok ? m("home_back_to_back") + m("away_back_to_back") : null },
+  ...(po ? [{ g: "playoff", label: "Playoff series state", single: `${I.series?.home_wins ?? "–"} home series wins${I.series?.elimination ? ", elimination game" : ""}`, eff: ok ? m("home_series_wins") + m("is_elimination") + m("series_pressure") : null }] : []),
+] : [];
+const fmtV = (r, x) => (x == null ? "–" : r.text ? x : r.sign ? signed(x, r.d) : Number(x).toFixed(r.d));
+const maxEff = ok ? Math.max(0.5, ...rows.map((r) => Math.abs(r.eff ?? 0))) : 1;
+
+// Waterfall: baseline -> groups (largest first) -> projected margin.
+const GROUPS = ex.groups;
+const steps = [];
+let wf = null;
+if (ok) {
+  let run = e.base;
+  const gs = Object.entries(e.groups).filter(([k, val]) => k !== "playoff" || po || Math.abs(val) > 0.05)
+    .sort((x, y) => Math.abs(y[1]) - Math.abs(x[1]));
+  steps.push({ label: "Model baseline", from: 0, to: e.base, kind: "base" });
+  for (const [k, val] of gs) { steps.push({ label: k === "playoff" && !po ? "No playoff context" : GROUPS[k], from: run, to: run + val, kind: "step", val }); run += val; }
+  steps.push({ label: "Projected margin", from: 0, to: e.pm, kind: "total" });
+  const ext = Math.max(4, ...steps.flatMap((s) => [Math.abs(s.from), Math.abs(s.to)]));
+  const lim = Math.ceil(ext / 4) * 4;
+  const W = 520, rowH = 34, L = 168, R = 52;
+  const x = (val) => L + ((W - L - R) * (val + lim)) / (2 * lim);
+  const ticks = [];
+  for (let t = -lim; t <= lim; t += lim / 2) ticks.push(t);
+  wf = { W, H: steps.length * rowH + 40, rowH, L, x, ticks, lim };
+}
+const label = (val) => `${Math.abs(val).toFixed(1)} toward ${val >= 0 ? home : away}`;
+---
+<section class="section inside" id="inside" aria-labelledby="h-inside">
+  <div class="section-head">
+    <h2 id="h-inside">Inside the Forecast</h2>
+    <a href="/methodology/#inputs">How the inputs are built</a>
+  </div>
+
+  {!I ? (
+    <p class="state">No saved inputs are stored with this game's forecast.</p>
+  ) : (
+    <>
+      {ok ? <p class="lede summary">{e.summary}</p> : null}
+      <div class={ok ? "cols cols-2 split" : ""}>
+        <div>
+          <p class="chart-title">What the model received</p>
+          <p class="chart-sub">Values saved with the forecast, before tip-off. {ok ? "The last column is each input's effect on the projected home margin." : ""}</p>
+          <div class="table-scroll">
+            <table class="inputs" data-reveal>
+              <thead><tr><th>Input</th><th class="r">{away}</th><th class="r">{home}</th>{ok && <th class="r eff-h">Effect, pts</th>}</tr></thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr>
+                    <td>{r.label}{r.note && <span class="nt">{r.note}</span>}</td>
+                    {r.single != null ? <td class="r num" colspan="2">{r.single}</td> : <><td class="r num">{fmtV(r, r.a)}</td><td class="r num">{fmtV(r, r.h)}</td></>}
+                    {ok && (
+                      <td class="r eff">
+                        <span class="num">{signed(r.eff, 1)}</span>
+                        <span class="ebar" aria-hidden="true"><i style={`--w:${(50 * Math.abs(r.eff)) / maxEff}%;--c:${r.eff >= 0 ? ch : ca};${r.eff >= 0 ? "left:50%;transform-origin:left" : "right:50%;transform-origin:right"}`}></i></span>
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {ok && wf && (
+          <figure class="chart wf">
+            <p class="chart-title">How the projected margin was built</p>
+            <p class="chart-sub">Points of home margin. Right of zero favors {home}; left favors {away}.</p>
+            <div class="chart-scroll">
+              <svg viewBox={`0 0 ${wf.W} ${wf.H}`} role="img" aria-labelledby={`wf-t-${g.id}`}>
+                <title id={`wf-t-${g.id}`}>{`Projected margin built from a baseline of ${signed(e.base, 1)} plus ${steps.filter((s) => s.kind === "step").map((s) => `${s.label} ${signed(s.val, 1)}`).join(", ")}, giving ${signed(e.pm, 1)} for ${home}.`}</title>
+                {wf.ticks.map((t) => (<g><line class="grid" x1={wf.x(t)} x2={wf.x(t)} y1="8" y2={wf.H - 26} /><text x={wf.x(t)} y={wf.H - 8} text-anchor="middle">{t > 0 ? `+${t}` : t}</text></g>))}
+                <line class="axis" x1={wf.x(0)} x2={wf.x(0)} y1="4" y2={wf.H - 26} />
+                {steps.map((s, i) => {
+                  const y = 10 + i * wf.rowH;
+                  const x0 = wf.x(Math.min(s.from, s.to)), x1 = wf.x(Math.max(s.from, s.to));
+                  const val = s.kind === "step" ? s.val : s.to;
+                  const col = s.kind === "step" ? (s.val >= 0 ? ch : ca) : "var(--ink)";
+                  return (
+                    <g class={`st ${s.kind}`} style={`--d:${i * 0.12}s`}>
+                      <text x={wf.L - 10} y={y + 15} text-anchor="end" class={s.kind === "step" ? "lbl" : "strong"}>{s.label}</text>
+                      <rect x={x0} y={y + 3} width={Math.max(1.5, x1 - x0)} height="18" rx="2" fill={col} opacity={s.kind === "base" ? 0.35 : 1} />
+                      {i > 0 && i < steps.length - 1 && <line class="conn" x1={wf.x(s.from)} x2={wf.x(s.from)} y1={y - 13} y2={y + 3} />}
+                      <text x={(val >= 0 ? x1 : x0) + (val >= 0 ? 6 : -6)} y={y + 16} text-anchor={val >= 0 ? "start" : "end"} class="v">{signed(val, 1)}</text>
+                    </g>
+                  );
+                })}
+              </svg>
+            </div>
+            <figcaption>
+              {!po && Object.prototype.hasOwnProperty.call(e.groups, "playoff") && Math.abs(e.groups.playoff) > 0.05 ? "In a regular-season game the playoff inputs are zero; because the model's average output includes playoff games, their absence still shifts the margin slightly. " : ""}Contributions are exact for this model (TreeSHAP on the home and away score models; the margin's contribution is home minus away). Baseline {signed(e.base, 1)} plus the bars equals the projected margin {signed(e.pm, 1)} before rounding. These describe how the model used its inputs, not what will cause the result.
+            </figcaption>
+            <details class="data">
+              <summary>All {ex.features.length} inputs, in points</summary>
+              <div class="table-scroll">
+                <table>
+                  <thead><tr><th>Input</th><th class="r">Value</th><th class="r">{home} pts</th><th class="r">{away} pts</th><th class="r">Margin</th></tr></thead>
+                  <tbody>
+                    {ex.features.slice().sort((p, q) => Math.abs(e.c[q][2]) - Math.abs(e.c[p][2])).map((k) => (
+                      <tr><td>{ex.meta[k].label}</td><td class="r num">{fixed(e.x[k], ex.meta[k].unit === "yes/no" ? 0 : 1)}</td><td class="r num">{signed(e.c[k][0], 2)}</td><td class="r num">{signed(e.c[k][1], 2)}</td><td class="r num">{signed(e.c[k][2], 2)}</td></tr>
+                    ))}
+                    <tr class="total"><td>Baseline (average output)</td><td></td><td class="r num">{fixed(e.bh, 1)}</td><td class="r num">{fixed(e.ba, 1)}</td><td class="r num">{signed(e.base, 2)}</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </details>
+          </figure>
+        )}
+      </div>
+
+      <p class="note prob-note">
+        {ok
+          ? `The win probability (${Math.round(100 * Math.max(g.fc.hwp, 1 - g.fc.hwp))}% ${g.fc.hwp >= 0.5 ? home : away}) comes from a separate curve applied to the projected margin, so these contributions are points of margin, not percentage points.`
+          : e && !e.ok
+            ? `This forecast can't be broken down exactly: ${e.why}. The inputs above are the values it received. Explanations are shown only when the model that made a forecast can be rebuilt and reproduces it.`
+            : "Explanations are shown only when the model that made a forecast can be rebuilt and reproduces it."}
+        {" "}<a href="/methodology/#explanations">How explanations are checked</a>
+      </p>
+    </>
+  )}
+</section>
+
+<style>
+  .summary { margin-bottom: var(--s5); max-width: 75ch; }
+  .split { align-items: start; }
+  .inputs td:first-child { min-width: 180px; }
+  .nt { display: block; font-size: 0.78rem; color: var(--muted); }
+  .eff { white-space: nowrap; }
+  .eff .num { display: inline-block; min-width: 3.4em; }
+  .ebar { position: relative; display: inline-block; width: 70px; height: 8px; margin-left: 6px; vertical-align: 0; background: linear-gradient(var(--rule-strong), var(--rule-strong)) 50% 0 / 1px 100% no-repeat; }
+  .ebar i { position: absolute; top: 0; height: 100%; width: var(--w); background: var(--c); border-radius: 1px; }
+  .wf svg { min-width: 0 !important; }
+  .wf svg text { font-size: 13px; }
+  @media (max-width: 600px) { .ebar { display: none; } .inputs td:first-child { min-width: 140px; } .nt { display: none; } }
+  .wf .st .v { font-size: 12px; fill: var(--ink); }
+  .wf .conn { stroke: var(--rule-strong); stroke-dasharray: 2 2; }
+  .prob-note { margin-top: var(--s4); }
+  :global(html.js) .wf .st rect { transform: scaleX(0); transform-box: fill-box; transform-origin: left; }
+  :global(html.js) .wf.in .st rect { transform: none; transition: transform 0.7s var(--ease-out) var(--d); }
+  :global(html.js) .inputs .ebar i { transform: scaleX(0); }
+  :global(html.js) .inputs.in .ebar i { transform: none; transition: transform 0.6s var(--ease-out) 0.2s; }
+  @media (prefers-reduced-motion: reduce) { :global(html.js) .wf .st rect, :global(html.js) .inputs .ebar i { transform: none; } }
+</style>

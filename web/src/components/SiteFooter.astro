@@ -1,0 +1,27 @@
+---
+import { site, fmtDateTime } from "../lib/data.js";
+---
+<footer class="site-footer">
+  <div class="wrap grid">
+    <div>
+      <p class="strong">An independent NBA forecasting project.</p>
+      <p>Not affiliated with, endorsed by, or connected to the NBA or any team. For analysis and entertainment. Forecasts are not betting advice.</p>
+    </div>
+    <div>
+      <p class="strong">Data</p>
+      <p>Schedules, results and box scores: NBA Stats (stats.nba.com). Player availability: the official NBA injury report. Market lines, where shown, are for comparison only and are not model inputs.</p>
+    </div>
+    <div>
+      <p class="strong">This edition</p>
+      <p>Data exported <time datetime={site.generated_at}>{fmtDateTime(site.generated_at)}</time>. The site is rebuilt by hand; results after that time may be missing.</p>
+      <p><a href="/methodology/">Methodology</a> · <a href="/forecasts/archive/">Forecast archive</a></p>
+    </div>
+  </div>
+</footer>
+<style>
+  .site-footer { margin-top: var(--s8); border-top: 2px solid var(--rule-heavy); background: var(--surface); }
+  .grid { display: grid; gap: var(--s5); padding-block: var(--s6) var(--s7); font-size: 0.875rem; color: var(--ink-2); }
+  @media (min-width: 800px) { .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  .strong { font-weight: 600; color: var(--ink); margin-bottom: var(--s1); }
+  p { margin-bottom: var(--s2); }
+</style>
