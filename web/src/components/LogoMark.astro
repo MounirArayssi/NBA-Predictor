@@ -1,0 +1,15 @@
+---
+// The Hoop Ledger mark: a basketball with a graded check. The ✓ is the
+// "ledger" half: every forecast is kept and graded against the final.
+interface Props { size?: string; class?: string }
+const { size = "1.25em", class: cls = "" } = Astro.props;
+---
+<svg class={`logo-mark ${cls}`} viewBox="0 0 32 32" width={size} height={size} aria-hidden="true">
+  <circle cx="14" cy="14.5" r="11.5" fill="#e8773a" />
+  <g fill="none" stroke="#0d1216" stroke-width="1.5" stroke-linecap="round">
+    <circle cx="14" cy="14.5" r="11.5" />
+    <path d="M14 3v23M2.5 14.5h23M6.2 6q4.6 8.5 0 17M21.8 6q-4.6 8.5 0 17" />
+  </g>
+  <circle cx="24.5" cy="24.5" r="7" fill="#2b6b61" stroke="#0d1216" stroke-width="2" />
+  <path d="M21.3 24.6l2.3 2.3 4.2-4.6" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+</svg>

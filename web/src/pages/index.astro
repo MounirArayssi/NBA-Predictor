@@ -7,7 +7,7 @@ import WeekSurprise from "../components/home/WeekSurprise.astro";
 import PlayersTeaser from "../components/home/PlayersTeaser.astro";
 import fs from "node:fs";
 import path from "node:path";
-import { TITLE, site, games, performance, etDate, fmtLongDate, fmtDateTime, fmtShortDate, pct100, fixed } from "../lib/data.js";
+import { TITLE, site, games, performance, etDate, fmtLongDate, fmtDateTime, fmtShortDate, pct100, fixed, liveRecord as live } from "../lib/data.js";
 
 const buildDay = etDate(new Date(site.generated_at));
 const current = games.filter((g) => g.season === site.season);
@@ -51,14 +51,14 @@ const status = [
   ["Model trained", modelSaved ? fmtShortDate(modelSaved) : "–"],
 ];
 ---
-<Base title={TITLE} description="NBA game forecasts: projected scores and win probabilities for every game, graded against final results for every season since 2022-23, with research notes." section="home">
+<Base title={TITLE} description="The Hoop Ledger: NBA game forecasts with projected scores and win probabilities for every game, each one graded against the final result, every season since 2022-23." section="home">
   <div class="wrap">
     <section class="opening">
       <div class="hero-text">
-        <p class="kicker accent">NBA game forecasting</p>
-        <h1>Forecasts, results, and the numbers behind the game.</h1>
-        <p class="lede">An independent NBA prediction model. Every game gets a projected score and a win probability from a model trained only on games before it, and every forecast is graded against the final. The record covers every season since 2022-23.</p>
-        <p class="hero-links"><a class="btn primary" href="/forecasts/">Today's forecasts</a> <a class="btn" href="/performance/">How accurate is it?</a></p>
+        <p class="kicker accent">NBA forecasts, on the record</p>
+        <h1><span class="l1">Every game forecast.</span> <span class="l2">Every forecast graded.</span></h1>
+        <p class="lede">The Hoop Ledger is an independent NBA prediction model. Each game gets a projected score and a win probability from a model trained only on earlier games. Every forecast goes in the ledger and is checked against the final, every season since 2022-23. Most of that record comes from a walk-forward test run after the fact; {live.n} forecasts were saved live before tip-off, and they are {live.w}–{live.l} so far.</p>
+        <p class="hero-links"><a class="btn primary" href="/forecasts/">Today's forecasts</a> <a class="btn" href="/performance/">See the record</a></p>
       </div>
       <DataBall />
     </section>
@@ -171,6 +171,8 @@ const status = [
   .hero-links .btn.primary { background: var(--ink); color: var(--paper); border-color: var(--ink); }
   .hero-links .btn.primary:hover { background: var(--accent); border-color: var(--accent); }
   :global(.board) { margin-bottom: var(--s6); }
+  .opening h1 .l1, .opening h1 .l2 { display: block; }
+  .opening h1 .l2 { color: var(--accent); }
   .opening h1 { margin: var(--s3) 0 var(--s4); font-size: clamp(2rem, 4.6vw, 3rem); }
   .meta { font-size: 0.875rem; color: var(--muted); margin-bottom: var(--s3); }
   .sub { margin-bottom: var(--s3); }

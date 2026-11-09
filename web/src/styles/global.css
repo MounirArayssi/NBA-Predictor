@@ -1,4 +1,4 @@
-/* NBA Forecasts — design tokens and base styles.
+/* The Hoop Ledger — design tokens and base styles.
    Editorial light page with dark "instrument" panels (header, scoreboards, data
    graphics), like equipment set into an arena. `.instrument` re-scopes the tokens
    so any component reads correctly inside one. One orange accent; a teal used only
@@ -271,16 +271,11 @@ html.js [data-reveal="lift"].in { opacity: 1; transform: none; transition: opaci
   font-family: var(--mono); font-size: 0.68rem; font-weight: 600; line-height: 1.5; letter-spacing: 0.02em;
   border-radius: 999px; vertical-align: 1px; white-space: nowrap; cursor: help;
 }
-.streak .ico { display: inline-block; font-size: 0.85rem; line-height: 1; }
+.streak .ico { display: inline-block; font-size: 0.62rem; line-height: 1; }
 .streak.hot { color: #b4471a; background: #fbe6d9; }
 .streak.cold { color: #2a6496; background: #dfeaf4; }
 .instrument .streak.hot { color: #ffb38a; background: rgba(240, 140, 79, 0.16); }
 .instrument .streak.cold { color: #9ccaf2; background: rgba(120, 180, 240, 0.14); }
-.streak.hot .ico { transform-origin: 50% 90%; animation: flicker 1.8s ease-in-out infinite; }
-@keyframes flicker { 0%, 100% { transform: scale(1) rotate(0); } 25% { transform: scale(1.08, 0.94) rotate(-4deg); } 50% { transform: scale(0.96, 1.07) rotate(3deg); } 75% { transform: scale(1.04, 0.98) rotate(-2deg); } }
-html.js .streak.cold .ico { opacity: 0.4; }
-html.js .streak.cold.in .ico { animation: frost 1.4s ease-out forwards; }
-@keyframes frost { 0% { opacity: 0.3; transform: scale(0.6) rotate(-30deg); filter: blur(2px); } 60% { opacity: 1; transform: scale(1.15) rotate(6deg); filter: none; } 100% { opacity: 1; transform: none; } }
 
 /* ---------- Pick result stamp: lands when a finished game scrolls into view ---------- */
 html.js .stamp { display: inline-block; opacity: 0; transform: scale(1.7) rotate(-8deg); }

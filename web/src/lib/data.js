@@ -8,7 +8,8 @@ import teamAnalytics from "../data/team_analytics.json";
 
 export { site, teams, games, performance, teamAnalytics };
 
-export const TITLE = "NBA Forecasts";
+export const TITLE = "The Hoop Ledger";
+export const SITE_URL = "https://thehoopledger.com";
 export const TZ = "America/New_York";
 
 export const teamByAbbr = Object.fromEntries(teams.map((t) => [t.abbr, t]));
@@ -52,3 +53,14 @@ export function favorite(pred, g) {
 
 
 export const seasonGames = (season) => games.filter((g) => g.season === season);
+
+/** Forecasts the daily pipeline saved before tip-off (timing checked against the
+ * tip time), graded. This is the live part of the record; the rest is the
+ * walk-forward evaluation, produced after the fact by models that had not seen
+ * the games. */
+export const liveRecord = (() => {
+  const g = games.filter((x) => x.status === "final" && x.fc && x.fc.origin === "issued" && x.fc.verification === "verified" && x.fc.correct != null);
+  const w = g.filter((x) => x.fc.correct).length;
+  const dates = g.map((x) => x.date).sort();
+  return { n: g.length, w, l: g.length - w, first: dates[0] ?? null, last: dates.at(-1) ?? null };
+})();

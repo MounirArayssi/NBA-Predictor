@@ -33,7 +33,7 @@ Win probabilities need the same care. The curve that turns a forecast margin int
 
 ## Results
 
-The backtest now covers {perf.record.all.n.toLocaleString()} games from {perf.record.first} to {perf.record.last}. It picked {perf.record.all.win}% of winners. Always picking the home team would have picked {perf.record.all.home_win}%.
+The published record, almost all of it from this backtest, now covers {perf.record.all.n.toLocaleString()} games from {perf.record.first} to {perf.record.last}. It picked {perf.record.all.win}% of winners. Always picking the home team would have picked {perf.record.all.home_win}%.
 
 <Dumbbell
   title="Winners picked by season: model vs always picking the home team"
@@ -46,5 +46,5 @@ Accuracy rises from 2022-23 to 2025-26, partly because each later season has mor
 
 ## Caveats
 
-- These are **retrospective** tests, not forecasts published at the time. The site always keeps them separate from issued forecasts.
+- These are **retrospective** tests, not forecasts published at the time. The site's record merges them with the forecasts the daily pipeline saved before tip-off (one forecast per game, the live one when it exists), and the Performance page reports the live forecasts on their own as well.
 - Ten games where the source table stores the same team as home and away are left out of the published figures; see [Methodology](/methodology/).

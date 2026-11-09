@@ -1,4 +1,4 @@
-# NBA Forecasts — website
+# The Hoop Ledger — website
 
 A static, multipage website for the NBA prediction model in this repository. It
 shows daily forecasts, game pages, team profiles, a searchable forecast archive,
@@ -175,11 +175,12 @@ the homepage says so explicitly when that edition is more than about 30 hours ol
 ## Deploying
 
 `dist/` is plain static files. Any static host works (Cloudflare Pages, Netlify,
-GitHub Pages, S3). Set `SITE_URL` before building once a domain exists; that turns
-on canonical URLs and the sitemap:
+GitHub Pages, S3). The production domain is https://thehoopledger.com (set in
+`astro.config.mjs`); canonical URLs and the sitemap use it. Override it for a
+preview deployment with `SITE_URL`:
 
 ```bash
-SITE_URL=https://example.com npm run build
+SITE_URL=https://preview.example.com npm run build
 ```
 
 Nothing in `dist/` contains credentials; `check_build.mjs` scans for connection

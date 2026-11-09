@@ -1,5 +1,5 @@
 """
-Read-only data export for the NBA Forecasts website (web/).
+Read-only data export for The Hoop Ledger website (web/).
 
     python web/scripts/export_data.py                 # export from the local database
     python web/scripts/export_data.py --refresh-schedule   # also re-download tip-off times

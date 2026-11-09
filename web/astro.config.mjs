@@ -3,11 +3,11 @@ import { defineConfig } from "astro/config";
 import sitemap from "@astrojs/sitemap";
 import mdx from "@astrojs/mdx";
 
-// Static output only. Set SITE_URL when a production domain exists so canonical
-// URLs and the sitemap use it; without it, canonical tags are omitted.
+// Static output only. The production domain is thehoopledger.com; SITE_URL can
+// override it (e.g. for a preview deployment). Canonical URLs and the sitemap use it.
 export default defineConfig({
-  site: process.env.SITE_URL || undefined,
-  integrations: [mdx(), ...(process.env.SITE_URL ? [sitemap()] : [])],
+  site: process.env.SITE_URL || "https://thehoopledger.com",
+  integrations: [mdx(), sitemap()],
   output: "static",
   trailingSlash: "always",
   build: { format: "directory" },

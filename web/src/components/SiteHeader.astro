@@ -1,5 +1,6 @@
 ---
 import { TITLE, site } from "../lib/data.js";
+import LogoMark from "./LogoMark.astro";
 interface Props { section: string }
 const { section } = Astro.props;
 const links = [
@@ -15,7 +16,7 @@ const links = [
 ---
 <header class="site-header instrument">
   <div class="wrap bar">
-    <a class="title" href="/"><svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10.5" fill="#e8773a"/><g fill="none" stroke="#080b0e" stroke-width="1.4"><circle cx="12" cy="12" r="10.5"/><path d="M12 1.5v21M1.5 12h21M5 4.6q4 7.4 0 14.8M19 4.6q-4 7.4 0 14.8"/></g></svg>{TITLE}</a>
+    <a class="title" href="/" aria-label={TITLE}><LogoMark class="mark" /><span class="wm"><span class="the">The</span> Hoop Ledger</span></a>
     <span class="season"><i class="led" aria-hidden="true"></i>{site.season} season</span>
     <button class="menu-btn" type="button" aria-expanded="false" aria-controls="site-nav">Menu</button>
     <nav id="site-nav" aria-label="Primary">
@@ -47,7 +48,9 @@ const links = [
 </script>
 
 <style>
-  .mark { width: 1.15em; height: 1.15em; vertical-align: -0.2em; margin-right: 0.4em; }
+  .title :global(.mark) { width: 1.35em; height: 1.35em; vertical-align: -0.3em; margin-right: 0.45em; transition: transform 0.5s var(--ease-out); }
+  .title:hover :global(.mark) { transform: rotate(-14deg); }
+  .the { font-family: var(--sans); font-size: 0.62em; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--header-muted); vertical-align: 0.25em; margin-right: 1px; }
   .site-header { background: var(--header); color: var(--header-ink); position: relative; }
   /* A single thin trace that runs once along the header's bottom edge. */
   .site-header::after { content: ""; position: absolute; left: 0; bottom: -1px; height: 1px; width: 100%; background: var(--accent); transform: scaleX(0); transform-origin: left; animation: trace 1.4s var(--ease-out) 0.2s forwards; opacity: 0.7; }
