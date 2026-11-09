@@ -67,13 +67,7 @@ def build_feature_dataset(window=10):
             a7.avg_points             AS away_avg_points_l7,
             a7.avg_offensive_rating   AS away_off_rating_l7,
             a7.avg_defensive_rating   AS away_def_rating_l7,
-            a7.win_pct                AS away_win_pct_l7,      
-                  
-            -- Vegas lines (NULL for historical games without odds)
-            go.home_spread        AS vegas_spread,
-            go.total_line         AS vegas_total,
-            go.vegas_home_implied AS vegas_home_implied,
-            go.vegas_away_implied AS vegas_away_implied
+            a7.win_pct                AS away_win_pct_l7
 
         FROM games g
         JOIN teams ht ON g.home_team_id = ht.team_id
@@ -121,9 +115,6 @@ def build_feature_dataset(window=10):
         AND as_of_date <= g.game_date
     )
 
-        -- LEFT JOIN so games without odds still appear
-        LEFT JOIN game_odds go ON go.game_id = g.game_id
-
         WHERE g.is_final = TRUE
         AND g.home_score IS NOT NULL
         AND g.away_score IS NOT NULL
@@ -137,7 +128,6 @@ def build_feature_dataset(window=10):
     df = add_rest_days(df)
     df = add_h2h_features(df)
     df = add_playoff_features(df)
-    df = add_vegas_features(df)
     df = add_similarity_features(df)
     df = add_playoff_elevation_features(df) 
     df = add_home_court_strength(df)      # add
@@ -577,33 +567,6 @@ def add_quarter_features(df):
 
     return df
 
-
-def add_vegas_features(df):
-    print("  Processing Vegas features...")
-
-    # For historical games — don't fill with rolling averages
-    # Use 0 as a flag meaning "no real odds available"
-    # Model will learn to ignore when 0, trust when real
-    df['has_vegas_odds'] = df['vegas_total'].notna().astype(int)
-
-    df['vegas_total'] = df['vegas_total'].fillna(0)
-    df['vegas_spread'] = df['vegas_spread'].fillna(0)
-    df['vegas_home_implied'] = df['vegas_home_implied'].fillna(0)
-    df['vegas_away_implied'] = df['vegas_away_implied'].fillna(0)
-
-    # Only compute these when real odds exist
-    df['vegas_vs_home_avg'] = df.apply(
-        lambda r: r['vegas_home_implied'] - r['home_avg_points']
-        if r['has_vegas_odds'] else 0,
-        axis=1
-    )
-    df['vegas_vs_away_avg'] = df.apply(
-        lambda r: r['vegas_away_implied'] - r['away_avg_points']
-        if r['has_vegas_odds'] else 0,
-        axis=1
-    )
-
-    return df
 
 def add_similarity_features(df):
     """
@@ -1384,9 +1347,7 @@ if __name__ == "__main__":
         'home_avg_points', 'away_avg_points',
         'home_rest_days', 'away_rest_days',
         'is_playoff', 'series_game_num',
-        'series_momentum',
-        'vegas_total', 'vegas_spread',
-        'vegas_home_implied', 'vegas_away_implied'
+        'series_momentum'
     ]].tail(10))
 
     print(f"\nTotal features: {len(df.columns)}")

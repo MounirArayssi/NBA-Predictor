@@ -202,10 +202,6 @@ class Prediction(Base):
     lock_reason = Column(String(100))
     model_margin = Column(Numeric(6, 2))
     model_total = Column(Numeric(6, 2))
-    vegas_spread = Column(Numeric(6, 2))
-    vegas_total = Column(Numeric(6, 2))
-    spread_edge = Column(Numeric(6, 2))
-    total_edge = Column(Numeric(6, 2))
     actual_margin = Column(Numeric(6, 2))
     actual_total = Column(Numeric(6, 2))
     margin_error = Column(Numeric(6, 2))
@@ -248,20 +244,6 @@ class TeamRollingStats(Base):
         UniqueConstraint('team_id', 'as_of_date', 'window',
                          name='uq_team_rolling_stats'),
     )
-
-
-class GameOdds(Base):
-    __tablename__ = "game_odds"
-
-    id                 = Column(Integer, primary_key=True)
-    game_id            = Column(Integer, ForeignKey("games.game_id"))
-    fetched_at         = Column(DateTime, default=func.now())
-    home_spread        = Column(Numeric(5, 1))
-    away_spread        = Column(Numeric(5, 1))
-    total_line         = Column(Numeric(5, 1))
-    vegas_home_implied = Column(Numeric(6, 2))
-    vegas_away_implied = Column(Numeric(6, 2))
-    bookmaker          = Column(String(50))
 
 
 class TeamStyleVector(Base):

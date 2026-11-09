@@ -471,7 +471,6 @@ def predict_team_player_stats(team_id, opponent_team_id,
                                game_date=None,
                                injury_report=None,
                                team_abbr=None,
-                               player_props=None,
                                season=None):
     """
     Predict stat lines for all rotation players on a team.
@@ -488,8 +487,6 @@ def predict_team_player_stats(team_id, opponent_team_id,
     if season is None:
         season = CURRENT_SEASON
 
-    if player_props is None:
-        player_props = {}
 
     models = load_player_models()
     roster = get_team_roster(team_id, game_date, is_playoff=is_playoff, season=season)
@@ -775,8 +772,6 @@ def predict_team_player_stats(team_id, opponent_team_id,
                 pred_ast *= 1.03
                 hot_flag = True
 
-        # No anchoring to sportsbook player props: predictions are independent
-        # of the market so they can be compared against it.
         pred_pts = float(pred_pts)
         pred_reb = float(pred_reb)
         pred_ast = float(pred_ast)
@@ -888,58 +883,6 @@ def predict_team_player_stats(team_id, opponent_team_id,
     predictions = rotation
 
     return predictions, team_points, team_rebounds, team_assists
-
-def apply_vegas_props_anchor(pred_pts, pred_reb, pred_ast,
-                              player_name, player_props,
-                              anchor_weight=0.3):
-    if not player_props:
-        return pred_pts, pred_reb, pred_ast
-
-    # Normalize name for matching
-    def normalize(name):
-        return name.lower().replace('.', '').replace('-', ' ').strip()
-
-    player_norm = normalize(player_name)
-
-    props = None
-    for name, lines in player_props.items():
-        if normalize(name) == player_norm:
-            props = lines
-            break
-
-    # Fallback — last name + first initial match
-    if not props:
-        last  = player_name.split()[-1].lower()
-        first = player_name[0].lower()
-        for name, lines in player_props.items():
-            parts = name.split()
-            if (len(parts) >= 2 and
-                    parts[-1].lower() == last and
-                    parts[0][0].lower() == first):
-                props = lines
-                break
-
-    if not props:
-        return pred_pts, pred_reb, pred_ast
-
-    def nudge(pred, line, weight, cap=1.5):
-        if not line:
-            return pred
-        adj = max(-cap, min(cap, (line - pred) * weight))
-        return round(pred + adj, 1)
-
-    new_pts = nudge(pred_pts, props.get('points'), anchor_weight)
-    new_reb = nudge(pred_reb, props.get('rebounds'), anchor_weight)
-    new_ast = nudge(pred_ast, props.get('assists'), anchor_weight)
-
-    if abs(new_pts - pred_pts) > 0.1:
-        print(f"    📊 [{player_name}] "
-              f"pts {pred_pts:.1f}→{new_pts:.1f} "
-              f"(Vegas: {props.get('points','—')}) | "
-              f"reb {pred_reb:.1f}→{new_reb:.1f} | "
-              f"ast {pred_ast:.1f}→{new_ast:.1f}")
-
-    return new_pts, new_reb, new_ast
 
 def redistribute_playoff_minutes(all_players):
     if not all_players or len(all_players) < 5:

@@ -160,8 +160,7 @@ def main():
                    p.predicted_at, p.lock_reason,
                    p.home_score_predicted::float ph, p.away_score_predicted::float pa,
                    p.home_win_probability::float hwp, p.confidence_score::float conf,
-                   p.winner_correct, p.feature_vector, p.vegas_spread::float vspread,
-                   p.vegas_total::float vtotal
+                   p.winner_correct, p.feature_vector
             FROM predictions p
             WHERE p.model_version = :wf OR (p.is_official AND p.prediction_type <> 'backfill')
         """, wf=WF)
@@ -522,17 +521,6 @@ def main():
                 bucket_cal.append(dict(label=lab, n=int(len(x)), pred=fnum(x.pm.mean(), 1), actual=fnum(x.am.mean(), 1)))
 
         team_err = np.concatenate([(B.home_score - B.ph).abs().values, (B.away_score - B.pa).abs().values])
-        market = B[B.vspread.notna()]
-        market_obj = None
-        if len(market):
-            vm = -market.vspread
-            market_obj = dict(n=int(len(market)),
-                              model_margin_mae=fnum((market.am - market.pm).abs().mean(), 2),
-                              market_margin_mae=fnum((market.am - vm).abs().mean(), 2),
-                              model_total_mae=fnum((market["at"] - market.pt).abs().mean(), 2) if market.vtotal.notna().any() else None,
-                              market_total_mae=fnum((market["at"] - market.vtotal).abs().mean(), 2) if market.vtotal.notna().any() else None,
-                              same_favorite=int(((market.pm > 0) == (vm > 0)).sum()),
-                              first=str(market.game_date.min()), last=str(market.game_date.max()))
 
         performance = dict(
             record=dict(all=summ(B), first=str(B.game_date.min()), last=str(B.game_date.max()),

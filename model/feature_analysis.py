@@ -188,7 +188,6 @@ FEATURE_GROUPS = {
     'Clutch Performance': [f for f in TEAM_FEATURE_COLS if any(x in f for x in ['q4', 'clutch'])],
     'Defensive Matchups': [f for f in TEAM_FEATURE_COLS if 'def_vs' in f or 'def_style' in f],
     'Shooting Consistency': [f for f in TEAM_FEATURE_COLS if 'bad_night' in f],
-    'Vegas Context': ['has_vegas_odds'],
 }
 
 PLAYER_FEATURE_GROUPS = {

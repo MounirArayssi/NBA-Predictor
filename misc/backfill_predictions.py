@@ -19,9 +19,8 @@ Usage
 
 Notes
 -----
-- Injury report and player props are fetched LIVE (today's data) because historical
-  snapshots are not stored. Team rolling stats and Vegas odds in the DB ARE from the
-  correct historical dates, so team-level predictions are still meaningful.
+- The injury report is the official NBA report archived for each date. Team rolling
+  stats in the DB are from the correct historical dates.
 - Games with no DB entry for the target date are skipped silently.
 - Backfill predictions are saved with prediction_type='backfill' and is_official=True
   (unless an official prediction already exists for that game).
@@ -200,7 +199,7 @@ def report_db_coverage(start: date, end: date):
 # Per-date prediction
 # ---------------------------------------------------------------------------
 
-def predict_for_date(target: date, injury_report, all_player_props):
+def predict_for_date(target: date, injury_report):
     """Generate and save predictions for a single past date."""
     from model.predict import (
         load_models, load_calibration_model, get_todays_games, predict_single_game,
@@ -223,7 +222,7 @@ def predict_for_date(target: date, injury_report, all_player_props):
     predictions = []
     for game in games:
         pred = predict_single_game(
-            game, model_home, model_away, injury_report, all_player_props,
+            game, model_home, model_away, injury_report,
             model_margin=model_margin, calibration_model=calibration_model,
         )
         if pred:
@@ -293,8 +292,8 @@ def main():
     report_db_coverage(start, end)
 
     # Injury reports are the official NBA report archived for each date
-    # (fetched per date in predict_for_date). Player props aren't used.
-    injury_report, all_player_props = None, {}
+    # (fetched per date in predict_for_date).
+    injury_report = None
 
     # Loop through every date
     total_predictions = 0
@@ -306,7 +305,7 @@ def main():
     for target in daterange(start, end):
         log.info(f"\n--- {target} ---")
         try:
-            n = predict_for_date(target, injury_report, all_player_props)
+            n = predict_for_date(target, injury_report)
             total_predictions += n
             if n == 0:
                 skipped_dates.append(target)

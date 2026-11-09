@@ -15,7 +15,6 @@ Leakage guards
   switched off here. They don't feed game scores anyway (TEAM_MODEL_ONLY), only the
   confidence tag / key factors.
 - Elo replays from 2021-22 (ELO_START_DATE patched in-process, production unchanged).
-- Vegas is not used (USE_MARKET_IN_PREDICTION=False); stored lines are kept for grading.
 
 Rows are saved with model_version='wf-v2', prediction_type='walkforward',
 is_official=False, so they never mix with the real pre-game record. Each row is
@@ -51,7 +50,7 @@ MIN_CALIBRATION_ROWS = 300
 WF_ELO_START = '2021-10-19'   # first game of 2021-22, the earliest season in the DB
 
 
-def no_player_model(game, row_dict, injury_report, game_props):
+def no_player_model(game, row_dict, injury_report):
     return {'home_preds': [], 'home_pts': 0.0, 'away_preds': [], 'away_pts': 0.0,
             'available': False}
 
@@ -106,7 +105,6 @@ def save_and_grade(preds, train_through):
         for p in preds:
             game = s.get(Game, p['game_id'])
             home, away = float(p['home_pred']), float(p['away_pred'])
-            vs, vt = p.get('vegas_spread'), p.get('vegas_total')
             row = Prediction(
                 game_id=game.game_id,
                 model_version=WF_VERSION,
@@ -122,10 +120,6 @@ def save_and_grade(preds, train_through):
                 feature_vector=p.get('feature_vector'),
                 model_margin=home - away,
                 model_total=home + away,
-                vegas_spread=vs,
-                vegas_total=vt,
-                spread_edge=None if vs is None else (home - away) - float(vs),
-                total_edge=None if vt is None else (home + away) - float(vt),
             )
             evaluate_prediction_row(row, game, now)
             s.add(row)
@@ -194,10 +188,6 @@ def report():
                AVG(p.margin_error) margin_mae,
                AVG(p.total_score_error) total_mae,
                AVG(POWER(p.home_win_probability - (g.home_score > g.away_score)::int, 2)) brier,
-               AVG(ABS(-p.vegas_spread - p.actual_margin)) vegas_margin_mae,
-               AVG(((-p.vegas_spread > 0) = (p.actual_margin > 0))::int)
-                   FILTER (WHERE p.vegas_spread <> 0) vegas_win_pct,
-               COUNT(p.vegas_spread) n_vegas,
                AVG((g.home_score > g.away_score)::int) home_win_pct
         FROM predictions p JOIN games g USING (game_id)
         WHERE p.model_version = :v

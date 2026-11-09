@@ -153,7 +153,6 @@ NBA-Predictor/
 │   │   ├── compute_team_similarity.py        # legacy; not a model input
 │   │   ├── team_strength.py                  # Elo and season-margin blend
 │   │   ├── update_series.py                  # playoff series state
-│   │   ├── fetch_odds.py                     # legacy pipeline step; stored only, not a model input, not published
 │   │   └── build_features.py                 # assembles the feature matrix
 │   └── storage/                    # SQLAlchemy engine and ORM models
 ├── model/

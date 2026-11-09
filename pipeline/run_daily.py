@@ -108,13 +108,6 @@ def step_fetch_box_scores():
     fetch_all_box_scores()
 
 
-def step_fetch_odds():
-    from data.ingestion.fetch_odds import fetch_todays_odds, parse_and_store_odds
-    odds = fetch_todays_odds()
-    if odds:
-        parse_and_store_odds(odds)
-
-
 def step_rolling_stats():
     from data.ingestion.compute_rolling_stats import (
         compute_and_store_rolling_stats,
@@ -298,7 +291,6 @@ def run_pipeline(skip_retrain=False, dry_run_twitter=True,
         # for the next full run, so retraining is skipped too.
         run_step("Fetch games (recent + today)", step_fetch_games_today)
         run_step("Fetch box scores",             step_fetch_box_scores)
-        run_step("Fetch odds",                   step_fetch_odds)
         run_step("Rolling stats (today)",        step_rolling_stats_today)
         run_step("Player rolling stats (today)", step_player_rolling_stats_today)
         run_step("Update series context",        step_update_series)
@@ -306,7 +298,6 @@ def run_pipeline(skip_retrain=False, dry_run_twitter=True,
     else:
         run_step("Fetch games",              step_fetch_games)
         run_step("Fetch box scores",         step_fetch_box_scores)
-        run_step("Fetch odds",               step_fetch_odds)
         run_step("Rolling stats",            step_rolling_stats)
         run_step("Player rolling stats",     step_player_rolling_stats)
         run_step("Update series context",    step_update_series)
