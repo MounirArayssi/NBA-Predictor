@@ -63,7 +63,7 @@ web/
 | `/teams/[slug]/` | Team profile: Elo, data basketball, **Predictability** (per season and all seasons, four charts, intervals), **Surprise games** |
 | `/teams/predictability/` | **Team Predictability** explorer: season / games / minimum-sample filters, league chart, sortable table |
 | `/surprises/` | **Surprise Games** explorer: unexpected winners, margin misses, most recent; season / team / type / date filters |
-| `/performance/` | Record by season, every game, this season so far, links to the explorers, what moves the forecasts, calibration, errors, contexts, market benchmark |
+| `/performance/` | Record by season, every game, this season so far, links to the explorers, what moves the forecasts, calibration, errors, contexts |
 | `/notebook/`, `/notebook/[slug]/` | Research notes |
 | `/methodology/`, `/about/` | How it works (incl. how explanations are verified); about and attribution |
 
@@ -166,16 +166,24 @@ re-download tip-off times (cached in `.cache/`).
 
 1. Run the prediction pipeline as usual (nothing here changes it).
 2. `python scripts/export_data.py`
-3. `npm run build`, then optionally `node scripts/check_build.mjs`
-4. Deploy `dist/`.
+3. `python scripts/explain_forecasts.py` (needs `shap`; about 8 minutes)
+4. `python scripts/breakdown_inputs.py` and `python scripts/what_wins.py`
+5. `npm run build`, then `node scripts/check_build.mjs`
+6. Deploy `dist/` (see below).
 
 The site does not rebuild itself. Every page shows when its data was exported, and
 the homepage says so explicitly when that edition is more than about 30 hours old.
 
 ## Deploying
 
-`dist/` is plain static files. Any static host works (Cloudflare Pages, Netlify,
-GitHub Pages, S3). The production domain is https://thehoopledger.com (set in
+`dist/` is plain static files. Production runs on Cloudflare Pages (project
+`thehoopledger`, direct upload, no Git integration):
+
+```bash
+npx wrangler pages deploy dist --project-name thehoopledger --branch main
+```
+
+`public/_redirects` sends removed notebook entries to the notebook index. The production domain is https://thehoopledger.com (set in
 `astro.config.mjs`); canonical URLs and the sitemap use it. Override it for a
 preview deployment with `SITE_URL`:
 
@@ -218,9 +226,6 @@ The file name becomes the URL. Rebuild to publish.
 
 Entries are MDX, so they can embed components from `src/components/notebook/`:
 
-- `<CodeFile file="model/train.py" def="train_model" />` shows real code from the repo, read at
-  build time (also `section="name"` for `# --- name` markers, or `from="..." to="..."`). Snippets
-  therefore always match the code that runs; the build fails if the excerpt is not found.
 - `BarRows`, `Dumbbell`, `EloPaths`, `EloCalibration`, `BlendWeight` charts, fed from
   `src/data/notebook_figures.json` or `performance.json`.
 
@@ -233,7 +238,5 @@ backtest archive.
 - Live in-game scores. Game status is limited to scheduled, final and unknown. A future
   live-score source should update only the `score`/`status` of a game and never touch the
   saved forecast; `GameList.astro` and the game page are where it would surface.
-- Per-game explanations of how each input moved a forecast.
 - Player projections.
-- A fuller market comparison (needs historical odds).
 - Dark mode.

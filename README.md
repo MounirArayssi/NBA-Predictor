@@ -1,609 +1,292 @@
-# NBA Game Predictor
+# The Hoop Ledger: NBA game forecasting
 
-A machine-learning system that predicts NBA game scores, winners, and individual player statistics. It ingests live data from the NBA API, ESPN injury reports, and Vegas odds; trains ensemble gradient-boosting models; and serves predictions through a Streamlit dashboard.
+A personal basketball research project. It forecasts the final score of every NBA game from
+publicly available data, turns each projection into a win probability, and grades every
+forecast against the result. The research is published at **[thehoopledger.com](https://thehoopledger.com)**.
 
----
-
-## Table of Contents
-
-1. [Project Overview](#project-overview)
-2. [Motivation and Goals](#motivation-and-goals)
-3. [Key Features](#key-features)
-4. [Tech Stack](#tech-stack)
-5. [Repository Structure](#repository-structure)
-6. [End-to-End Workflow](#end-to-end-workflow)
-7. [Data Sources and Data Pipeline](#data-sources-and-data-pipeline)
-8. [Feature Engineering](#feature-engineering)
-9. [Modeling Approach](#modeling-approach)
-10. [Evaluation Strategy and Metrics](#evaluation-strategy-and-metrics)
-11. [Setup Instructions](#setup-instructions)
-12. [Usage](#usage)
-13. [Example Output](#example-output)
-14. [Design Decisions](#design-decisions)
-15. [Limitations](#limitations)
-16. [Future Improvements](#future-improvements)
-17. [Sports Prediction Disclaimer](#sports-prediction-disclaimer)
-18. [Author](#author)
-
-
-## Project Overview
-
-NBA Game Predictor is a full-stack sports analytics project that:
-
-- Pulls daily game schedules, box scores, injury reports, and Vegas odds from multiple sources.
-- Engineers 50+ features covering team form, rest, matchup style, playoff context, and scoring variance.
-- Trains separate `GradientBoostingRegressor` models for home and away team scoring.
-- Trains per-player stat models (points, rebounds, assists) and ensembles their output with the team models.
-- Stores predictions in PostgreSQL, evaluates them once final scores are available, and tracks accuracy over time.
-- Exposes a Streamlit dashboard for public-facing output.
+The project is independent and noncommercial. It is not affiliated with the NBA, any team,
+or any other organization, and it uses only public data.
 
 ---
 
-## Motivation and Goals
+## Contents
 
-NBA games are high-variance events influenced by roster changes, travel schedules, playoff intensity, and stylistic matchups that simple box-score averages fail to capture. The goals of this project are:
-
-- **Accuracy**: Beat the naive home-team-wins baseline (~56%) in game-winner prediction.
-- **Calibration**: Predict final scores close enough to be useful for analysis (target MAE < 10 pts per side).
-- **Freshness**: Incorporate same-day injury news, odds movement, and rest data before every prediction run.
-- **Leakage-free evaluation**: Use strictly chronological train/test splits so no future information bleeds into training.
-- **Transparency**: Log every prediction to a database and score it against actuals so model drift is detectable.
-
----
-
-## Key Features
-
-- **Dual team scoring models** — separate models for home and away score.
-- **Player-level predictions** — points, rebounds, and assists per player, with injury redistribution logic.
-- **Dynamic ensemble** — team and player model outputs are blended with weights that shift based on star availability, playoff context, and inter-model agreement.
-- **Vegas anchoring** — mild calibration toward DraftKings spread/total lines to correct systematic bias.
-- **Playoff adjustments** — series pressure, elimination context, pace drag, and playoff vs. regular-season efficiency factors.
-- **Injury impact** — ESPN injury report integration redistributes a missing star's statistical load to rotation players, and the team models see how many points per game of the regular rotation are sitting out.
-- **Confidence tagging** — every prediction is tagged HIGH / MEDIUM / LOW with an emoji indicator.
-- **Streamlit dashboard** — live view of recent predictions, accuracy trends, and Vegas-vs-model comparison.
-- **Daily pipeline** — single CLI command runs the full ingest → compute → retrain → predict cycle.
+1. [What it does](#what-it-does)
+2. [How it works](#how-it-works)
+3. [The model](#the-model)
+4. [Evaluation](#evaluation)
+5. [Repository layout](#repository-layout)
+6. [Setup](#setup)
+7. [Daily use](#daily-use)
+8. [The website](#the-website)
+9. [Limitations](#limitations)
+10. [Disclaimer](#disclaimer)
 
 ---
 
-## Tech Stack
+## What it does
 
-| Layer | Technology |
+For each NBA game:
+
+- a projected score for both teams, the projected winner, and the home team's win probability;
+- a saved record of exactly what the model knew when it made the forecast;
+- a grade once the game is final (winner, margin error, total error, Brier score).
+
+Forecasts are saved before tip-off. The first saved forecast for a game becomes the official
+one; a rerun can replace it only within the last hour before tip-off (to pick up late injury
+news), and never after the game starts.
+
+---
+
+## How it works
+
+```
+NBA Stats (nba_api) ─┐
+Official NBA         ├──► PostgreSQL ──► features ──► score models ──► forecast ──► graded
+injury report ───────┘                   (21 inputs)   (home, away)     saved        after final
+                                                                        pre-tip
+                                    │
+                                    └──► web/ exporter (read-only) ──► static site
+```
+
+1. **Ingest**: schedules, results and box scores from NBA Stats; player availability from
+   the official NBA injury report (archived per day, so past dates use that day's report).
+2. **Compute**: rolling team stats, Elo ratings, season margins, rest, playoff series state,
+   and missing rotation scoring.
+3. **Train**: two gradient-boosted models, one for the home score and one for the away score.
+4. **Predict**: score both sides, derive margin and total, and convert the margin to a win
+   probability with a calibration curve.
+5. **Evaluate**: grade official forecasts once games are final.
+
+---
+
+## The model
+
+### Inputs (21)
+
+All inputs are known before tip-off. Box-score stats from the game itself are never inputs.
+
+| Group | Inputs |
 |---|---|
-| Language | Python 3.10+ |
-| ML | scikit-learn (`GradientBoostingRegressor`) |
-| Data manipulation | pandas, numpy |
-| Database | PostgreSQL + SQLAlchemy 2.0 + psycopg2-binary |
-| NBA data | nba_api 1.11.4 |
-| Injury data | ESPN public API (no key required) |
-| Odds data | The Odds API |
-| Dashboard | Streamlit |
-| Config | python-dotenv |
+| Team strength | Elo rating (each team), Elo gap including home advantage, season scoring margin (each team, blended with last season for the first 20 games), games played (each team) |
+| Recent form, last 10 games | Offensive rating and defensive rating (each team), combined pace |
+| Availability | Points per game of rotation players listed Out or Doubtful on the official injury report (each team) |
+| Rest | Days since last game, capped at 5 (each team); back-to-back flag (each team) |
+| Playoff series | Home team's series wins, elimination game, series pressure |
+
+The full list is `FEATURE_COLS` in `model/train.py`.
+
+**Elo** (`data/ingestion/team_strength.py`): margin-of-victory Elo starting October 2021,
+K = 20, 70 Elo points of home advantage (about 2.5 points of margin), 75% of each rating's
+distance from 1500 carried into the next season, 28 Elo points per point of expected margin.
+Training and the daily forecast replay the same games, so the ratings match.
+
+**Rotation players**: played in at least 2 of the team's last 10 games averaging 15+ minutes.
+Questionable players are treated as available.
+
+### Score models (`model/train.py`)
+
+| Setting | Value |
+|---|---|
+| Algorithm | scikit-learn `GradientBoostingRegressor`, one model per side |
+| Trees / learning rate / depth | 150 / 0.04 / 3 |
+| Min samples per leaf / subsample | 15 / 0.7 |
+| Recency weighting | `exp(-days_ago / 550)`, so a game three seasons old counts about 13% |
+| Training data | every game since 2021-22 |
+
+The forecast is the team model alone: margin = home score − away score. A per-player model
+(`model/train_players.py`, `model/predict_players.py`) still runs and its player lines are
+printed in the pipeline output, but it is not blended into the game score; in testing the
+blend cost correct winners in every slice.
+
+**Win probability** (`model/calibrate.py`): Platt scaling (logistic regression on the
+projected margin), fit on earlier graded forecasts.
+
+### Ideas tested and dropped
+
+Each was tested with paired walk-forward cross-validation (`model/experiment.py`) and did
+not help: a 42-feature set (shooting splits, matchup products, scoring variance), schedule
+load and travel distance, per-team home-court strength, and an NBA Cup flag. The research
+notebook on the website explains each one.
 
 ---
 
-## Repository Structure
+## Evaluation
+
+**Walk-forward backtest** (`misc/walkforward_backfill.py`): every game from 2022-23 on is
+predicted by a model trained only on the seasons before it, through the same code path as
+the daily forecast, with that day's archived injury report. These forecasts are stored as
+`model_version = 'wf-v2'` and are clearly labeled as produced after the fact.
+
+Record as of November 9, 2026 (5,390 graded games, 2022-23 to 2026-27):
+
+| Measure | Result |
+|---|---|
+| Winners picked | 65.1% |
+| Home team won (baseline) | 55.6% |
+| Higher-Elo team won (baseline) | 64.0% |
+| Margin error (mean absolute) | 11.0 pts |
+| Total points error (mean absolute) | 15.0 pts |
+| Brier score | 0.217 (always saying 50% scores 0.250) |
+
+Up-to-date numbers, calibration charts and season-by-season results are on the website's
+Performance page. Daily forecasts are graded with `model/evaluate_predictions.py`
+(official forecasts only).
+
+---
+
+## Repository layout
 
 ```
 NBA-Predictor/
-├── config/
-│   ├── settings.py               # Season config, API base URLs, rate-limit delays
-│   └── __init__.py
+├── config/settings.py              # season settings, API settings, rate limits (reads .env)
 ├── data/
-│   └── ingestion/
-│       ├── fetch_games.py         # NBA API: schedule & results
-│       ├── fetch_box_scores.py    # Player & team box scores
-│       ├── fetch_players.py       # Player metadata
-│       ├── fetch_teams.py         # Team metadata
-│       ├── fetch_injuries.py      # ESPN injury reports
-│       ├── fetch_odds.py          # Vegas spreads, totals, player props
-│       ├── compute_rolling_stats.py        # Team rolling averages (5/7/10/20-game)
-│       ├── compute_player_rolling_stats.py # Player rolling averages (5/10-game)
-│       ├── compute_playoff_factors.py      # Playoff efficiency adjustments
-│       ├── compute_team_similarity.py      # Style-based matchup context
-│       ├── build_features.py      # Assembles full training feature matrix
-│       ├── update_game_scores.py  # Back-fills final scores
-│       └── update_series.py       # Tracks playoff series state
-│   └── storage/
-│       ├── db.py                  # SQLAlchemy engine & session factory
-│       ├── models.py              # ORM schema (teams, games, predictions, ...)
-│       └── __init__.py
+│   ├── ingestion/
+│   │   ├── fetch_games.py                    # schedule and results
+│   │   ├── fetch_box_scores.py               # player and team box scores
+│   │   ├── fetch_official_injuries.py        # official NBA injury report (archived daily)
+│   │   ├── fetch_injuries.py                 # ESPN injuries (live fallback only)
+│   │   ├── fetch_teams.py, fetch_players.py  # metadata (initial setup)
+│   │   ├── compute_rolling_stats.py          # team rolling windows
+│   │   ├── compute_player_rolling_stats.py   # player rolling windows (player model)
+│   │   ├── compute_playoff_factors.py
+│   │   ├── compute_team_similarity.py        # legacy; not a model input
+│   │   ├── team_strength.py                  # Elo and season-margin blend
+│   │   ├── update_series.py                  # playoff series state
+│   │   ├── fetch_odds.py                     # legacy pipeline step; stored only, not a model input, not published
+│   │   └── build_features.py                 # assembles the feature matrix
+│   └── storage/                    # SQLAlchemy engine and ORM models
 ├── model/
-│   ├── train.py                   # Train team scoring models
-│   ├── experiment.py              # Walk-forward CV for feature experiments
-│   ├── train_players.py           # Train per-player stat models
-│   ├── predict.py                 # Orchestrate daily predictions
-│   ├── predict_players.py         # Player stat prediction + injury redistribution
-│   ├── evaluate_predictions.py    # Score predictions vs. actual results
-│   ├── visualize.py               # Feature importance plots
-│   ├── mark_games_final.py        # Mark games as complete in DB
-│   ├── mark_predictions_official.py
-│   ├── audit.py                   # Prediction audit utilities
-│   ├── diagnose_predictions.py
-│   ├── feature_analysis.py
-│   ├── summarize_model_performance.py
-│   ├── remove_duplicate_predictions.py
-│   ├── model_home.pkl             # Saved home scoring model
-│   ├── model_away.pkl             # Saved away scoring model
-│   ├── player_models.pkl          # Saved player stat models
-│   ├── feature_importance.png     # Training artifact
-│   └── predictions_vs_actual.png  # Evaluation artifact
-├── dashboard/
-│   └── app.py                     # Streamlit web dashboard
-├── pipeline/
-│   └── run_daily.py               # Full daily orchestration script
-├── misc/                          # One-off maintenance, backfill, and debug scripts
-├── analysis/
-│   ├── player_points_analysis.txt
-│   └── team_model_analysis.txt
-├── logs/                          # Auto-created; daily pipeline logs + CSV backups
-├── requirements.txt
-├── .env                           # Secrets (not committed)
-└── README.md
+│   ├── train.py                    # team score models (production fit)
+│   ├── predict.py                  # daily forecasts; official-forecast locking
+│   ├── calibrate.py                # margin -> win probability
+│   ├── evaluate_predictions.py     # grade official forecasts
+│   ├── experiment.py               # walk-forward CV for feature tests
+│   ├── train_players.py, predict_players.py   # player model (display only)
+│   ├── feature_analysis.py         # legacy analysis script
+│   └── *.pkl                       # trained models
+├── pipeline/run_daily.py           # daily orchestration
+├── misc/
+│   ├── walkforward_backfill.py     # out-of-sample backtest, resumable
+│   ├── backfill_predictions.py     # predictions for past dates
+│   ├── backfill_missing_players.py # refetch incomplete player box scores
+│   └── backfill_rebounds.py        # fill missing offensive/defensive rebounds
+├── web/                            # The Hoop Ledger website (see web/README.md)
+├── dashboard/, site/               # earlier Streamlit dashboard and static page (superseded by web/)
+└── requirements.txt
 ```
 
 ---
 
-## End-to-End Workflow
+## Setup
 
-```
-+---------------------------------------------------------------------------+
-|  Daily Pipeline  (pipeline/run_daily.py)                                  |
-|                                                                           |
-|  1. Fetch games      -> NBA API schedule & results (all seasons)          |
-|  2. Fetch box scores -> player & team stats per game                      |
-|  3. Fetch odds       -> Vegas spreads, totals, DraftKings props           |
-|  4. Compute rolling  -> 5/7/10/20-game team windows                       |
-|  5. Compute player   -> 5/10-game player windows                          |
-|  6. Update series    -> playoff series state (wins, elimination)          |
-|  7. Retrain models   -> (optional, ~daily)                                |
-|  8. Predict today    -> team + player ensemble -> save to DB + CSV        |
-+---------------------------------------------------------------------------+
-```
-
----
-
-## Data Sources and Data Pipeline
-
-### Sources
-
-| Source | What it provides | Auth |
-|---|---|---|
-| NBA API (`nba_api`) | Game schedule, box scores, advanced team/player stats | None (public) |
-| ESPN public API | Injury reports (status, reason, return date) | None (public) |
-| The Odds API | Vegas spread, total, implied win probability | API key |
-| DraftKings (via The Odds API) | Player prop lines (points, rebounds, assists) | API key |
-
-### Ingestion flow
-
-1. **`fetch_games.py`** — pulls the full season schedule via `LeagueGameFinder` and upcoming games via `ScoreboardV2` (next 8 days). Upserts into `games` table; games first stored as scheduled get their final scores filled in once they finish. Season type (Preseason / Regular Season / Play-In / Playoffs) is derived from the NBA game-ID prefix.
-2. **`fetch_box_scores.py`** — downloads per-player and per-team box scores for every completed game. Computes shooting percentages, advanced rates, and efficiency metrics.
-3. **`fetch_injuries.py`** — polls ESPN's injury endpoint, normalises status strings into `Out / Doubtful / Questionable / Day-To-Day`, stores in `player_game_status`.
-4. **`fetch_odds.py`** — fetches spread, total, and per-player prop lines; matches to games by team and date; upserts into `game_odds`.
-5. **`compute_rolling_stats.py`** — computes team-level rolling windows (5, 7, 10, 20 games) over points, offensive/defensive rating, pace, FG%, 3P%, and win percentage. Stores in `team_rolling_stats`.
-6. **`compute_player_rolling_stats.py`** — same for individual players (windows 5, 10). Stores in `player_rolling_stats`.
-7. **`build_features.py`** — joins all the above into a flat feature matrix used for training and prediction.
-
-### Database schema (key tables)
-
-| Table | Description |
-|---|---|
-| `teams` | Team metadata (ID, abbreviation, city, conference, arena) |
-| `players` | Player metadata (ID, name, position, height, weight, active) |
-| `games` | Schedule and results (date, home/away IDs, scores, season type) |
-| `game_odds` | Vegas lines (spread, total, implied probability) |
-| `player_box_scores` | Per-player game stats |
-| `team_box_scores` | Per-team game aggregates |
-| `team_rolling_stats` | Pre-computed windowed team averages |
-| `player_rolling_stats` | Pre-computed windowed player averages |
-| `player_game_status` | Injury/availability tracking |
-| `predictions` | Model predictions + post-game evaluation |
-
----
-
-## Feature Engineering
-
-All feature construction lives in `data/ingestion/build_features.py`. The final training matrix contains 50+ columns grouped as follows:
-
-### Team form (10-game rolling window)
-- Average points, offensive rating, defensive rating, pace
-- FG%, 3P%, win percentage
-
-### Recent trend (7-game rolling window)
-- Momentum versions of all team-form features (short-window vs. long-window delta)
-
-### Rest and schedule context
-- Rest days before game
-- Back-to-back flag
-- Rest advantage (home rest days minus away rest days)
-
-### Playoff context
-- Is-playoff flag
-- Series game number
-- Home/away series wins so far
-- Elimination-game flag
-- Series pressure index (total games played in series)
-
-### Head-to-head history
-- Historical average scores between the two franchises
-- H2H win percentage
-- Number of H2H games in database
-
-### Vegas features
-- Spread (home perspective)
-- Total line
-- Implied win probability (sigmoid of spread)
-- Deviation from each team's season scoring average
-
-### Matchup interaction features
-- Combined pace
-- 3PT rate matchup (offensive 3PT rate vs. defensive 3PT rate)
-- Offensive rating edge vs. opponent defensive rating
-- Net rating differential
-- Implied total derived from team averages
-
-### Scoring variance
-- Scoring standard deviation over recent games
-
-### In-series form (playoffs)
-- Average points scored by each side in earlier games of the current series
-- Shrunk toward the team's rolling average (`(n·series_avg + 3·rolling_avg) / (n + 3)`) so a 1–2 game sample doesn't dominate
-- Game 1 and regular-season rows fall back to the rolling average
-
-### Availability
-- Points per game of rotation players who are not playing (`home_missing_pts`, `away_missing_pts`)
-- Rotation = played 3+ of the team's last 10 games averaging 15+ minutes; players who have since appeared for another team are excluded
-- In training, absences come from the box score; at prediction time, from players listed Out on the ESPN injury report
-
-### Playoff efficiency
-- Historical playoff vs. regular-season efficiency ratios per team
-- Points-per-usage metric for detecting efficiency shifts
-
-### Home-court strength
-- Arena altitude adjustment
-- Home-game scoring impact (team-level, estimated from historical splits)
-
-### Style-based defensive matchup
-- How well away team's defense performs vs. teams with similar pace/3PT profile
-- How well home team's defense handles away team's offensive style
-
-### Shooting consistency
-- FG% std, 3P% std across recent games
-
-### Removed features
-Consistency, bad-night probability, series-wins differential, and Q4/clutch splits were dropped — they were redundant with other features or noise, with no change in walk-forward CV (`model/experiment.py`).
-
----
-
-## Modeling Approach
-
-### Team scoring models (`model/train.py`)
-
-Two separate models are trained — one for the home score, one for the away score.
-
-| Parameter | Value |
-|---|---|
-| Algorithm | `GradientBoostingRegressor` |
-| Estimators | 150 |
-| Learning rate | 0.04 |
-| Max depth | 3 |
-| Sample weighting | Exponential recency decay: `exp(-days_ago / 550)` |
-| Train/test split | Chronological 85/15 — no random shuffling |
-
-The chronological holdout is used only to measure accuracy. Before saving, the models are refit on every available game so the production models include the most recent results.
-
-Feature changes are vetted with walk-forward cross-validation in `model/experiment.py` (rolling chronological folds, cached feature matrix).
-
-Saved artifacts: `model/model_home.pkl`, `model/model_away.pkl`, `model/model_margin.pkl`, `model/feature_cols.pkl`.
-
-### Player stat models (`model/train_players.py`)
-
-Three separate models (points, rebounds, assists) trained on players with 10+ game samples and a minimum of 15.0 minutes per game.
-
-| Parameter | Value |
-|---|---|
-| Algorithm | `GradientBoostingRegressor` (same hyperparams) |
-| Targets | Points, Rebounds, Assists |
-| Minimum sample | 10 games, 15 min/game |
-
-Saved artifact: `model/player_models.pkl`.
-
-### Ensemble (`model/predict.py`)
-
-The final score is a weighted blend of team model output and aggregated player model output:
-
-- **Default weights**: 69% team model, 31% player model.
-- **Playoff adjustment**: +4% to player weight in playoff games.
-- **Star-availability adjustment**: more high-usage players available raises the player model weight.
-- **Disagreement handling**: if team and player models diverge by 28+ points total, player weight is reduced by 30%.
-- **Vegas calibration**: mild pull toward DraftKings spread/total (30% weight), applied as a final calibration step.
-
-### Confidence tagging
-
-| Level | Condition |
-|---|---|
-| HIGH | Predicted margin >= 10 pts and team/player models agree |
-| MEDIUM | Predicted margin 5-10 pts |
-| LOW | Margin < 5 pts, or model disagreement, or high scoring variance |
-
----
-
-## Evaluation Strategy and Metrics
-
-### Anti-leakage design
-
-- Train/test splits are always **chronological** — the test set contains only games that occurred after all training games.
-- Rolling stats are computed only from games before the game being predicted.
-- Prediction-time lookups (rolling stats, shooting history, in-series form) are bounded to data available before the game date, so backfilled predictions don't see future games.
-- Vegas lines are included as features (available pre-game), not as labels.
-
-### Per-game metrics (computed after final scores are available)
-
-| Metric | Description |
-|---|---|
-| Home score error | `abs(predicted_home - actual_home)` |
-| Away score error | `abs(predicted_away - actual_away)` |
-| Total score error | `abs(predicted_total - actual_total)` |
-| Margin error | `abs(predicted_margin - actual_margin)` |
-| Spread error | Comparison vs. Vegas spread |
-| Winner correct | Boolean |
-
-### Aggregate model performance (from `analysis/team_model_analysis.txt`)
-
-| Metric | Value |
-|---|---|
-| Winner accuracy | ~72.4% |
-| Home bias baseline | ~56.1% |
-| Improvement over baseline | +16.3 pp |
-| Average MAE (home) | ~9.0 pts |
-| Average MAE (away) | ~10.5 pts |
-| Average MAE (combined) | ~9.78 pts |
-| Within 10 pts | ~65% |
-| Within 15 pts | ~85% |
-| Within 20 pts | ~95% |
-| Train/test MAE gap | < 2% |
-
-### Player model performance (from `analysis/player_points_analysis.txt`)
-
-| Target | MAE |
-|---|---|
-| Points | ~4.93 |
-| Rebounds | ~2.01 |
-| Assists | ~1.53 |
-
-Evaluation is triggered via `model/evaluate_predictions.py` once games are marked final in the database.
-
----
-
-## Setup Instructions
-
-### Prerequisites
-
-- Python 3.10+
-- PostgreSQL 14+ running locally or accessible via connection string
-- The Odds API key (free tier available at the-odds-api.com)
-
-### 1. Clone the repo
+Requirements: Python 3.10+, PostgreSQL 14+, Node 18+ (for the website only).
 
 ```bash
 git clone https://github.com/MounirArayssi/NBA-Predictor.git
 cd NBA-Predictor
-```
-
-### 2. Create and activate a virtual environment
-
-```bash
 python -m venv .venv
-# macOS/Linux
-source .venv/bin/activate
-# Windows
-.venv\Scripts\activate
-```
-
-### 3. Install dependencies
-
-```bash
+.venv\Scripts\activate          # Windows; macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 4. Configure environment variables
-
-Copy the template below to a `.env` file in the project root and fill in your values:
+Create `.env` in the project root:
 
 ```dotenv
-# Database
 DB_HOST=localhost
 DB_PORT=5432
 DB_NAME=nba_predictor
 DB_USER=postgres
 DB_PASSWORD=your_password
-
-# The Odds API
-ODDS_API_KEY=your_odds_api_key
-
-# Model versioning (optional)
-NBA_MODEL_VERSION=v1
 ```
 
-> If you are running the Streamlit dashboard, also check whether a `~/.streamlit/secrets.toml` file is required for the database URL (see TODOs below).
-
-### 5. Initialise the database
-
-SQLAlchemy creates all tables automatically on first run:
+Create the tables and load history (the NBA Stats API is rate-limited, so a full history
+pull takes hours):
 
 ```bash
 python -c "from data.storage.db import engine; from data.storage.models import Base; Base.metadata.create_all(engine)"
-```
-
-### 6. Seed historical data
-
-```bash
 python data/ingestion/fetch_teams.py
 python data/ingestion/fetch_players.py
 python data/ingestion/fetch_games.py
 python data/ingestion/fetch_box_scores.py
 python data/ingestion/compute_rolling_stats.py
 python data/ingestion/compute_player_rolling_stats.py
-```
-
-> The NBA API enforces rate limits. `config/settings.py` sets a 1.65-second delay between requests. A full historical pull may take several hours.
-
----
-
-## Usage
-
-### Run the full daily pipeline
-
-```bash
-# Full run: ingest -> compute -> retrain -> predict
-python pipeline/run_daily.py
-
-# Skip model retraining (faster, uses existing pkl files)
-python pipeline/run_daily.py --skip-retrain
-
-# Only fetch/compute what today's games need (no history backfill, no retrain)
-python pipeline/run_daily.py --today-only
-
-# Only predict, skip all data fetching
-python pipeline/run_daily.py --predict-only
-```
-
-### Train models independently
-
-```bash
-# Team scoring models
 python model/train.py
-
-# Player stat models
-python model/train_players.py
-```
-
-### Generate predictions for today
-
-```bash
-python model/predict.py
-```
-
-### Evaluate predictions against final scores
-
-```bash
-python model/evaluate_predictions.py
-```
-
-### Launch the Streamlit dashboard
-
-```bash
-streamlit run dashboard/app.py
 ```
 
 ---
 
-## Example Output
+## Daily use
 
-### Training output (`model/train.py`)
+Run from the repository root with `PYTHONPATH=.` and `PYTHONIOENCODING=utf-8` (the output
+contains non-ASCII characters).
 
-```
-Home model  --  Train MAE: 8.97  |  Test MAE: 9.03  |  Gap: 0.07%
-Away model  --  Train MAE: 9.41  |  Test MAE: 10.52 |  Gap: 1.11%
-Winner accuracy (test): 72.4%  |  Baseline: 56.1%
-```
-
-### Prediction record (database / CSV log)
-
-```
-Game        : BOS @ MIL  (2025-01-15)
-Predicted   : BOS 112 - MIL 108  (BOS by 4)
-Confidence  : MEDIUM
-Key factors : BOS off-rating edge +6.2, MIL back-to-back, pace 101.3
-Top scorers : J. Tatum 28.4 pts  |  G. Antetokounmpo 31.1 pts
+```bash
+python pipeline/run_daily.py                  # full: ingest, recompute, retrain, predict
+python pipeline/run_daily.py --today-only     # only what today's games need; no retrain
+python pipeline/run_daily.py --predict-only   # predict only (e.g. a rerun in the last hour before tip)
+python pipeline/run_daily.py --skip-retrain   # full ingest, keep the current models
 ```
 
-### Dashboard
+Before predicting, the pipeline checks that every team playing today has its previous game
+final, and re-fetches if not, so forecasts never miss a just-finished game.
 
-The Streamlit app at `http://localhost:8501` displays:
-- Recent official predictions with confidence levels and Vegas comparison
-- 30-day rolling win rate, MAE, and total-score error charts
-- Pending vs. evaluated prediction counts
+Grading a finished slate:
 
-### Feature importance
+```python
+from model.evaluate_predictions import evaluate_predictions
+evaluate_predictions(start_date=d, end_date=d)
+```
 
-`model/feature_importance.png` and `model/predictions_vs_actual.png` are generated after each training run.
+Extending the walk-forward backtest:
+
+```bash
+python misc/walkforward_backfill.py --seasons 2026-27   # resumable; skips games already done
+```
 
 ---
 
-## Design Decisions
+## The website
 
-### Chronological train/test splitting
+`web/` is an Astro static site generated from a **read-only** export of the database. It
+never connects to the database from the browser and never runs the model. It is deployed
+to Cloudflare Pages. Refresh order after the pipeline runs (from `web/`):
 
-Randomly shuffling game data would allow models to "see" future games during training, inflating test-set accuracy. The pipeline always sorts by date and takes the last N% of games as the test set. This mirrors real deployment conditions.
+```bash
+python scripts/export_data.py
+python scripts/explain_forecasts.py
+python scripts/breakdown_inputs.py
+python scripts/what_wins.py
+npm run build
+node scripts/check_build.mjs
+npx wrangler pages deploy dist --project-name thehoopledger --branch main
+```
 
-### Separate home and away models
-
-Home-court advantage is asymmetric. Teams play differently at home. Training one model per side lets each learn independent distributional patterns — home teams tend to be more consistent; away teams show higher variance.
-
-### Exponential recency weighting
-
-Older games are down-weighted with `exp(-days_ago / 550)` so the model adapts to roster changes and mid-season trends without discarding the full history needed for stable estimates.
-
-### Dynamic ensemble weighting
-
-A fixed 70/30 blend was replaced with weights that shift based on:
-- How many high-usage players are healthy (more stars available → trust player model more)
-- Playoff vs. regular season (playoff tendencies → player model carries more signal)
-- Inter-model disagreement (large gap → favour the more conservative signal)
-
-### Playoff efficiency factor
-
-Regular-season offensive ratings overestimate playoff scoring. `compute_playoff_factors.py` estimates per-team efficiency drag and injects it as a feature, reducing systematic over-prediction in May and June.
-
-### Injury redistribution
-
-When a star (high usage rate) is ruled out, a naive approach under-predicts replacement scoring. `predict_players.py` distributes the missing player's statistical load to rotation players proportional to `1 / lost_usage`, which empirically reduces total-score error on injury games.
+Details, routes and data rules: [web/README.md](web/README.md).
 
 ---
 
 ## Limitations
 
-- **No live in-game updates** — predictions are pre-game only; line movements after tip-off are not tracked.
-- **No play-by-play features** — shot quality, lineup combinations, and pace-on/off splits are not modelled.
-- **Limited early-season coverage** — model quality degrades for teams with fewer than ~30 games in the database.
-- **ESPN injury freshness** — the ESPN endpoint is polled once per pipeline run; late scratches (< 1 hour before tip-off) may not be captured.
-- **Mild Vegas calibration** — the 30% Vegas anchor improves calibration on average but can pull predictions toward the line in games where the model has a genuine edge.
-- **Player model sample size** — players with fewer than 10 games (rookies, returning injured players) fall back to league averages, which can be noisy.
-- **No uncertainty quantification** — confidence tiers (HIGH/MEDIUM/LOW) are heuristic; no calibrated probabilities or prediction intervals are produced.
-- **Single-season retraining** — models retrain on current-season data by default; cross-season generalisation is not evaluated.
+- Most graded forecasts come from the walk-forward backtest, produced after the games by
+  models that had not seen them; only recent forecasts were published before tip-off.
+- Forecast margins are much narrower than real margins, so blowouts are rarely forecast as
+  blowouts.
+- A missing player is measured by points per game, not total on-court impact; Questionable
+  players are treated as available.
+- `model/train.py` sorts training rows by date only, so games on the same date can be
+  ordered differently between database states, and a retrain is not exactly reproducible.
+- The pipeline is run by hand; it is not yet scheduled.
 
 ---
 
-## Future Improvements
+## Disclaimer
 
-- [ ] Lineup-based features (net rating of expected starting five)
-- [ ] Play-by-play data for shot quality and defensive metrics
-- [ ] Calibrated win probabilities with confidence intervals (Platt scaling or isotonic regression)
-- [ ] Automated GitHub Actions / cron job for the daily pipeline
-- [ ] Extend walk-forward backtesting (`model/experiment.py`) across multiple seasons
-- [ ] REST API (FastAPI) to serve predictions programmatically
-- [ ] Player prop bet evaluation vs. DraftKings lines
-- [ ] SHAP value explanations per prediction
-- [ ] Discord / Slack notifications
+This is an independent, noncommercial research and educational project. It uses only
+publicly available data, is not affiliated with, endorsed by, or connected to the NBA, any
+team, or any other company or organization, and represents only the author's own work.
+Forecasts are uncertain and are not advice of any kind.
 
 ---
 
-## Sports Prediction Disclaimer
-
-This project is built for educational and research purposes only. NBA game outcomes are inherently unpredictable. Predictions produced by this system:
-
-- Are not guaranteed to be accurate.
-- Should **not** be used as the basis for gambling or financial decisions.
-- Reflect historical patterns and may not account for all real-world variables (injuries announced after the prediction run, referee assignments, travel disruptions, etc.).
-
-The author(s) accept no liability for any decisions made based on these predictions.
-
----
-
-## Author
-
-**Mounir Arayssi**
-
----
-
-
+**Author:** Mounir Arayssi
