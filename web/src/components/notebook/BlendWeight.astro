@@ -11,7 +11,7 @@ const prev = Array.from({ length: N + 1 }, (_, n) => `${n ? "L" : "M"}${x(n)} ${
 ---
 <figure class="chart nb-chart">
   <p class="chart-title">Season margin input: weight on each season</p>
-  <p class="chart-sub">From <code>BLEND_GAMES = {games}</code>: last season fades out linearly over the first {games} games.</p>
+  <p class="chart-sub">Last season fades out in a straight line over the first {games} games.</p>
   <div class="chart-scroll">
     <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-labelledby="bw-t">
       <title id="bw-t">Share of the season margin input taken from this season and from last season, by games played</title>

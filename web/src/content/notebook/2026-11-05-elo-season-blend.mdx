@@ -5,7 +5,6 @@ topic: Model Development
 summary: "Replacing a 42-feature set with Elo, a blended season margin and a short list of form, rest and availability inputs improved every headline metric out of sample."
 outcome: Kept
 ---
-import CodeFile from "../../components/notebook/CodeFile.astro";
 import EloPaths from "../../components/notebook/EloPaths.astro";
 import EloCalibration from "../../components/notebook/EloCalibration.astro";
 import BlendWeight from "../../components/notebook/BlendWeight.astro";
@@ -18,15 +17,11 @@ The idea was to measure team strength once, well, and then add only the inputs t
 
 ## Elo: one number per team, updated after every game
 
-Elo gives each team a rating that starts at 1500. After every final game, the winner takes points from the loser. How many depends on how surprising the result was and how big the margin was. The update in the model:
+Elo gives each team a rating that starts at 1500. After every final game, the winner takes points from the loser. How many depends on how surprising the result was and how big the margin was. Three ideas shape the update:
 
-<CodeFile file="data/ingestion/team_strength.py" def="update" />
-
-Three details matter:
-
-- **Expected result.** `exp` is the home team's win probability implied by the rating gap, with 70 Elo points of home advantage added. An expected win moves the ratings very little. An upset moves them a lot.
-- **Margin of victory.** `mov_mult` grows with the final margin, but with diminishing returns (the 0.8 power). The `0.006 * dr_winner` term shrinks it when a heavy favorite wins big, so a strong team cannot run up its rating against weak opponents.
-- **Season carry-over.** Between seasons each rating keeps 75% of its distance from 1500 (`ELO_CARRY = 0.75`), to allow for roster turnover.
+- **Expected result.** Before each game, the rating gap (plus 70 points of home advantage) implies a win probability for each side. An expected win moves the ratings very little. An upset moves them a lot.
+- **Margin of victory.** A bigger win moves the ratings further, with diminishing returns: winning by 30 counts for more than winning by 10, but not three times as much. The effect is also scaled down when a heavy favorite wins big, so a strong team cannot run up its rating against weak opponents.
+- **Season carry-over.** Between seasons each rating keeps 75% of its distance from 1500, to allow for roster turnover.
 
 Here is what that produces over a full season:
 
@@ -36,21 +31,27 @@ The ratings carry real information about margins. Grouping every game since 2021
 
 <EloCalibration />
 
-The points follow the reference line of 28 Elo points per point of margin (`ELO_PER_POINT`) closely in the middle, where most games are, and spread out a little at the extremes, where there are fewer games.
+The points follow the reference line of 28 Elo points per point of margin closely in the middle, where most games are, and spread out a little at the extremes, where there are fewer games.
 
 ## The season-margin blend
 
-Elo is slow on purpose. To give the model a faster read on the current season, each team also gets its average point margin so far. Five games in, though, that average is mostly noise, so early in the season it is blended with last season's average margin:
-
-<CodeFile file="data/ingestion/team_strength.py" def="features" />
+Elo is slow on purpose. To give the model a faster read on the current season, each team also gets its average point margin so far. Five games in, though, that average is mostly noise, so early in the season it is blended with last season's average margin. The weight on this season is simply games played divided by 20:
 
 <BlendWeight games={20} />
 
-After 20 games the input is entirely this season. Before that, last season fades out in a straight line. `games_played` is also passed to the model, so it can learn how far to trust the number.
+After 20 games the input is entirely this season. Before that, last season fades out in a straight line. Games played is also passed to the model, so it can learn how far to trust the number.
 
 ## The final feature list
 
-<CodeFile file="model/train.py" from="FEATURE_COLS = [" to="]" caption="Every input the score models see. The same list is used in training, in the daily forecast and in the backtest." />
+Every input the score models see, for both teams unless noted. The same list is used in training and in the daily forecast.
+
+| Group | Inputs |
+|---|---|
+| Team strength | Elo rating; Elo gap including home advantage (one per game); season scoring margin, blended with last season early on; games played |
+| Recent form, last 10 games | Offensive rating; defensive rating; combined pace (one per game) |
+| Availability | Points per game of rotation players listed Out or Doubtful on the official injury report |
+| Rest | Days since the last game (capped at 5); back-to-back flag |
+| Playoff series | Home team's series wins; elimination game; series pressure |
 
 ## Results
 

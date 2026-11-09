@@ -5,7 +5,6 @@ topic: Model Development
 summary: "Elo and training now start in October 2021 instead of 2023. On held-out seasons, the longer history matched or beat the shorter one."
 outcome: Kept
 ---
-import CodeFile from "../../components/notebook/CodeFile.astro";
 
 ## Question
 
@@ -13,9 +12,7 @@ Elo ratings and the training data both started in October 2023. That kept the mo
 
 ## Why more history need not mean older basketball
 
-Two mechanisms keep recent games in charge even with a longer history. First, training weights decay with age, so a game from three seasons ago counts for about 13% as much as last night's:
-
-<CodeFile file="model/train.py" from="# Recency weighting" to="sample_weights = np.exp(-days_ago / 550)" />
+Two mechanisms keep recent games in charge even with a longer history. First, training weights decay with age. Each game's weight falls off exponentially with the days since it was played, halving about every 12.5 months, so a game from three seasons ago counts for about 13% as much as last night's.
 
 Second, Elo pulls every rating 25% of the way back toward 1500 each summer, so a 2021 rating has largely faded by 2024.
 
@@ -33,4 +30,4 @@ Margin and total errors were lower with the longer history in two of the three t
 
 ## Change
 
-<CodeFile file="data/ingestion/team_strength.py" from="# First game replayed" to="ELO_START_DATE = " caption="Live forecasts replay the same games as training, so the ratings the model sees each night are the ones it learned from." />
+Elo ratings and training data now both start in October 2021. The nightly forecast replays the same games as training, so the ratings the model sees each night are the ones it learned from.

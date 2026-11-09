@@ -58,7 +58,7 @@ const features = [
           <thead><tr><th>Group</th><th>Inputs</th></tr></thead>
           <tbody>{features.map(([g, d]) => (<tr><td><strong>{g}</strong></td><td>{d}</td></tr>))}</tbody>
         </table>
-        <p>A rotation player is one who played in at least two of the team's last ten games this season, averaging 15 or more minutes. Players listed Questionable are currently treated as available; the <a href="/notebook/2026-11-07-questionable/">Notebook</a> looks at how often they actually play.</p>
+        <p>A rotation player is one who played in at least two of the team's last ten games this season, averaging 15 or more minutes. Players listed Questionable are currently treated as available.</p>
 
         <h2 id="scores">Score forecasts</h2>
         <p>Two gradient-boosted regression models (scikit-learn, 150 shallow trees each) predict the home score and the away score. The forecast margin and total are derived from those two numbers. Training weights recent games more heavily (weights decay with a time constant of 550 days), and playoff games count three times as much because they make up only a small share of the history.</p>

@@ -5,7 +5,6 @@ topic: Research Notes
 summary: "Across the full backtest, mostly no. Road favorites ended close to their forecast margin at every size of gap. The one exception was 2022-23."
 outcome: Open
 ---
-import CodeFile from "../../components/notebook/CodeFile.astro";
 import Dumbbell from "../../components/notebook/Dumbbell.astro";
 import fig from "../../data/notebook_figures.json";
 
@@ -19,9 +18,7 @@ The first two seasons checked pointed in opposite directions. In 2022-23, road f
 
 ## Full backtest
 
-The analysis takes every regular-season backtest game where the forecast favored the road team and compares the forecast road margin with the actual one:
-
-<CodeFile file="web/scripts/notebook_figures.py" section="home_court" />
+The analysis takes every regular-season backtest game where the forecast favored the road team and compares the forecast road margin with the actual one. If a big talent edge cancels out home court, actual margins should come out larger than forecast, and the gap should grow with the size of the edge. Games are grouped by season and by the size of the forecast edge, with a standard error on each average so noise is easy to spot.
 
 <Dumbbell
   title="Road favorites: forecast vs actual margin, by season"

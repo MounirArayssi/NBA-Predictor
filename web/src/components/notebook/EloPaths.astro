@@ -33,5 +33,5 @@ ends.forEach((e) => { e.ly = Math.max(y(e.p[1]) + 4, last + 14); last = e.ly; })
       {ends.map((e) => <text x={x(e.p[0]) + 6} y={e.ly} class="strong">{e.a} {Math.round(e.p[1])}</text>)}
     </svg>
   </div>
-  <figcaption>Ratings come from replaying every game since October 2021 through the same <code>TeamStrength</code> class the model uses. Each line ends at the team's last game, so playoff teams run longer.</figcaption>
+  <figcaption>Ratings come from replaying every game since October 2021 with the same rating code the model uses. Each line ends at the team's last game, so playoff teams run longer.</figcaption>
 </figure>

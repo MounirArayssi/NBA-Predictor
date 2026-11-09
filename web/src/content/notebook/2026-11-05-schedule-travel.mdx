@@ -5,7 +5,6 @@ topic: Experiments
 summary: "Games in the last four or six nights, travel distance, time zones and team-specific home-court strength were each tested and did not improve accuracy."
 outcome: Rejected
 ---
-import CodeFile from "../../components/notebook/CodeFile.astro";
 
 ## Hypothesis
 
@@ -13,9 +12,7 @@ Fatigue and travel are a staple of NBA analysis: the fourth game in six nights, 
 
 ## What the model already knows
 
-Rest is already in the model, as days since each team's last game (capped at 5) plus a back-to-back flag:
-
-<CodeFile file="data/ingestion/build_features.py" def="add_rest_days" />
+Rest is already in the model, as days since each team's last game (capped at 5) plus a flag for a team playing on consecutive nights.
 
 Home advantage is already in two places: the 70-point home bonus inside the Elo gap, and the model itself, which learns home and away scores separately.
 
@@ -31,9 +28,7 @@ Each candidate was added on its own to the lean feature set and run through the 
 
 ## Finding
 
-None improved margin error or winners picked. The decision is recorded next to the feature list, so it is not re-tested by accident:
-
-<CodeFile file="model/train.py" from="# Lean set (2026-11-05)" to="time zones and per-team home-court strength" />
+None improved margin error or winners picked. The result is recorded next to the feature list in the code, so the same ideas are not re-tested by accident.
 
 The most likely reason is overlap. Heavy schedule stretches usually include a back-to-back, which the model already sees. Per-team home strength is a small number estimated from a few hundred games, so it is mostly noise.
 

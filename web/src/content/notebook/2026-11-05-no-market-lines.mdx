@@ -5,7 +5,6 @@ topic: Model Development
 summary: "The model used to lean toward the Vegas spread and total. It now stands on its own, so it can be compared with the market honestly."
 outcome: Kept
 ---
-import CodeFile from "../../components/notebook/CodeFile.astro";
 import perf from "../../data/performance.json";
 
 ## What it used to do
@@ -19,9 +18,7 @@ Each of those made the forecasts look better, because the market is a very good 
 
 ## The change
 
-All of those paths sit behind one switch, and the switch is off:
-
-<CodeFile file="model/predict.py" from="# Vegas lines are NOT used" to="USE_MARKET_IN_PREDICTION = False" />
+All of those paths now sit behind a single switch in the forecast code, and the switch is off. That makes the change easy to audit: turning it back on would restore the old behavior exactly.
 
 Lines are still loaded and stored with each forecast, but only so it can be graded against the market afterwards. None of the 21 model inputs comes from a sportsbook.
 

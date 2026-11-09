@@ -4,6 +4,7 @@ import Base from "../../layouts/Base.astro";
 import { fmtLongDate } from "../../lib/data.js";
 const entries = (await getCollection("notebook")).sort((a, b) => +b.data.date - +a.data.date || a.data.title.localeCompare(b.data.title));
 const topics = [...new Set(entries.map((e) => e.data.topic))].sort();
+const tally = ["Kept", "Rejected", "Open"].map((o) => [o, entries.filter((e) => e.data.outcome === o).length]).filter(([, n]) => n);
 ---
 <Base title="Notebook" description="Research notes from building the NBA forecast model: experiments that worked, ideas that did not, and open questions." section="notebook">
   <div class="wrap">
@@ -13,11 +14,12 @@ const topics = [...new Set(entries.map((e) => e.data.topic))].sort();
       <p class="lede">A working log of changes to the model and the questions behind them, including the ideas that were tested and dropped.</p>
     </header>
 
-    <div class="controls" id="nb-controls" hidden>
-      <div class="field">
-        <label for="nb-topic">Topic</label>
-        <select id="nb-topic"><option value="">All topics</option>{topics.map((t) => <option>{t}</option>)}</select>
-      </div>
+    <div class="bar">
+      <p class="tally">{entries.length} entries{tally.map(([o, n]) => <span class={`o-${o.toLowerCase()}`}><b class="num">{n}</b> {o.toLowerCase()}</span>)}</p>
+      <nav class="chips" aria-label="Filter by topic">
+        <a href="/notebook/" data-topic="" aria-current="true">All</a>
+        {topics.map((t) => <a href={`/notebook/?topic=${encodeURIComponent(t)}`} data-topic={t}>{t}</a>)}
+      </nav>
     </div>
 
     <ol class="entries">
@@ -42,22 +44,31 @@ const topics = [...new Set(entries.map((e) => e.data.topic))].sort();
 </Base>
 
 <script>
-  const sel = document.getElementById("nb-topic") as HTMLSelectElement;
-  (document.getElementById("nb-controls") as HTMLElement).hidden = false;
+  const chips = [...document.querySelectorAll<HTMLAnchorElement>(".chips a")];
   const items = [...document.querySelectorAll<HTMLElement>(".entries li")];
-  const q = new URLSearchParams(location.search).get("topic");
-  if (q) sel.value = q;
-  const apply = () => {
-    items.forEach((li) => (li.hidden = !!sel.value && li.dataset.topic !== sel.value));
-    const u = new URL(location.href);
-    sel.value ? u.searchParams.set("topic", sel.value) : u.searchParams.delete("topic");
-    history.replaceState(null, "", u);
+  const apply = (topic: string) => {
+    items.forEach((li) => (li.hidden = !!topic && li.dataset.topic !== topic));
+    chips.forEach((c) => (c.dataset.topic === topic ? c.setAttribute("aria-current", "true") : c.removeAttribute("aria-current")));
   };
-  sel.addEventListener("change", apply);
-  apply();
+  chips.forEach((c) => c.addEventListener("click", (e) => {
+    e.preventDefault();
+    const t = c.dataset.topic || "";
+    const u = new URL(location.href);
+    t ? u.searchParams.set("topic", t) : u.searchParams.delete("topic");
+    history.replaceState(null, "", u);
+    apply(t);
+  }));
+  apply(new URLSearchParams(location.search).get("topic") || "");
 </script>
 
 <style>
+  .bar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: var(--s3) var(--s5); max-width: 980px; margin-bottom: var(--s4); }
+  .tally { margin: 0; font-size: 0.9rem; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px var(--s4); }
+  .tally span { font-weight: 600; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chips a { font-size: 0.85rem; padding: 4px 12px; border: 1px solid var(--rule); border-radius: 999px; color: var(--ink-2); text-decoration: none; }
+  .chips a:hover { border-color: var(--ink-2); }
+  .chips a[aria-current] { background: var(--ink); border-color: var(--ink); color: var(--paper, #fff); }
   .entries { list-style: none; margin: 0; padding: 0; border-top: 2px solid var(--rule-heavy); max-width: 980px; }
   .entries li { display: grid; gap: var(--s2) var(--s6); padding: var(--s5) 0; border-bottom: 1px solid var(--rule); }
   @media (min-width: 760px) { .entries li { grid-template-columns: 200px minmax(0, 1fr); } }
