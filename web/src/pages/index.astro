@@ -73,6 +73,7 @@ const status = [
         {status.map(([k, v]) => <span><span class="k">{k}</span> <span class="num">{v}</span></span>)}
         <span><span class="k">Updated</span> <span class="age" data-ts={site.generated_at}>{fmtDateTime(site.generated_at)}</span></span>
       </p>
+      <p class="note">Forecasts are posted earlier in the day and may be updated in the hour before tip-off with the latest injury report. The last forecast saved before tip-off is the one that is graded. <a href="/methodology/">How forecasts are locked</a>.</p>
       <div id="stale" class="state warn" hidden></div>
       {slateDates.length === 0 && <p class="state">No upcoming games are in this edition of the data. See the <a href="/forecasts/">forecast calendar</a>.</p>}
       <div class="slates">
