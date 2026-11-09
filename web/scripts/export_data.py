@@ -551,7 +551,6 @@ def main():
                           pred_margin_sd=fnum(B.pm.std(), 1), actual_margin_sd=fnum(B.am.std(), 1)),
             counts=dict(issued=int(len(issued)), walkforward=int(len(bt_only)),
                         backfill_excluded=n_backfill),
-            market=market_obj,
         )
 
         # ------------------------------------------------------------ team analytics

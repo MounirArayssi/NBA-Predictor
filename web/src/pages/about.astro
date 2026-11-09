@@ -19,7 +19,7 @@ import Base from "../layouts/Base.astro";
       <p>The full record is on the <a href="/performance/">Performance</a> page and in the <a href="/forecasts/archive/">archive</a>; how the two are produced is on the <a href="/methodology/">Methodology</a> page.</p>
 
       <h2>What it predicts</h2>
-      <p>For each game: a projected score for both teams, the projected winner, and the probability that the home team wins. It does not predict player statistics, and it does not make betting recommendations.</p>
+      <p>For each game: a projected score for both teams, the projected winner, and the probability that the home team wins. It does not predict player statistics.</p>
 
       <h2>How it is built</h2>
       <p>A Python pipeline collects schedules, box scores and the official injury report, stores them in PostgreSQL, and runs gradient-boosted models built with scikit-learn. This website is a static site generated from a read-only export of that database, so it never connects to the database or runs the model itself. Details are on the <a href="/methodology/">Methodology</a> page.</p>
@@ -28,14 +28,15 @@ import Base from "../layouts/Base.astro";
       <ul>
         <li>Schedules, results and box scores: NBA Stats (stats.nba.com).</li>
         <li>Player availability: the official NBA injury report.</li>
-        <li>Market lines, where shown: stored for comparison only; they are not model inputs.</li>
       </ul>
 
-      <h2>Independence</h2>
-      <p>This project is not affiliated with, endorsed by, or connected to the National Basketball Association or any of its teams. Team names are used only to identify games. No team logos or player images are used.</p>
+      <h2 id="disclaimer">Disclaimer</h2>
+      <p>The Hoop Ledger is a personal, noncommercial project built to share my own basketball research: statistical findings, machine-learning experiments and forecast evaluations. It is free, has no advertising, and sells nothing.</p>
+      <p>Everything on the site is built from publicly available data. It does not use any private, proprietary or confidential data from any organization.</p>
+      <p>The project is not affiliated with, endorsed by, sponsored by, or connected to the National Basketball Association, any of its teams, or any other company or organization. It is my own work and does not represent the views of any employer. Team names are used only to identify games; no team logos or player images are used.</p>
 
       <h2>Limitations</h2>
-      <p>Forecasts are uncertain. The site is updated by hand, so results can lag. Forecasts are published for analysis and entertainment and are not betting advice. See <a href="/methodology/#limits">Limitations</a> for specifics.</p>
+      <p>Forecasts are uncertain. The site is updated by hand, so results can lag. Forecasts are published for research and educational purposes only. See <a href="/methodology/#limits">Limitations</a> for specifics.</p>
     </div>
   </div>
 </Base>

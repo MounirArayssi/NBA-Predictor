@@ -11,7 +11,7 @@ import Importance from "../components/charts/Importance.astro";
 import surprises from "../data/surprises.json";
 import whatWins from "../data/what_wins.json";
 import { performance as P, site, fmtShortDate, fixed, pct100 } from "../lib/data.js";
-const B = P.record, M = P.market;
+const B = P.record;
 const eloBase = whatWins.stats.find((s) => s.key === "elo");
 
 // Winner calls and the last 30 graded picks, from the per-game archive rows.
@@ -62,7 +62,6 @@ const ctx = [
             <tr><td>Total points error</td><td class="r num">{fixed(B.all.total_mae, 1)} pts</td><td>Average distance between forecast and actual combined score.</td></tr>
             <tr><td>Team score error</td><td class="r num">{fixed(B.all.team_mae, 1)} pts</td><td>Average miss on a single team's score. Half of team scores land within {B.team_median} points.</td></tr>
             <tr><td>Brier score</td><td class="r num">{fixed(B.all.brier, 3)}</td><td>Average squared error of the home win probability. Lower is better; always saying 50% scores 0.250.</td></tr>
-            {M && <tr><td>Against betting lines</td><td class="r num">{M.n} games</td><td>Betting markets are the hardest benchmark. Lines are stored for only {M.n} games so far; on those, the market's margin error was {fixed(M.market_margin_mae)} pts against the model's {fixed(M.model_margin_mae)}. <a href="#h-mk">Details</a>.</td></tr>}
           </tbody>
         </table>
       </div>
@@ -233,22 +232,6 @@ const ctx = [
       <p class="note">Close forecasts are close to coin flips by design; accuracy rises with the size of the predicted margin. Road favorites are picked correctly less often than home favorites.</p>
     </section>
 
-    {M && (
-      <section class="section market" aria-labelledby="h-mk">
-        <h2 id="h-mk">External benchmark: market lines</h2>
-        <p class="note read">The model does not use betting lines. Where a betting line was stored for a game, it is compared here as a reference point. Lines are available for only {M.n} games ({fmtShortDate(M.first)} – {fmtShortDate(M.last)}), far too few to draw conclusions.</p>
-        <div class="table-scroll narrow">
-          <table>
-            <thead><tr><th>Average error, {M.n} games</th><th class="r">Model</th><th class="r">Market line</th></tr></thead>
-            <tbody>
-              <tr><td>Margin</td><td class="r num">{fixed(M.model_margin_mae)}</td><td class="r num">{fixed(M.market_margin_mae)}</td></tr>
-              {M.model_total_mae != null && <tr><td>Total points</td><td class="r num">{fixed(M.model_total_mae)}</td><td class="r num">{fixed(M.market_total_mae)}</td></tr>}
-              <tr><td>Same favorite as the line</td><td class="r num" colspan="2">{M.same_favorite} of {M.n}</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-    )}
   </div>
 </Base>
 

@@ -41,7 +41,7 @@ const features = [
 
       <div class="prose">
         <h2 id="objective">Objective</h2>
-        <p>Forecast the final score of every NBA game before it starts, turn that into a winner and a win probability, and grade every forecast against the result. The model uses basketball information only. Betting lines are not inputs; where they are stored, they serve only as an outside benchmark.</p>
+        <p>Forecast the final score of every NBA game before it starts, turn that into a winner and a win probability, and grade every forecast against the result. The model uses basketball information only, all of it from public sources.</p>
 
         <Pipeline />
 
@@ -73,7 +73,7 @@ const features = [
         <p>Every game on this site has one forecast. Where the daily pipeline saved a forecast for a game, that is the one used ({C.issued} games). Every other game uses the walk-forward forecast described below ({C.walkforward.toLocaleString()} games). Both are graded the same way and counted together in every record. {C.backfill_excluded} forecasts from an older after-the-fact fill, which may have seen information from the games themselves, are left out entirely.</p>
 
         <h2 id="evaluation">Evaluation</h2>
-        <p>The main test is a walk-forward backtest. Each season from {R.seasons[0].season} to {R.seasons.at(-1).season} was predicted by a model trained only on the seasons before it, through the same code path as the daily forecasts, with the injury report archived for that day (the 5:30 PM ET report) and no betting lines. That makes it an estimate of how the method does on games it has not seen. The current season is included as it is played: its games are predicted after the fact by a model trained on all completed seasons, which has not seen any game from this season.</p>
+        <p>The main test is a walk-forward backtest. Each season from {R.seasons[0].season} to {R.seasons.at(-1).season} was predicted by a model trained only on the seasons before it, through the same code path as the daily forecasts, with the injury report archived for that day (the 5:30 PM ET report). That makes it an estimate of how the method does on games it has not seen. The current season is included as it is played: its games are predicted after the fact by a model trained on all completed seasons, which has not seen any game from this season.</p>
         <p>Most of the record is therefore retrospective: those forecasts were produced after the games, by models that had not seen them, rather than published beforehand. The current production model is retrained on all history and is used for upcoming games.</p>
         <p>Ten games in the source data list the same team as both home and away. They cannot be graded and are left out of every figure on this site.</p>
 
