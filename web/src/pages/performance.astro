@@ -11,6 +11,23 @@ import Importance from "../components/charts/Importance.astro";
 import surprises from "../data/surprises.json";
 import { performance as P, site, fmtShortDate, fixed, pct100 } from "../lib/data.js";
 const B = P.record, M = P.market;
+
+// Winner calls and the last 30 graded picks, from the per-game archive rows.
+import fs from "node:fs";
+import path from "node:path";
+import { gameUrl } from "../lib/data.js";
+const ARCH = path.resolve(process.cwd(), "public", "data");
+const rows = site.seasons.flatMap((s) => JSON.parse(fs.readFileSync(path.join(ARCH, `archive-${s}.json`), "utf8")))
+  .filter((r) => r.hs != null && r.as_ != null && r.ph != null);
+const cm = { hh: 0, ha: 0, ah: 0, aa: 0 };
+for (const r of rows) {
+  const pickHome = r.ph >= r.pa, homeWon = r.hs > r.as_;
+  cm[(pickHome ? "h" : "a") + (homeWon ? "h" : "a")]++;
+}
+const cmN = rows.length;
+const cmPct = (x) => `${((100 * x) / cmN).toFixed(0)}%`;
+const last30 = [...rows].sort((a, b) => (a.d < b.d ? -1 : a.d > b.d ? 1 : a.id < b.id ? -1 : 1)).slice(-30);
+const last30ok = last30.filter((r) => r.ok).length;
 const ctx = [
   ["By predicted margin", B.by_margin.map((r) => ({ ...r, label: `Favored by ${r.label}` }))],
   ["By which side was favored", B.by_favorite],
@@ -53,6 +70,35 @@ const ctx = [
         <span class="meta">{site.season}, in progress</span>
       </div>
       <SeasonSoFar season={site.season} />
+    </section>
+
+    <section class="section" aria-labelledby="h-calls">
+      <div class="cols cols-2 calls">
+        <div>
+          <h2 id="h-calls">Winner calls</h2>
+          <p class="chart-sub">Every graded game, sorted by which side the forecast picked and which side won. The diagonal is the hits.</p>
+          <table class="cm" aria-describedby="cm-note" data-reveal>
+            <thead><tr><th></th><th class="c">Home won</th><th class="c">Road won</th></tr></thead>
+            <tbody>
+              <tr><th scope="row">Picked home</th><td class="hit"><b class="num" data-count>{cm.hh.toLocaleString()}</b><span>{cmPct(cm.hh)}</span></td><td class="miss"><b class="num" data-count>{cm.ha.toLocaleString()}</b><span>{cmPct(cm.ha)}</span></td></tr>
+              <tr><th scope="row">Picked road</th><td class="miss"><b class="num" data-count>{cm.ah.toLocaleString()}</b><span>{cmPct(cm.ah)}</span></td><td class="hit"><b class="num" data-count>{cm.aa.toLocaleString()}</b><span>{cmPct(cm.aa)}</span></td></tr>
+            </tbody>
+          </table>
+          <p class="note" id="cm-note">The forecast picked the home team in {((100 * (cm.hh + cm.ha)) / cmN).toFixed(0)}% of games and was right {((100 * cm.hh) / (cm.hh + cm.ha)).toFixed(0)}% of the time when it did; road picks were right {((100 * cm.aa) / (cm.ah + cm.aa)).toFixed(0)}% of the time.</p>
+        </div>
+        <div>
+          <h2>Last 30 graded picks</h2>
+          <p class="chart-sub">Oldest to newest: {last30ok} right, {last30.length - last30ok} wrong. Each square opens the game.</p>
+          <ol class="streak" data-reveal>
+            {last30.map((r, i) => {
+              const pick = r.ph >= r.pa ? r.h : r.a;
+              const t = `${fmtShortDate(r.d)}: ${r.a} at ${r.h}, final ${r.as_}–${r.hs}. Picked ${pick}, ${r.ok ? "right" : "wrong"}.`;
+              const inner = <span aria-hidden="true">{r.ok ? "✓" : "✗"}</span>;
+              return <li class={r.ok ? "ok" : "no"} style={`--i:${i}`}>{r.page ? <a href={gameUrl(r.id)} title={t} aria-label={t}>{inner}</a> : <span title={t} role="img" aria-label={t}>{inner}</span>}</li>;
+            })}
+          </ol>
+        </div>
+      </div>
     </section>
 
     <section class="section" aria-labelledby="h-seasons">
@@ -203,6 +249,28 @@ const ctx = [
 </Base>
 
 <style>
+  .calls h2 { margin-bottom: 4px; }
+  .cm { max-width: 420px; }
+  .cm th, .cm td { padding: 8px; }
+  .cm td { text-align: center; border: 1px solid var(--rule); }
+  .cm td b { display: block; font-size: 1.35rem; }
+  .cm td span { font-size: 0.75rem; color: var(--muted); }
+  .cm td.hit b { color: var(--model); }
+  .cm td.miss b { color: var(--accent); }
+  .streak { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 4px; max-width: 420px; }
+  .streak li > * { display: grid; place-items: center; aspect-ratio: 1; border-radius: 3px; font-size: 0.85rem; font-weight: 700; text-decoration: none; }
+  .streak .ok > * { background: var(--model-soft); color: var(--model); }
+  .streak .no > * { background: var(--accent-soft); color: var(--accent); }
+  .streak a:hover { outline: 2px solid var(--ink); }
+  .streak a { transition: transform 0.15s ease; }
+  .streak a:hover { transform: scale(1.12); }
+  :global(html.js) .streak li { opacity: 0; transform: scale(0.4); }
+  :global(html.js) .streak.in li { opacity: 1; transform: none; transition: opacity 0.3s ease, transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1); transition-delay: calc(var(--i) * 28ms); }
+  .cm td { transition: background-color 0.6s ease 0.3s; }
+  :global(html.js) .cm.in td.hit { background: var(--model-soft); }
+  @media (prefers-reduced-motion: reduce) { :global(html.js) .streak li { opacity: 1; transform: none; } }
+  .streak a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
   .overview td:last-child { color: var(--ink-2); white-space: normal; min-width: 260px; }
   .overview td:first-child { white-space: nowrap; font-weight: 500; }
   .read h3 { margin-bottom: var(--s2); }

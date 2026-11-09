@@ -1,0 +1,336 @@
+---
+// Built from the box scores: each model input on this page rebuilt from the raw
+// results and box scores behind it (web/scripts/breakdown_inputs.py). A piece is
+// shown only when the rebuild reproduces the exact value the model received.
+// Ratings are split into the four factors with one linear fit; see
+// web/analytics/breakdown.py and /methodology/#raw-stats.
+import { teamColor } from "../lib/teamColors.js";
+import { signed, fixed, fmtShortDate } from "../lib/data.js";
+import bd from "../data/breakdowns.json";
+import ex from "../data/explanations.json";
+
+interface Props { g: any }
+const { g } = Astro.props;
+const B = bd.games[g.id];
+const I = g.inputs;
+const e = ex.games[g.id];
+const ok = !!e?.ok;
+const home = g.home, away = g.away;
+const sides = [["away", away], ["home", home]];
+const col = (t) => teamColor(t).light;
+
+// SHAP effect on the projected margin for a set of model inputs (null if unexplained).
+const eff = (keys) => (ok ? keys.reduce((s, k) => s + (e.c[k]?.[2] ?? 0), 0) : null);
+const effText = (v) => (v == null ? null : Math.abs(v) < 0.05 ? "no effect on the margin" : `${Math.abs(v).toFixed(1)} pts toward ${v > 0 ? home : away}`);
+
+const pctf = (x, d = 1) => (x == null ? "–" : `${(100 * x).toFixed(d)}%`);
+const FMT = { efg: (x) => pctf(x), tov: (x) => pctf(x), orb: (x) => pctf(x), ftr: (x) => (x == null ? "–" : x.toFixed(3)) };
+const ROWS = [...bd.factors, "other"];
+const LBL = { ...bd.labels, other: "Everything else" };
+
+// Ratings: right of center = helps this team. Offense parts as is; defense parts
+// flipped (allowing fewer points than average helps).
+const ratingRows = (side, kind) => {
+  const x = B?.[side]?.[kind];
+  if (!x?.ok || !x.parts) return null;
+  const sgn = kind === "def" ? -1 : 1;
+  return ROWS.map((k) => ({
+    k, label: LBL[k], v: sgn * x.parts[k],
+    team: k === "other" ? null : x.f[k], lg: k === "other" ? null : B.lg.f[k],
+    missing: k === "orb" && x.orb_missing,
+  }));
+};
+const ratingMax = Math.max(4, ...sides.flatMap(([s]) => ["off", "def"].flatMap((kind) => (ratingRows(s, kind) || []).map((r) => Math.abs(r.v)))));
+const w = (v) => `${(50 * Math.min(1, Math.abs(v) / ratingMax)).toFixed(1)}%`;
+
+// Elo path: start, earlier games (one step), then each recent game.
+const eloPath = (el) => {
+  const pts = [el.start];
+  if (el.earlier.n) pts.push(el.start + el.earlier.sum);
+  let run = pts[pts.length - 1];
+  for (const gm of el.games) { run += gm.dl; pts.push(run); }
+  return pts;
+};
+const allElo = sides.flatMap(([s]) => (B?.[s]?.elo?.ok ? eloPath(B[s].elo) : []));
+const eLo = Math.min(...allElo, 1500) - 10, eHi = Math.max(...allElo, 1500) + 10;
+const spark = (pts) => {
+  const W = 260, H = 64, n = Math.max(1, pts.length - 1);
+  const x = (i) => 4 + ((W - 8) * i) / n, y = (v) => 6 + ((H - 12) * (eHi - v)) / (eHi - eLo);
+  return { W, H, d: pts.map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(""), y1500: y(1500), last: [x(pts.length - 1), y(pts[pts.length - 1])], dots: pts.map((v, i) => [x(i), y(v)]) };
+};
+const gl = (s) => B?.[s]?.games || [];
+const hasAny = B && sides.some(([s]) => ["elo", "margin", "off", "def", "missing", "rest"].some((k) => B[s]?.[k]?.ok));
+const bad = (s, k) => !B?.[s]?.[k]?.ok;
+---
+{hasAny && (
+<section class="section raw" id="raw" aria-labelledby="h-raw">
+  <div class="section-head">
+    <h2 id="h-raw">Built from the box scores</h2>
+    <a href="/methodology/#raw-stats">How the breakdowns work</a>
+  </div>
+  <p class="lede">Where each input came from. Open a row to see the games and box-score stats behind it. A breakdown is shown only when rebuilding it from the stored stats gives exactly the number the model received.</p>
+
+  <!-- Elo -->
+  <details class="rb">
+    <summary><span class="rs-t">Elo rating</span><span class="rs-v">{sides.map(([sd, t]) => <span class="rs-tm" style={`--tc:${col(t)}`}>{t} <b class="num">{((sd) => fixed(I?.[sd]?.elo, 0))(sd)}</b></span>)}</span>{ok && <span class="rs-fx">{effText(eff(["home_elo", "away_elo", "elo_diff"]))}</span>}</summary>
+    <div class="rb-in">
+    <div class="rb-h">
+      <p>Updated after every game from the final score only: wins, losses and margin. Each season starts by keeping {Math.round(100 * (B.home.elo.carry ?? 0.75))}% of last season's distance from the 1500 average.</p>
+    </div>
+    {sides.map(([s, t]) => {
+      const el = B[s].elo;
+      if (!el.ok) return <div class="rb-c"><p class="tn" style={`--tc:${col(t)}`}>{t}</p><p class="na">Couldn't be rebuilt exactly from the stored results.</p></div>;
+      const sp = spark(eloPath(el));
+      const n = el.earlier.n + el.games.length;
+      return (
+        <div class="rb-c">
+          <p class="tn" style={`--tc:${col(t)}`}>{t} <span class="big num">{fixed(el.v, 0)}</span></p>
+          <svg class="spark" viewBox={`0 0 ${sp.W} ${sp.H}`} role="img" aria-label={`${t} Elo from ${fixed(el.start, 0)} at the start of the season to ${fixed(el.v, 0)} after ${n} games`}>
+            <line x1="0" x2={sp.W} y1={sp.y1500} y2={sp.y1500} class="avg" />
+            <text x={sp.W - 2} y={sp.y1500 - 3} text-anchor="end" class="avgt">1500</text>
+            <path d={sp.d} style={`stroke:${col(t)}`} />
+            {sp.dots.map(([x, y], i) => <circle cx={x} cy={y} r={i === sp.dots.length - 1 ? 3.5 : 2} style={`fill:${col(t)}`} />)}
+          </svg>
+          <ol class="steps">
+            {el.prev_end != null ? <li>Ended last season at <b class="num">{fixed(el.prev_end, 0)}</b> → started this one at <b class="num">{fixed(el.start, 0)}</b></li> : <li>Started at <b class="num">{fixed(el.start, 0)}</b></li>}
+            {el.earlier.n > 0 && <li>First {el.earlier.n} games: <b class="num">{signed(el.earlier.sum, 1)}</b></li>}
+            {el.games.length > 0 && <li>{`${el.earlier.n ? "Last" : "This season's"} ${el.games.length} game${el.games.length > 1 ? "s" : ""}: `}<b class="num">{signed(el.games.reduce((a, x) => a + x.dl, 0), 1)}</b></li>}
+            {n === 0 && <li>No games played yet this season.</li>}
+          </ol>
+          {el.games.length > 0 && (
+            <ul class="chips">
+              {el.games.map((x) => (
+                <li class={x.pf > x.pa ? "w" : "l"} title={`${fmtShortDate(x.d)}: ${x.h ? "vs" : "at"} ${x.o}, ${x.pf}–${x.pa}`}>
+                  <span>{x.pf > x.pa ? "W" : "L"} {x.h ? "" : "@"}{x.o}</span><span class="num">{x.pf}–{x.pa}</span><b class="num">{signed(x.dl, 1)}</b>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      );
+    })}
+  </div>
+  </details>
+
+  <!-- Season margin -->
+  <details class="rb">
+    <summary><span class="rs-t">Season scoring margin</span><span class="rs-v">{sides.map(([sd, t]) => <span class="rs-tm" style={`--tc:${col(t)}`}>{t} <b class="num">{((sd) => signed(I?.[sd]?.season_margin, 1))(sd)}</b></span>)}</span>{ok && <span class="rs-fx">{effText(eff(["home_season_margin", "away_season_margin", "home_games_played", "away_games_played"]))}</span>}</summary>
+    <div class="rb-in">
+    <div class="rb-h">
+      <p>Points scored minus points allowed per game this season, mixed with last season's margin until {B.home.margin.full} games are played.</p>
+    </div>
+    {sides.map(([s, t]) => {
+      const m = B[s].margin;
+      if (!m.ok) return <div class="rb-c"><p class="tn" style={`--tc:${col(t)}`}>{t}</p><p class="na">Couldn't be rebuilt exactly from the stored results.</p></div>;
+      return (
+        <div class="rb-c">
+          <p class="tn" style={`--tc:${col(t)}`}>{t} <span class="big num">{signed(m.v, 1)}</span></p>
+          {m.n > 0 ? <p>Scores <b class="num">{fixed(m.pf, 1)}</b>, allows <b class="num">{fixed(m.pa, 1)}</b> over {m.n} game{m.n > 1 ? "s" : ""}: <b class="num">{signed(m.cur, 1)}</b> a game.</p> : <p>No games played yet this season.</p>}
+          {m.w < 1 && (
+            <>
+              <div class="mix" role="img" aria-label={`${Math.round(100 * m.w)}% this season, ${Math.round(100 * (1 - m.w))}% last season`}>
+                <i style={`width:${(100 * m.w).toFixed(0)}%;background:${col(t)}`}></i>
+              </div>
+              <p class="small">{Math.round(100 * m.w)}% this season ({signed(m.cur, 1)}) + {Math.round(100 * (1 - m.w))}% last season ({m.last == null ? "none" : signed(m.last, 1)}) = <b class="num">{signed(m.v, 1)}</b></p>
+            </>
+          )}
+        </div>
+      );
+    })}
+  </div>
+  </details>
+
+  <!-- Ratings -->
+  {[["off", "Offensive rating, last 10", "Points scored per 100 possessions.", ["home_off_rating", "away_off_rating"]],
+    ["def", "Defensive rating, last 10", "Points allowed per 100 possessions, built from what opponents did in those games. Bars point right when the defense held opponents below average.", ["home_def_rating", "away_def_rating"]]].map(([kind, title, desc, keys]) => (
+    <details class="rb">
+      <summary><span class="rs-t">{title}</span><span class="rs-v">{sides.map(([sd, t]) => <span class="rs-tm" style={`--tc:${col(t)}`}>{t} <b class="num">{((sd) => fixed(I?.[sd]?.[`${kind}_rating`], 1))(sd)}</b></span>)}</span>{ok && <span class="rs-fx">{effText(eff(keys))}</span>}</summary>
+      <div class="rb-in">
+      <div class="rb-h">
+        <p>{desc} Split into the four factors: right of center helps the team, left hurts, in points per 100 possessions compared with the league average ({B.lg.label}: <span class="num">{fixed(B.lg.ortg, 1)}</span>).</p>
+      </div>
+      {sides.map(([s, t]) => {
+        const x = B[s][kind];
+        const rows = ratingRows(s, kind);
+        if (!rows) return <div class="rb-c"><p class="tn" style={`--tc:${col(t)}`}>{t}</p><p class="na">Couldn't be rebuilt exactly from the stored box scores.</p></div>;
+        const gap = x.v - B.lg.ortg;
+        return (
+          <div class="rb-c">
+            <p class="tn" style={`--tc:${col(t)}`}>{t} <span class="big num">{fixed(x.v, 1)}</span> <span class="small">{kind === "off" ? "scored" : "allowed"}, {signed(gap, 1)} vs league</span></p>
+            <table class="ff" data-reveal>
+              <thead><tr><th>Factor</th><th class="r">{kind === "off" ? t : "Opponents"}</th><th class="r">League</th><th class="bar-h"><span>hurts</span><span>helps</span></th><th class="r">Pts</th></tr></thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr class={r.k === "other" ? "oth" : ""}>
+                    <td>{r.label}</td>
+                    <td class="r num">{r.missing ? "n/a" : r.team == null ? "" : FMT[r.k](r.team)}</td>
+                    <td class="r num">{r.lg == null ? "" : FMT[r.k](r.lg)}</td>
+                    <td class="bar"><span class="track"><i style={`--w:${w(r.v)};--c:${col(t)};${r.v >= 0 ? "left:50%;transform-origin:left" : "right:50%;transform-origin:right"}`}></i></span></td>
+                    <td class="r num">{r.missing ? "–" : signed(r.v, 1)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {x.orb_missing > 0 && <p class="small">Offensive rebounds weren't recorded for {x.orb_missing} of these 10 games, so rebounding isn't split out; its effect is inside "Everything else".</p>}
+          </div>
+        );
+      })}
+    </div>
+    </details>
+  ))}
+
+  <!-- Pace -->
+  <details class="rb">
+    <summary><span class="rs-t">Pace, last 10</span><span class="rs-v">average <b class="num">{fixed(I?.combined_pace, 1)}</b></span>{ok && <span class="rs-fx">{effText(eff(["combined_pace"]))}</span>}</summary>
+    <div class="rb-in">
+    <div class="rb-h">
+      <p>Possessions per 48 minutes. The model uses the average of the two teams. Faster games mean more points for both sides, so pace mostly moves the projected total, not the margin.</p>
+    </div>
+    {B.pace_ok ? (
+      <div class="rb-c wide">
+        <p><span class="tn inline" style={`--tc:${col(away)}`}>{away}</span>{" "}<b class="num">{fixed(B.away.pace, 1)}</b> and <span class="tn inline" style={`--tc:${col(home)}`}>{home}</span>{" "}<b class="num">{fixed(B.home.pace, 1)}</b> → average <b class="num">{fixed((B.away.pace + B.home.pace) / 2, 1)}</b>{B.lg.pace != null && <> (league {B.lg.label}: <span class="num">{fixed(B.lg.pace, 1)}</span>)</>}</p>
+      </div>
+    ) : <div class="rb-c wide"><p class="na">Couldn't be rebuilt exactly from the stored box scores.</p></div>}
+  </div>
+  </details>
+
+  <!-- Availability -->
+  <details class="rb">
+    <summary><span class="rs-t">Rotation points missing</span><span class="rs-v">{sides.map(([sd, t]) => <span class="rs-tm" style={`--tc:${col(t)}`}>{t} <b class="num">{((sd) => fixed(I?.[sd]?.missing_pts, 1))(sd)}</b></span>)}</span>{ok && <span class="rs-fx">{effText(eff(["home_missing_pts", "away_missing_pts"]))}</span>}</summary>
+    <div class="rb-in">
+    <div class="rb-h">
+      <p>Points per game of rotation players (two or more of the last 10 games this season, 15+ minutes) listed Out or Doubtful on the official injury report.</p>
+    </div>
+    {sides.map(([s, t]) => {
+      const m = B[s].missing;
+      if (!m.ok) return <div class="rb-c"><p class="tn" style={`--tc:${col(t)}`}>{t}</p><p class="na">Couldn't be matched to a stored injury report.</p></div>;
+      return (
+        <div class="rb-c">
+          <p class="tn" style={`--tc:${col(t)}`}>{t} <span class="big num">{fixed(m.v, 1)}</span> <span class="small">pts/g missing</span></p>
+          {m.players.length ? (
+            <table class="pl">
+              <thead><tr><th>Player</th><th class="r">Pts</th><th class="r">Min</th><th class="r">Games</th></tr></thead>
+              <tbody>{m.players.map((p) => <tr><td>{p.n}</td><td class="r num">{fixed(p.ppg, 1)}</td><td class="r num">{fixed(p.mpg, 1)}</td><td class="r num">{p.gp}</td></tr>)}</tbody>
+            </table>
+          ) : <p>Every rotation player was available.</p>}
+          <p class="small">Source: {m.src?.startsWith("box") ? "box score (no injury report stored for this date)" : `official injury report, ${m.src}`}. {m.rot} rotation players.</p>
+        </div>
+      );
+    })}
+  </div>
+  </details>
+
+  <!-- Rest -->
+  <details class="rb">
+    <summary><span class="rs-t">Rest</span><span class="rs-v">{sides.map(([sd, t]) => <span class="rs-tm" style={`--tc:${col(t)}`}>{t} <b class="num">{((sd) => `${I?.[sd]?.rest_days ?? "–"} days`)(sd)}</b></span>)}</span>{ok && <span class="rs-fx">{effText(eff(["home_rest_days", "away_rest_days", "home_back_to_back", "away_back_to_back"]))}</span>}</summary>
+    <div class="rb-in">
+    <div class="rb-h">
+      <p>Days since the team's previous game, capped at {B.home.rest.cap}. One day means the second night of a back-to-back.</p>
+    </div>
+    {sides.map(([s, t]) => {
+      const r = B[s].rest;
+      if (!r.ok) return <div class="rb-c"><p class="tn" style={`--tc:${col(t)}`}>{t}</p><p class="na">Doesn't match the stored results. The forecast was made before the team's previous game was recorded.</p></div>;
+      return (
+        <div class="rb-c">
+          <p class="tn" style={`--tc:${col(t)}`}>{t} <span class="big num">{r.v}</span> <span class="small">day{r.v === 1 ? "" : "s"}{r.v === 1 ? ", back-to-back" : ""}</span></p>
+          <p>{r.last ? <>Last played {fmtShortDate(r.last)} against {r.o}{r.days > r.cap ? ` (${r.days} days, capped at ${r.cap})` : ""}.</> : "No earlier game on record."}</p>
+        </div>
+      );
+    })}
+  </div>
+  </details>
+
+  <!-- Game logs -->
+  <details class="data logs">
+    <summary>The last 10 games behind these numbers, box-score totals</summary>
+    <div class="cols cols-2">
+      {sides.map(([s, t]) => (
+        <div>
+          <p class="chart-title">{t}</p>
+          {gl(s).length ? (
+            <div class="table-scroll">
+              <table class="log">
+                <thead><tr><th>Date</th><th>Opp</th><th class="r">Score</th><th class="r">FG</th><th class="r">3P</th><th class="r">FT</th><th class="r">TOV</th><th class="r">OREB</th><th class="r">Off</th><th class="r">Def</th><th class="r">Pace</th></tr></thead>
+                <tbody>
+                  {gl(s).slice().reverse().map((x) => (
+                    <tr>
+                      <td class="nw">{fmtShortDate(x.d)}</td><td class="nw">{x.h ? "" : "@"}{x.o}</td>
+                      <td class={`r num ${x.pf > x.pa ? "win" : ""}`}>{x.pf}–{x.pa}</td>
+                      <td class="r num">{x.s[0]}-{x.s[1]}</td><td class="r num">{x.s[2]}-{x.s[3]}</td><td class="r num">{x.s[4]}-{x.s[5]}</td>
+                      <td class="r num">{x.s[6]}</td><td class="r num">{x.s[7] ?? "–"}</td>
+                      <td class="r num">{fixed(x.or_, 1)}</td><td class="r num">{fixed(x.dr, 1)}</td><td class="r num">{fixed(x.pc, 1)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : <p class="note">No games on record.</p>}
+        </div>
+      ))}
+    </div>
+    <p class="note">Off and Def are points scored and allowed per 100 possessions in each game; their averages are the 10-game ratings above. OREB is missing (–) where the source data didn't record it.</p>
+  </details>
+</section>
+)}
+
+<style>
+  .raw .lede { margin-bottom: var(--s5); }
+  .rb { border-top: 1px solid var(--rule); }
+  .rb:last-of-type { border-bottom: 1px solid var(--rule); }
+  .rb > summary { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) minmax(0, 1fr); gap: 4px var(--s4); align-items: baseline; padding: 12px 0 12px 1.4em; cursor: pointer; list-style: none; position: relative; }
+  .rb > summary::-webkit-details-marker { display: none; }
+  .rb > summary::before { content: "+"; position: absolute; left: 0; top: 10px; font-weight: 700; color: var(--muted); }
+  .rb[open] > summary::before { content: "−"; }
+  .rb > summary { transition: background-color 0.2s ease; }
+  .rb > summary:hover { background: rgba(0, 0, 0, 0.025); }
+  .rb[open] > .rb-in { animation: rb-open 0.4s var(--ease-out); }
+  @keyframes rb-open { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+  .rb > summary:hover .rs-t { text-decoration: underline; }
+  .rs-t { font-weight: 700; }
+  .rs-v { display: flex; gap: var(--s4); flex-wrap: wrap; font-size: 0.92rem; }
+  .rs-tm { display: inline-flex; align-items: baseline; gap: 5px; }
+  .rs-tm::before { content: ""; width: 9px; height: 9px; border-radius: 2px; background: var(--tc); align-self: center; }
+  .rs-fx { font-size: 0.85rem; color: var(--ink-2); text-align: right; }
+  @media (max-width: 640px) { .rb > summary { grid-template-columns: minmax(0, 1fr) auto; } .rs-v { grid-column: 1 / -1; grid-row: 2; } }
+  .rb-in { display: grid; gap: var(--s4) var(--s6); grid-template-columns: minmax(0, 1fr); padding: 0 0 var(--s5); }
+  @media (min-width: 900px) { .rb-in { grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr) minmax(0, 1fr); } .rb-c.wide { grid-column: span 2; } }
+  .rb-h h3 { font-size: 1.05rem; margin: 0 0 4px; }
+  .rb-h p { font-size: 0.85rem; color: var(--muted); margin: 0 0 6px; }
+  .rb-h .fx { color: var(--ink); font-weight: 600; font-size: 0.85rem; }
+  .rb-c { min-width: 0; font-size: 0.92rem; }
+  .rb-c p { margin: 0 0 6px; }
+  .tn { font-weight: 700; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+  .tn::before { content: ""; width: 10px; height: 10px; border-radius: 2px; background: var(--tc); align-self: center; }
+  .tn.inline { display: inline-flex; }
+  .big { font-size: 1.35rem; }
+  .small { font-size: 0.8rem; color: var(--muted); font-weight: 400; }
+  .na { color: var(--muted); font-style: italic; }
+  .spark { width: 100%; max-width: 320px; height: auto; display: block; margin: 4px 0 6px; }
+  .spark path { fill: none; stroke-width: 2; }
+  .spark .avg { stroke: var(--rule-strong); stroke-dasharray: 3 3; }
+  .spark .avgt { font-size: 9px; fill: var(--muted); }
+  .steps { margin: 0 0 8px; padding-left: 1.1em; font-size: 0.85rem; }
+  .chips { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px; }
+  .chips li { display: inline-flex; gap: 6px; align-items: baseline; font-size: 0.75rem; border: 1px solid var(--rule); border-radius: var(--radius); padding: 2px 6px; background: var(--surface); }
+  .chips li.w span:first-child { color: var(--model); font-weight: 600; }
+  .chips li.l span:first-child { color: var(--accent); font-weight: 600; }
+  .mix { height: 8px; background: var(--rule); border-radius: 2px; overflow: hidden; margin: 6px 0 4px; max-width: 320px; }
+  .mix i { display: block; height: 100%; }
+  .ff, .pl { font-size: 0.82rem; }
+  .ff th, .ff td, .pl th, .pl td { padding: 5px 8px 5px 0; }
+  .ff .bar-h { display: flex; justify-content: space-between; min-width: 90px; font-weight: 400; color: var(--muted); font-size: 0.7rem; }
+  .ff .bar { width: 34%; min-width: 90px; }
+  .ff .track { position: relative; display: block; height: 10px; background: linear-gradient(var(--rule-strong), var(--rule-strong)) 50% 0 / 1px 100% no-repeat; }
+  .ff .track i { position: absolute; top: 0; height: 100%; width: var(--w); background: var(--c); border-radius: 1px; }
+  .ff tr.oth td { color: var(--muted); }
+  .ff tr.oth .track i { opacity: 0.45; }
+  .logs { margin-top: var(--s5); }
+  .log { font-size: 0.8rem; }
+  .log th, .log td { padding: 5px 8px 5px 0; }
+  .log .win { font-weight: 600; }
+  .nw { white-space: nowrap; }
+  :global(html.js) .ff .track i { transform: scaleX(0); }
+  :global(html.js) .ff.in .track i { transform: none; transition: transform 0.6s var(--ease-out) 0.15s; }
+  @media (prefers-reduced-motion: reduce) { :global(html.js) .ff .track i { transform: none; } }
+  @media (max-width: 600px) { .ff th:nth-child(3), .ff td:nth-child(3) { display: none; } }
+</style>

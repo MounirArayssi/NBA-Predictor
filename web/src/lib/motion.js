@@ -5,7 +5,7 @@
 // Without JS nothing is hidden (all initial states are scoped to html.js), and with
 // prefers-reduced-motion everything is shown in its final state immediately.
 
-const SEL = ".chart, .pbar, .figures, .board, [data-reveal]";
+const SEL = ".chart, .pbar, .figures, .board, [data-reveal], [data-roll]";
 const COUNT_SEL = ".figure .v, .board .digits, [data-count]";
 const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -52,12 +52,55 @@ function countUp(el, dur = 1100) {
   requestAnimationFrame(step);
 }
 
+// Odometer: each digit of a final score rolls up from 0 in its own column. The
+// real number stays in the page for screen readers; the columns are decorative.
+function roll(el) {
+  if (el.dataset.rolled) return;
+  el.dataset.rolled = "1";
+  const text = el.textContent.trim();
+  if (!/^\d{1,3}$/.test(text)) return;
+  const sr = document.createElement("span");
+  sr.className = "sr-only"; sr.textContent = text;
+  const vis = document.createElement("span");
+  vis.className = "roll"; vis.setAttribute("aria-hidden", "true");
+  const cols = [...text].map((d, i) => {
+    const c = document.createElement("span");
+    c.className = "rc"; c.style.setProperty("--rd", `${0.1 + i * 0.12}s`);
+    for (let k = 0; k <= 9; k++) { const s = document.createElement("span"); s.textContent = k; c.appendChild(s); }
+    vis.appendChild(c);
+    return [c, +d];
+  });
+  el.textContent = "";
+  el.append(sr, vis);
+  requestAnimationFrame(() => requestAnimationFrame(() => cols.forEach(([c, d]) => { c.style.transform = `translateY(-${d}em)`; })));
+}
+
 function reveal(el) {
   el.classList.add("in");
   if (still) return;
   if (el.matches(COUNT_SEL)) countUp(el);
   el.querySelectorAll(COUNT_SEL).forEach((c) => countUp(c));
+  if (el.matches("[data-roll]")) roll(el);
 }
+
+// Tip-off countdowns: "Tips in 2h 14m", then "In progress" until the final is
+// posted (the page only knows finals from its last rebuild).
+function tick() {
+  const now = Date.now();
+  document.querySelectorAll(".cd[data-tip]").forEach((el) => {
+    const t = Date.parse(el.dataset.tip);
+    if (Number.isNaN(t)) return;
+    const m = Math.round((t - now) / 6e4);
+    let txt = "", live = false;
+    if (m > 0 && m < 36 * 60) txt = m < 60 ? `Tips in ${m}m` : `Tips in ${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`;
+    else if (m <= 0 && m > -210) { txt = "In progress"; live = true; }
+    else if (m <= -210) txt = "Awaiting final";
+    el.textContent = txt;
+    el.classList.toggle("live", live);
+  });
+}
+tick();
+setInterval(tick, 30000);
 
 const targets = [...document.querySelectorAll(SEL)];
 if (still || !("IntersectionObserver" in window)) {

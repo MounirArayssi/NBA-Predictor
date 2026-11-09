@@ -2,6 +2,14 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Steps print emoji; on a non-UTF-8 console (e.g. output piped on Windows) that
+# raised UnicodeEncodeError mid-step and silently skipped the rest of the step.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 import logging
 import subprocess
 from datetime import date, datetime
@@ -69,6 +77,7 @@ def step_fetch_games_today():
         oldest_pending = conn.execute(text("""
             SELECT MIN(game_date) FROM games
             WHERE is_final = FALSE AND game_date < :today AND season = :season
+              AND season_type IN ('Regular Season', 'Playoffs')
         """), {"today": date.today(), "season": CURRENT_SEASON}).scalar()
     date_from = oldest_pending or (date.today() - timedelta(days=1))
     fetch_and_store_games(CURRENT_SEASON, 'Playoffs', date_from=date_from)
@@ -206,6 +215,58 @@ def step_update_series():
     log.info("  Series context updated")
 
 
+def _stale_teams():
+    """Teams playing today whose previous game this season isn't final yet.
+    Predicting them would use stale Elo, rest days and rolling stats."""
+    from config.settings import CURRENT_SEASON
+    with engine.connect() as conn:
+        rows = conn.execute(text("""
+            WITH today AS (
+                SELECT home_team_id AS team_id FROM games WHERE game_date = :d
+                UNION SELECT away_team_id FROM games WHERE game_date = :d
+            ),
+            prev AS (
+                SELECT DISTINCT ON (t.team_id) t.team_id, g.game_date, g.is_final
+                FROM today t
+                JOIN games g ON t.team_id IN (g.home_team_id, g.away_team_id)
+                WHERE g.game_date < :d AND g.season = :season
+                  AND g.season_type IN ('Regular Season', 'Playoffs')
+                  AND g.home_team_id <> g.away_team_id
+                ORDER BY t.team_id, g.game_date DESC
+            )
+            SELECT tm.abbreviation, p.game_date FROM prev p
+            JOIN teams tm ON tm.team_id = p.team_id
+            WHERE NOT p.is_final
+            ORDER BY tm.abbreviation
+        """), {"d": date.today(), "season": CURRENT_SEASON}).fetchall()
+    return [(r[0], r[1]) for r in rows]
+
+
+def step_check_previous_games_final(retries=2):
+    """Before predicting: every team playing today must have its previous game
+    final. If not (e.g. the results fetch failed quietly), re-fetch results, box
+    scores and today's rolling stats, then check again; fail loudly if still stale."""
+    import time
+    stale = _stale_teams()
+    for attempt in range(retries):
+        if not stale:
+            return
+        log.info(f"  Previous game not final for {', '.join(f'{t} ({d})' for t, d in stale)}"
+                 f" — re-fetching (attempt {attempt + 1}/{retries})")
+        if attempt:
+            time.sleep(30)
+        step_fetch_games_today()
+        step_fetch_box_scores()
+        step_rolling_stats_today()
+        step_player_rolling_stats_today()
+        stale = _stale_teams()
+    if stale:
+        raise RuntimeError(
+            "stale inputs: previous game not final for "
+            + ", ".join(f"{t} ({d})" for t, d in stale)
+            + ". Their forecasts would miss that game (Elo, rest, rolling stats).")
+
+
 def step_predict():
     from model.predict import predict_todays_games
     predictions = predict_todays_games()
@@ -269,6 +330,7 @@ def run_pipeline(skip_retrain=False, dry_run_twitter=True,
     else:
         log.info("⏭️  Skipping retrain")
 
+    run_step("Check previous games are final", step_check_previous_games_final)
     predictions = step_predict()
 
     if not skip_twitter:
@@ -301,6 +363,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.predict_only:
+        run_step("Check previous games are final", step_check_previous_games_final)
         predictions = step_predict()
         step_tweet(predictions, dry_run=not args.post_twitter)
     else:

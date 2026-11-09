@@ -7,6 +7,7 @@ const links = [
   ["forecasts", "/forecasts/", "Forecasts"],
   ["teams", "/teams/", "Teams"],
   ["surprises", "/surprises/", "Surprises"],
+  ["what-wins", "/what-wins/", "What wins"],
   ["performance", "/performance/", "Performance"],
   ["notebook", "/notebook/", "Notebook"],
   ["about", "/about/", "About"],
@@ -22,6 +23,7 @@ const links = [
         {links.map(([key, href, label]) => (
           <li><a href={href} aria-current={section === key ? "page" : undefined}>{label}</a></li>
         ))}
+        <li class="soon-li"><span class="soon-nav" title="Player stats are coming soon" aria-disabled="true">Players <span class="soon">Soon</span></span></li>
       </ul>
     </nav>
   </div>
@@ -66,6 +68,9 @@ const links = [
     font-size: 0.9rem; font-weight: 500; border-bottom: 3px solid transparent;
   }
   nav a:hover { color: var(--header-ink); }
+  .soon-nav { display: block; padding: 18px 10px 15px; color: var(--header-muted); opacity: 0.75; font-size: 0.9rem; font-weight: 500; cursor: default; white-space: nowrap; }
+  .soon { font-size: 0.58rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--board); background: var(--led); border-radius: 3px; padding: 1px 4px; margin-left: 3px; vertical-align: 2px; animation: soonglow 2.6s ease-in-out infinite; }
+  @keyframes soonglow { 50% { box-shadow: 0 0 8px rgba(245, 185, 76, 0.7); } }
   nav a[aria-current="page"] { color: var(--header-ink); border-bottom-color: var(--accent); }
   nav a:focus-visible, .title:focus-visible, .menu-btn:focus-visible { outline-color: var(--accent); }
   .menu-btn {

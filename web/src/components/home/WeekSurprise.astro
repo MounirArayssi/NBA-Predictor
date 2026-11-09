@@ -1,15 +1,19 @@
 ---
 // Homepage: the most surprising completed game of the latest week of results
-// (lowest pregame probability for the eventual winner). Omitted if none exists.
+// (lowest pregame probability for the eventual winner). A plain forecast-vs-final
+// table: who was picked, the projected and final scores, who won, and links to
+// this site's game page and the official NBA.com game summary.
 import surprises from "../../data/surprises.json";
-import { teamByAbbr, gameUrl, fmtShortDate } from "../../lib/data.js";
+import { gameUrl, fmtShortDate } from "../../lib/data.js";
 import { teamVars } from "../../lib/teamColors.js";
 
 const w = surprises.week?.outcome;
-const nick = (a) => { const t = teamByAbbr[a]; return t ? t.name.replace(t.city, "").trim() : a; };
 const fav = w ? (w.ph > w.pa || (w.ph === w.pa && w.p >= 0.5) ? w.h : w.a) : null;
 const favP = w ? Math.round(100 * (fav === w.h ? w.p : 1 - w.p)) : null;
-const loser = w ? (w.w === w.h ? w.a : w.h) : null;
+const rows = w ? [
+  { t: w.a, home: false, proj: w.pa, fin: w.as_, prob: Math.round(100 * (1 - w.p)) },
+  { t: w.h, home: true, proj: w.ph, fin: w.hs, prob: Math.round(100 * w.p) },
+] : [];
 ---
 {w && (
   <section class="section" aria-labelledby="h-week">
@@ -17,47 +21,55 @@ const loser = w ? (w.w === w.h ? w.a : w.h) : null;
       <h2 id="h-week">Biggest surprise of the week</h2>
       <span class="meta">{fmtShortDate(surprises.week.start)} – {fmtShortDate(surprises.week.end)} · <a href="/surprises/">All surprise games</a></span>
     </div>
-    <a class="wk instrument dots" href={w.page ? gameUrl(w.id) : "/surprises/"} data-reveal="lift">
-      <div class="side">
-        <div class="pct num" data-count>{Math.round(100 * w.pw)}%</div>
-        <div class="cap">the forecast's pregame chance for {w.w}</div>
-      </div>
-      <div class="body">
-        <div class="score">
-          {[w.a, w.h].map((a) => (
-            <div class={`tm ${a === w.w ? "won" : ""}`} style={teamVars(a)}>
-              <span class="bar" aria-hidden="true"></span>
-              <span class="ab">{a}</span>
-              <span class="nm">{nick(a)}{a === w.h ? " · home" : ""}</span>
-              <span class="pts num">{a === w.h ? w.hs : w.as_}</span>
-            </div>
+    <div class="wk instrument dots" data-reveal="lift">
+      <p class="hl">
+        <span class="upset">Upset</span>
+        <span><strong>{w.w}</strong> beat {w.w === w.h ? w.a : w.h} on {fmtShortDate(w.d)}. The model gave {w.w} a <strong class="num">{Math.round(100 * w.pw)}%</strong> chance.</span>
+      </p>
+      <table class="vs">
+        <thead><tr><th>Team</th><th class="r">Win chance</th><th class="r">Forecast</th><th class="r">Final</th><th><span class="sr-only">Result</span></th></tr></thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr class={r.t === w.w ? "won" : ""} style={teamVars(r.t)}>
+              <th scope="row"><span class="bar" aria-hidden="true"></span>{r.home && <span class="at">@</span>}{r.t}{r.t === fav && <span class="pick">picked</span>}</th>
+              <td class="r num">{r.prob}%</td>
+              <td class="r num proj">{Math.round(r.proj)}</td>
+              <td class="r num fin" data-roll>{r.fin}</td>
+              <td class="w">{r.t === w.w && <span class="stamp" data-reveal>✓ Won</span>}</td>
+            </tr>
           ))}
-        </div>
-        <p class="line">
-          {fmtShortDate(w.d)}: {w.w} beat {loser}. The forecast had {fav} winning {favP}% of the time, projected {fav === w.h ? `${w.ph}–${w.pa}` : `${w.pa}–${w.ph}`}; the final margin was {w.se.toFixed(0)} points from the forecast. <span class="go">Game breakdown →</span>
-        </p>
-      </div>
-    </a>
+        </tbody>
+      </table>
+      <p class="foot">
+        <span>Forecast: {fav} by {Math.abs(Math.round(w.ph - w.pa))}. Final: {w.w} by {Math.abs(w.hs - w.as_)}. Missed the margin by <b class="num">{w.se.toFixed(0)}</b> points.</span>
+        <span class="links">
+          {w.page && <a href={gameUrl(w.id)}>Game breakdown →</a>}
+          <a href={`https://www.nba.com/game/${w.id}`} target="_blank" rel="noopener">NBA.com recap ↗</a>
+        </span>
+      </p>
+    </div>
     <p class="note">Surprising relative to this model's forecast. <a href="/teams/predictability/">Which teams are hardest to forecast?</a></p>
   </section>
 )}
 
 <style>
-  .wk { display: grid; gap: var(--s5); grid-template-columns: minmax(0, 1fr); padding: var(--s5); border-radius: 8px; text-decoration: none; color: var(--ink); transition: transform 0.25s var(--ease-out), box-shadow 0.25s ease; }
-  @media (min-width: 760px) { .wk { grid-template-columns: 220px minmax(0, 1fr); align-items: center; } }
-  .wk:hover { transform: translateY(-2px); box-shadow: 0 12px 30px -16px rgba(13, 18, 22, 0.6); }
-  .wk:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-  .pct { font-size: clamp(2.8rem, 7vw, 4rem); line-height: 1; color: var(--led); text-shadow: 0 0 14px rgba(245, 185, 76, 0.35); }
-  .cap { font-size: 0.8rem; color: var(--ink-2); margin-top: 6px; max-width: 22ch; }
-  .score { display: grid; gap: 6px; max-width: 420px; }
-  .tm { display: grid; grid-template-columns: 5px 3.2ch minmax(0, 1fr) auto; gap: 10px; align-items: center; }
-  .tm .bar { align-self: stretch; min-height: 24px; border-radius: 1px; background: linear-gradient(var(--tp) 0 62%, var(--ts) 62% 100%); box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.14); }
-  .tm .ab { font-weight: 600; }
-  .tm .nm { color: var(--ink-2); font-size: 0.85rem; }
-  .tm .pts { font-size: 1.6rem; color: var(--ink-2); }
-  .tm.won .pts { color: var(--led); }
-  .line { margin: var(--s4) 0 0; font-size: 0.92rem; color: var(--ink-2); max-width: 68ch; }
-  .go { color: var(--accent); white-space: nowrap; }
+  .wk { padding: var(--s5); border-radius: 8px; }
+  .hl { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; margin: 0 0 var(--s4); font-size: 1.02rem; color: var(--ink-2); }
+  .hl strong { color: var(--ink); }
+  .hl .num { color: var(--led); }
+  .vs { max-width: 560px; font-size: 0.95rem; }
+  .vs th, .vs td { border-color: var(--rule); padding: 8px 14px 8px 0; vertical-align: middle; }
+  .vs tbody th { font-weight: 700; white-space: nowrap; }
+  .bar { display: inline-block; vertical-align: middle; margin-right: 8px; width: 5px; height: 22px; border-radius: 1px; background: linear-gradient(var(--tp) 0 62%, var(--ts) 62% 100%); box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.14); }
+  .at { color: var(--muted); font-weight: 400; margin-right: 2px; }
+  .pick { margin-left: 8px; vertical-align: 1px; font-size: 0.62rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); border: 1px solid var(--rule-strong); border-radius: 3px; padding: 0 4px; }
+  .proj { color: var(--model); }
+  .fin { font-size: 1.5rem; color: var(--ink-2); }
+  .won .fin { color: var(--led); text-shadow: 0 0 10px rgba(245, 185, 76, 0.35); }
+  .w { font-size: 0.8rem; font-weight: 600; color: var(--model); white-space: nowrap; }
+  .foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--s2) var(--s5); margin: var(--s4) 0 0; font-size: 0.88rem; color: var(--ink-2); }
+  .links { display: flex; gap: var(--s4); flex-wrap: wrap; }
+  .links a { color: var(--accent); white-space: nowrap; }
   .wk + .note { margin-top: var(--s3); }
-  @media (prefers-reduced-motion: reduce) { .wk:hover { transform: none; } }
+  @media (max-width: 520px) { .vs th:nth-child(2), .vs td:nth-child(2) { display: none; } }
 </style>

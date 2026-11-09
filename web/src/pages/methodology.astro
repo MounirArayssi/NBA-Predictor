@@ -2,6 +2,7 @@
 import Base from "../layouts/Base.astro";
 import Pipeline from "../components/Pipeline.astro";
 import ex from "../data/explanations.json";
+import bd from "../data/breakdowns.json";
 import { site, performance as P, fmtLongDate, fmtDateTime } from "../lib/data.js";
 const C = P.counts, R = P.record;
 const features = [
@@ -83,6 +84,35 @@ const features = [
           {Object.entries(ex.stats).map(([k, s]) => <li><strong>{k}</strong>: {s.n.toLocaleString()} forecasts, {s.verified ? `verified (${Math.round(100 * s.share)}% reproduce exactly), ${s.explained} explained` : s.share != null ? `not verified (${Math.round(100 * s.share)}% reproduce, about what a different model matches by chance)` : "the model files that made them no longer exist"}.</li>)}
         </ul>
         <p>Walk-forward models are rebuilt in memory with the same training code for this check and are never saved. Forecasts that fail it keep their saved inputs, labelled as unexplained, rather than being explained with a model that did not make them. These explanations describe how the model used its inputs. They are not evidence of what caused a result.</p>
+
+        <h2 id="raw-stats">From box scores to inputs</h2>
+        <p>Game pages also include <strong>Built from the box scores</strong>, which traces each input back to the raw results and box-score stats it was calculated from:</p>
+        <ul>
+          <li><strong>Elo</strong> is replayed from every final score since October 2021 with the production rating code, and shown as last season's finish, the carried-over start, and the change from each game.</li>
+          <li><strong>Season margin</strong> is points scored and allowed this season, mixed with last season's margin for the first {bd.games[Object.keys(bd.games)[0]]?.home?.margin?.full ?? 20} games.</li>
+          <li><strong>Offensive and defensive ratings</strong> are averages of the last {bd.window} games' points per 100 possessions. They are split into Dean Oliver's four factors: shooting (eFG% = (FG + 0.5 × 3P) / FGA), turnovers (TOV / (FGA + 0.44 × FTA + TOV)), offensive rebounding (OREB / (OREB + opponent DREB)) and free throws (FTM / FGA). A defensive rating is the opponents' offensive rating, so it uses the opponents' four factors.</li>
+          <li><strong>Missing points</strong> lists the rotation players on the official injury report that reproduces the stored value, and <strong>rest</strong> shows the previous game.</li>
+        </ul>
+        <p>The split uses one linear fit of a game's offensive rating on its four factors, over {bd.fit.n.toLocaleString()} team-games. It explains {(100 * bd.fit.r2).toFixed(1)}% of the game-to-game variation (typical miss {bd.fit.rmse.toFixed(1)} points per 100 possessions). Because a rating is an average and the fit is linear, a team's gap from the league average splits exactly into one part per factor plus an "everything else" remainder, which is shown rather than hidden.</p>
+        <table>
+          <thead><tr><th>Factor</th><th class="r">Rating points per 1 point of the factor</th><th class="r">Typical swing, offense</th><th class="r">Typical swing, defense</th></tr></thead>
+          <tbody>
+            {[...bd.factors, "other"].map((k) => (
+              <tr>
+                <td>{k === "other" ? "Everything else" : bd.labels[k]}</td>
+                <td class="r num">{k === "other" ? "" : k === "ftr" ? `${(bd.fit.coef[k] * 0.01).toFixed(2)} per 0.01` : `${bd.fit.coef[k] > 0 ? "+" : "−"}${Math.abs(bd.fit.coef[k] * 0.01).toFixed(2)}`}</td>
+                <td class="r num">±{bd.spread.off[k].sd.toFixed(1)}</td>
+                <td class="r num">±{bd.spread.def[k].sd.toFixed(1)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <p>"Typical swing" is the standard deviation of each factor's part across every 10-game rating shown on a game page, in points per 100 possessions: how far that stat usually pushes a team's rating above or below average. Shooting matters most by a wide margin, then turnovers and offensive rebounding; free-throw rate moves ratings least. Offensive rebounds are missing from the source data for many 2024-25 and 2025-26 games; where any of the 10 games lacks them, rebounding is not split out and its effect stays in "everything else".</p>
+        <p>A piece of the breakdown is shown only when rebuilding it gives exactly the value the model received. Current status, over every team input on a game page:</p>
+        <ul>
+          {[["elo", "Elo"], ["margin", "Season margin"], ["off", "Offensive rating"], ["def", "Defensive rating"], ["pace", "Pace (per game)"], ["missing", "Missing points"], ["rest", "Rest"]].map(([k, l]) => <li><strong>{l}</strong>: {bd.stats[k].ok.toLocaleString()} of {bd.stats[k].n.toLocaleString()} reproduced.</li>)}
+        </ul>
+        <p>Inputs that don't reproduce were usually saved from data that has since changed, for example a forecast made before the previous night's game was recorded. They keep their stored value without a breakdown. The model itself never sees these raw stats, only the inputs built from them.</p>
 
         <h2 id="metrics">Metrics</h2>
         <ul>

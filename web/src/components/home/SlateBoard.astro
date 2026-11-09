@@ -5,16 +5,15 @@
 // team is named, and the scores and percentages are written out.
 import ProbabilityBar from "../ProbabilityBar.astro";
 import { teamByAbbr, gameUrl, fmtTime, favorite } from "../../lib/data.js";
+import { record as rec } from "../../lib/streaks.js";
+import StreakBadge from "../StreakBadge.astro";
 import { teamVars } from "../../lib/teamColors.js";
+import { isCoinFlip } from "../../lib/reasons.js";
 
 interface Props { games: any[]; label: string }
 const { games, label } = Astro.props;
-const nick = (abbr) => {
-  const t = teamByAbbr[abbr];
-  return t ? t.name.replace(t.city, "").trim() || t.name : abbr;
-};
 ---
-<ul class="slateboard" aria-label={label}>
+<ul class="slateboard" aria-label={label} style={`--cols:${Math.min(8, Math.max(6, games.length <= 8 ? games.length : Math.ceil(games.length / 2)))}`}>
   {games.map((g, i) => {
     const p = g.fc;
     const final = g.status === "final";
@@ -22,34 +21,42 @@ const nick = (abbr) => {
     const winner = final ? (g.score.h > g.score.a ? g.home : g.away) : null;
     const rows = [["away", g.away, p?.pa, g.score?.a], ["home", g.home, p?.ph, g.score?.h]];
     const big = (proj, fin) => (final ? fin : proj != null ? Math.round(proj) : null);
+    const showRec = !final && !p;
+    const upset = final && p && (g.score.h > g.score.a ? p.hwp : 1 - p.hwp) < 0.35;
     const state = final
       ? (p ? { t: `${p.correct ? "✓" : "✗"} Picked ${fav.abbr}`, c: p.correct ? "ok" : "miss" } : { t: "No forecast", c: "na" })
-      : p ? null : { t: "Forecast not yet published", c: "na" };
+      : p ? null : { t: "Forecast coming", c: "na" };
     const aria = `${teamByAbbr[g.away]?.name} at ${teamByAbbr[g.home]?.name}. ` +
-      (final ? `Final ${g.away} ${g.score.a}, ${g.home} ${g.score.h}.` : p ? `Projected ${g.away} ${Math.round(p.pa)}, ${g.home} ${Math.round(p.ph)}; ${fav.abbr} ${Math.round(100 * fav.p)} percent.` : "Forecast not yet published.") +
+      (final ? `Final ${g.away} ${g.score.a}, ${g.home} ${g.score.h}.` : p ? `Projected ${g.away} ${Math.round(p.pa)}, ${g.home} ${Math.round(p.ph)}; ${fav.abbr} ${Math.round(100 * fav.p)} percent.` : `Records ${g.away} ${rec(g.away, g.season, g.date)}, ${g.home} ${rec(g.home, g.season, g.date)}. Forecast not yet published.`) +
       (state && final && p ? ` ${p.correct ? "Pick correct" : "Pick missed"}.` : "");
     return (
       <li class="sb" data-reveal="lift" style={`--i:${i}`} data-date={g.date} data-teams={`${g.home} ${g.away}`} data-status={g.status}>
         <a class="instrument dots" href={gameUrl(g.id)} aria-label={aria}>
           <div class="sb-top">
-            <span class="when num">{final ? "Final" : g.tip ? fmtTime(g.tip) : "Time TBD"}</span>
-            <span class="col">{final ? "Final" : p ? "Proj." : ""}</span>
+            <span class="when num">{final ? "Final" : g.tip ? fmtTime(g.tip).replace(/\s*ET$/, "") : "Time TBD"}</span>
+            <span class="col">{final ? "" : p ? "Proj." : "W–L"}</span>
           </div>
           {rows.map(([side, abbr, proj, fin]) => {
             const v = big(proj, fin);
             return (
               <div class={`sb-row ${winner === abbr ? "won" : ""} ${winner && winner !== abbr ? "lost" : ""}`} style={teamVars(abbr)}>
                 <span class="bar" aria-hidden="true"></span>
-                <span class="ab">{abbr}</span>
-                <span class="nm">{nick(abbr)}{side === "home" && <span class="h"> · home</span>}</span>
-                <span class="led num" data-count>{v ?? "––"}</span>
+                <span class="ab">{side === "home" && <span class="at" aria-hidden="true">@</span>}{abbr}<StreakBadge abbr={abbr} season={g.season} date={g.date} /></span>
+                {showRec ? <span class="rec num">{rec(abbr, g.season, g.date)}</span> : <span class="led num" data-count={final ? undefined : ""} data-roll={final ? "" : undefined}>{v ?? "––"}</span>}
               </div>
             );
           })}
           <div class="sb-foot">
             {p && <ProbabilityBar away={g.away} home={g.home} hwp={p.hwp} />}
-            {final && p && <span class="projline num">Projected {Math.round(p.pa)}–{Math.round(p.ph)}</span>}
-            {state && <span class={`res ${state.c}`}>{state.t}</span>}
+            {final && p && <span class="projline num">Proj. {Math.round(p.pa)}–{Math.round(p.ph)}</span>}
+            {(state || upset) && (
+              <span class="foot-row">
+                {state && <span class={`res ${state.c} ${final && p ? "stamp" : ""}`} data-reveal={final && p ? "" : undefined}>{state.t}</span>}
+                {upset && <span class="upset">Upset</span>}
+              </span>
+            )}
+            {!final && g.tip && <span class="cd" data-tip={g.tip}></span>}
+            {!final && isCoinFlip(p) && <span class="flip">Coin flip</span>}
             {g.stype === "Playoffs" && <span class="po">Playoffs</span>}
           </div>
         </a>
@@ -59,30 +66,49 @@ const nick = (abbr) => {
 </ul>
 
 <style>
-  .slateboard { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 268px), 1fr)); }
+  .slateboard { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 168px), 1fr)); }
+  @media (min-width: 1100px) { .slateboard { grid-template-columns: repeat(var(--cols), minmax(0, 1fr)); gap: 10px; } }
+  /* Phones: one swipeable row per slate instead of a tall stack. */
+  @media (max-width: 640px) {
+    .slateboard { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; gap: 8px; padding-bottom: 6px; margin-inline: calc(-1 * var(--gutter)); padding-inline: var(--gutter); scroll-padding-inline: var(--gutter); scrollbar-width: thin; }
+    .sb { flex: 0 0 148px; scroll-snap-align: start; }
+    .sb > a:hover { transform: none; }
+  }
   .sb > a {
     display: block; height: 100%; text-decoration: none; color: var(--ink);
-    border: 1px solid var(--rule-strong); border-radius: 6px; padding: 10px 14px 12px;
+    border: 1px solid var(--rule-strong); border-radius: 6px; padding: 8px 10px 10px;
     transition: border-color 0.2s ease, transform 0.25s var(--ease-out), box-shadow 0.25s ease;
   }
   .sb > a:hover { border-color: var(--accent); transform: translateY(-2px); box-shadow: 0 10px 28px -14px rgba(13, 18, 22, 0.55); }
   .sb > a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .sb-top { display: flex; justify-content: space-between; align-items: baseline; font-size: 0.7rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); padding-bottom: 6px; border-bottom: 1px solid var(--rule); margin-bottom: 6px; }
   .when { letter-spacing: 0.04em; color: var(--ink-2); }
-  .sb-row { display: grid; grid-template-columns: 5px 3.2ch minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 4px 0; }
+  .sb-row { display: grid; grid-template-columns: 5px minmax(0, 1fr) auto; gap: 6px; align-items: center; padding: 3px 0; }
+  .at { color: var(--muted); font-weight: 400; margin-right: 3px; }
+  .rec { font-size: 0.9rem; color: var(--ink-2); letter-spacing: 0.02em; }
   .bar { align-self: stretch; border-radius: 1px; background: linear-gradient(var(--tp) 0 62%, var(--ts) 62% 100%); box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.14); }
   .ab { font-weight: 600; letter-spacing: 0.03em; }
-  .nm { color: var(--ink-2); font-size: 0.85rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .h { color: var(--muted); }
   .led {
-    font-size: 1.85rem; line-height: 1; font-weight: 500; color: var(--led); min-width: 3ch; text-align: right;
+    font-size: 1.6rem; line-height: 1; font-weight: 500; color: var(--led); min-width: 3ch; text-align: right;
     text-shadow: 0 0 10px rgba(245, 185, 76, 0.35); letter-spacing: 0.03em;
   }
   .lost .led { color: #9c7a3f; text-shadow: none; }
-  .won .ab::after { content: " ◂"; color: var(--led); font-size: 0.75em; }
-  .sb-foot { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+  .sb-foot { margin-top: 6px; display: flex; flex-direction: column; gap: 6px; }
+  .foot-row { display: flex; gap: 6px; align-items: baseline; justify-content: space-between; flex-wrap: wrap; }
+  .ab { display: inline-flex; align-items: center; white-space: nowrap; }
+  /* Cards are narrow: icon only; the label and tooltip still say "W5". */
+  .ab :global(.streak) { margin-left: 3px; padding: 0; background: none; }
+  .ab :global(.streak .sn) { display: none; }
+  .ab :global(.streak .ico) { font-size: 0.8rem; }
+  /* Cold streaks on the scoreboard: a small falling arrow instead of the ice emoji. */
+  .ab :global(.streak.cold .ico) { display: none; }
+  .ab :global(.streak.cold)::before { content: "▼"; color: #7fb6f0; font-size: 0.74rem; line-height: 1; }
+  :global(html.js) .ab :global(.streak.cold.in)::before { animation: drop 0.9s var(--ease-out) both; }
+  @keyframes drop { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+  .ab { min-width: 0; overflow: hidden; }
   .projline { font-size: 0.75rem; color: var(--muted); }
   .res { font-size: 0.78rem; }
+  .flip { align-self: flex-start; font-size: 0.64rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; border: 1px solid var(--rule-strong); border-radius: 3px; padding: 0 5px; color: var(--ink-2); }
   .po { font-size: 0.68rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); }
   @media (prefers-reduced-motion: reduce) { .sb > a:hover { transform: none; } }
 </style>

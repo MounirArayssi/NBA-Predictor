@@ -264,3 +264,49 @@ html.js [data-reveal="lift"].in { opacity: 1; transform: none; transition: opaci
   html.js .chart svg { clip-path: none; }
   html.js .pbar .seg, html.js [data-reveal="lift"] { transform: none; opacity: 1; }
 }
+
+/* ---------- Hot / cold streak badges (StreakBadge.astro) ---------- */
+.streak {
+  display: inline-flex; align-items: center; gap: 2px; margin-left: 6px; padding: 0 5px 0 3px;
+  font-family: var(--mono); font-size: 0.68rem; font-weight: 600; line-height: 1.5; letter-spacing: 0.02em;
+  border-radius: 999px; vertical-align: 1px; white-space: nowrap; cursor: help;
+}
+.streak .ico { display: inline-block; font-size: 0.85rem; line-height: 1; }
+.streak.hot { color: #b4471a; background: #fbe6d9; }
+.streak.cold { color: #2a6496; background: #dfeaf4; }
+.instrument .streak.hot { color: #ffb38a; background: rgba(240, 140, 79, 0.16); }
+.instrument .streak.cold { color: #9ccaf2; background: rgba(120, 180, 240, 0.14); }
+.streak.hot .ico { transform-origin: 50% 90%; animation: flicker 1.8s ease-in-out infinite; }
+@keyframes flicker { 0%, 100% { transform: scale(1) rotate(0); } 25% { transform: scale(1.08, 0.94) rotate(-4deg); } 50% { transform: scale(0.96, 1.07) rotate(3deg); } 75% { transform: scale(1.04, 0.98) rotate(-2deg); } }
+html.js .streak.cold .ico { opacity: 0.4; }
+html.js .streak.cold.in .ico { animation: frost 1.4s ease-out forwards; }
+@keyframes frost { 0% { opacity: 0.3; transform: scale(0.6) rotate(-30deg); filter: blur(2px); } 60% { opacity: 1; transform: scale(1.15) rotate(6deg); filter: none; } 100% { opacity: 1; transform: none; } }
+
+/* ---------- Pick result stamp: lands when a finished game scrolls into view ---------- */
+html.js .stamp { display: inline-block; opacity: 0; transform: scale(1.7) rotate(-8deg); }
+html.js .stamp.in { animation: stamp 0.5s cubic-bezier(0.2, 1.4, 0.5, 1) 0.25s forwards; }
+@keyframes stamp { 0% { opacity: 0; transform: scale(1.7) rotate(-8deg); } 60% { opacity: 1; transform: scale(0.94) rotate(1deg); } 100% { opacity: 1; transform: none; } }
+
+/* ---------- Upset tag: winner had under 35% ---------- */
+.upset {
+  display: inline-block; font-size: 0.64rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+  color: #fff; background: var(--accent); border-radius: 3px; padding: 1px 6px; line-height: 1.4; white-space: nowrap;
+}
+.instrument .upset { color: #1b1208; background: var(--led); }
+
+/* ---------- Tip-off countdown (filled in by motion.js) ---------- */
+.cd { font-size: 0.75rem; color: var(--muted); white-space: nowrap; }
+.cd:empty { display: none; }
+.cd.live { color: var(--accent); font-weight: 600; }
+.cd.live::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: currentColor; margin-right: 5px; vertical-align: 1px; animation: livepulse 1.4s ease-in-out infinite; }
+@keyframes livepulse { 50% { opacity: 0.3; } }
+
+/* ---------- Odometer roll for final scores (motion.js builds the columns) ---------- */
+.roll { display: inline-flex; overflow: hidden; height: 1em; line-height: 1; vertical-align: baseline; }
+.roll .rc { display: flex; flex-direction: column; transition: transform 1.3s var(--ease-out); transition-delay: var(--rd, 0s); }
+.roll .rc > span { height: 1em; line-height: 1; }
+
+@media (prefers-reduced-motion: reduce) {
+  html.js .stamp { opacity: 1; transform: none; }
+  html.js .streak.cold .ico { opacity: 1; }
+}

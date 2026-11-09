@@ -1,11 +1,10 @@
 ---
-import { getCollection } from "astro:content";
 import Base from "../layouts/Base.astro";
 import SlateBoard from "../components/home/SlateBoard.astro";
 import DataBall from "../components/home/DataBall.astro";
-import CourtHome from "../components/home/CourtHome.astro";
 import Scoreboard from "../components/home/Scoreboard.astro";
 import WeekSurprise from "../components/home/WeekSurprise.astro";
+import PlayersTeaser from "../components/home/PlayersTeaser.astro";
 import fs from "node:fs";
 import path from "node:path";
 import { TITLE, site, games, performance, etDate, fmtLongDate, fmtDateTime, fmtShortDate, pct100, fixed } from "../lib/data.js";
@@ -15,19 +14,42 @@ const current = games.filter((g) => g.season === site.season);
 const byDate = Map.groupBy ? Map.groupBy(current, (g) => g.date) : current.reduce((m, g) => m.set(g.date, [...(m.get(g.date) || []), g]), new Map());
 const dates = [...byDate.keys()].sort();
 
-// Slates embedded for the client to choose "today" in ET: the build day and the next week.
+// Slates embedded for the client to choose "today" in ET: the build day and the
+// next week, plus the last few dates before it for "last night".
 const slateDates = dates.filter((d) => d >= buildDay).slice(0, 8);
+const prevDates = dates.filter((d) => d < buildDay).slice(-3);
 const defaultDate = slateDates[0] ?? null;
+const defaultPrev = prevDates.at(-1) ?? null;
+const slateInfo = (d) => {
+  const list = byDate.get(d);
+  const fc = list.filter((g) => g.fc).length;
+  const graded = list.filter((g) => g.fc && g.status === "final");
+  const right = graded.filter((g) => g.fc.correct).length;
+  return { list, fc, graded: graded.length, right };
+};
+const dayLabel = (d) => new Date(d + "T12:00:00Z").toLocaleDateString("en-US", { timeZone: "UTC", weekday: "long", month: "short", day: "numeric" });
 
 const bt = performance.record;
 const cur = bt.seasons.find((s) => s.season === site.season);
 const board = [
   { v: bt.all.n.toLocaleString(), l: "games graded" },
   { v: `${bt.all.win}%`, l: "winners picked" },
-  { v: String(bt.seasons.length), l: "seasons" },
+  { v: fixed(bt.all.margin_mae), l: "avg margin miss, pts" },
+  { v: fixed(bt.all.brier, 3), l: "Brier score" },
   ...(cur ? [{ v: `${cur.all.wins}–${cur.all.n - cur.all.wins}`, l: `${site.season} record` }, { v: `${cur.all.win}%`, l: `${site.season} winners` }] : []),
 ];
-const entries = (await getCollection("notebook")).sort((a, b) => +b.data.date - +a.data.date).slice(0, 3);
+// Data status: how fresh each piece is (results, forecasts, injury report, model).
+import exStatus from "../data/explanations.json";
+const slateGames = defaultDate ? byDate.get(defaultDate) : [];
+const lastFc = slateGames.map((g) => g.fc?.at).filter(Boolean).sort().pop() ?? null;
+const reportUsed = slateGames.map((g) => g.injuries?.report).filter(Boolean).sort().pop() ?? null;
+const modelSaved = Object.keys(exStatus.stats).find((k) => k.startsWith("production model saved"))?.replace("production model saved ", "") ?? null;
+const status = [
+  ["Results through", fmtShortDate(site.history.last)],
+  ["Latest forecast", lastFc ? fmtDateTime(lastFc) : "not yet published"],
+  ["Injury report", reportUsed ? reportUsed.replace(/^(\d{4}-\d{2}-\d{2}) (\d{2}):(\d{2}) ET$/, (m, d, hh, mm) => `${fmtShortDate(d)}, ${((+hh + 11) % 12) + 1}:${mm} ${+hh >= 12 ? "PM" : "AM"} ET`) : "none yet"],
+  ["Model trained", modelSaved ? fmtShortDate(modelSaved) : "–"],
+];
 ---
 <Base title={TITLE} description="NBA game forecasts: projected scores and win probabilities for every game, graded against final results for every season since 2022-23, with research notes." section="home">
   <div class="wrap">
@@ -42,97 +64,84 @@ const entries = (await getCollection("notebook")).sort((a, b) => +b.data.date - 
     </section>
     <Scoreboard cells={board} />
 
-    <section class="section" aria-labelledby="h-today">
+    <section class="section games" aria-labelledby="h-today">
       <div class="section-head">
-        <h2 id="h-today">Forecasts <span id="slate-label">{defaultDate ? `for ${fmtLongDate(defaultDate)}` : ""}</span></h2>
+        <h2 id="h-today">Games</h2>
         <a href="/forecasts/">All dates and filters</a>
       </div>
+      <p class="statusline" aria-label="Data status">
+        {status.map(([k, v]) => <span><span class="k">{k}</span> <span class="num">{v}</span></span>)}
+        <span><span class="k">Updated</span> <span class="age" data-ts={site.generated_at}>{fmtDateTime(site.generated_at)}</span></span>
+      </p>
       <div id="stale" class="state warn" hidden></div>
       {slateDates.length === 0 && <p class="state">No upcoming games are in this edition of the data. See the <a href="/forecasts/">forecast calendar</a>.</p>}
-      {slateDates.map((d) => {
-        const list = byDate.get(d);
-        const n = list.filter((g) => g.fc).length;
-        return (
-          <div class="slate" data-date={d} hidden={d !== defaultDate}>
-            <p class="meta">{list.length} games · {n ? `${n} with a published forecast` : "forecasts not yet published for this date"}</p>
-            <SlateBoard games={list} label={`Games on ${d}`} />
-          </div>
-        );
-      })}
+      <div class="slates">
+        {[...prevDates.map((d) => ["prev", d]), ...slateDates.map((d) => ["next", d])].map(([kind, d]) => {
+          const x = slateInfo(d);
+          const show = d === (kind === "prev" ? defaultPrev : defaultDate);
+          return (
+            <div class={`slate ${kind}`} data-kind={kind} data-date={d} data-fc={x.fc} hidden={!show} style={kind === "prev" && defaultDate && slateInfo(defaultDate).fc === 0 ? "order:0" : "order:1"}>
+              <div class="slate-head">
+                <h3><span class="rel">{kind === "prev" ? "Last night" : "Tonight"}</span> <span class="day">{dayLabel(d)}</span></h3>
+                <p class="meta">
+                  {kind === "prev"
+                    ? (x.graded ? <><b class="num">{x.right}–{x.graded - x.right}</b> picks · {x.list.length} games</> : `${x.list.length} games · results pending`)
+                    : `${x.list.length} games · times ET · ${x.fc ? `${x.fc} forecast${x.fc > 1 ? "s" : ""} published` : "forecasts not yet published"}`}
+                </p>
+              </div>
+              <SlateBoard games={x.list} label={`Games on ${d}`} />
+            </div>
+          );
+        })}
+      </div>
     </section>
 
     <WeekSurprise />
-
-    <section class="section" aria-labelledby="h-perf">
-      <div class="section-head">
-        <h2 id="h-perf">How the model has done</h2>
-        <a href="/performance/">Full evaluation</a>
-      </div>
-      <div class="figures">
-        <div class="figure"><div class="v">{pct100(bt.all.win)}</div><div class="l">winners picked</div><div class="d">{bt.all.n.toLocaleString()} games, {bt.seasons[0].season} to {bt.seasons.at(-1).season}</div></div>
-        <div class="figure"><div class="v">{pct100(bt.all.home_win)}</div><div class="l">picking the home team</div><div class="d">the simple baseline</div></div>
-        <div class="figure"><div class="v">{fixed(bt.all.margin_mae)}<small> pts</small></div><div class="l">average margin miss</div></div>
-        <div class="figure"><div class="v">{fixed(bt.all.brier, 3)}</div><div class="l">Brier score</div><div class="d">0.25 = coin flip</div></div>
-        {cur && <div class="figure"><div class="v">{cur.all.wins}–{cur.all.n - cur.all.wins}</div><div class="l">{site.season} so far</div><div class="d">{cur.all.n} graded games</div></div>}
-      </div>
-      <p class="note">Each game is forecast by a model trained only on games before it.</p>
-    </section>
-
-    <section class="section" aria-labelledby="h-court">
-      <div class="section-head">
-        <h2 id="h-court">Home court, measured</h2>
-        <a href="/notebook/2026-11-06-home-court-gap/">Does it shrink against better teams?</a>
-      </div>
-      <p class="lede court-lede">Home teams win more often, and the model knows it: Elo adds 70 rating points, about 2.5 points of margin, to every home team before the score models take over.</p>
-      <CourtHome />
-    </section>
-
-    <section class="section observation" aria-labelledby="h-obs">
-      <div class="cols cols-side">
-        <div>
-          <p class="kicker">From the evaluation</p>
-          <h2 id="h-obs">The model's margins are narrower than real games</h2>
-        </div>
-        <div class="read">
-          <p>Across the {bt.all.n.toLocaleString()}-game record, predicted home margins had a standard deviation of <span class="num">{bt.pred_margin_sd}</span> points. Actual margins had <span class="num">{bt.actual_margin_sd}</span>. A forecast is an average outcome, so it should be narrower than the games themselves, but the gap means blowouts are rarely forecast as blowouts.</p>
-          <p><a href="/performance/#margins">Predicted against actual margins</a></p>
-        </div>
-      </div>
-    </section>
-
-    <section class="section" aria-labelledby="h-notes">
-      <div class="section-head">
-        <h2 id="h-notes">From the Notebook</h2>
-        <a href="/notebook/">All entries</a>
-      </div>
-      <ol class="notes">
-        {entries.map((e) => (
-          <li>
-            <p class="kicker">{e.data.topic} · <time datetime={e.data.date.toISOString().slice(0, 10)}>{fmtShortDate(e.data.date.toISOString().slice(0, 10))}</time></p>
-            <h3><a href={`/notebook/${e.id}/`}>{e.data.title}</a></h3>
-            <p>{e.data.summary}</p>
-          </li>
-        ))}
-      </ol>
-    </section>
+    <PlayersTeaser />
   </div>
 </Base>
 
-<script define:vars={{ generated: site.generated_at, slateDates }}>
-  // Show today's slate in US Eastern time (or the next date with games), and say
-  // so plainly when this edition of the data is old.
+<script>
+  // Relative age for the status bar ("3 h ago"), with a green dot under a day old
+  // and an orange one past two days. Computed in the browser, so it stays honest
+  // however long ago the site was built.
+  const now = Date.now();
+  for (const el of document.querySelectorAll(".age[data-ts]")) {
+    const t = Date.parse(el.dataset.ts.replace(" ", "T"));
+    if (Number.isNaN(t)) continue;
+    const h = (now - t) / 3.6e6;
+    if (h < 0) continue;
+    el.textContent = h < 1 ? `${Math.max(1, Math.round(h * 60))} min ago` : h < 48 ? `${Math.round(h)} h ago` : `${Math.round(h / 24)} days ago`;
+    el.classList.add(h < 24 ? "fresh" : h > 48 ? "stale" : "ok");
+  }
+</script>
+
+<script define:vars={{ generated: site.generated_at }}>
+  // Pick the slates in US Eastern time: the next date with games ("Tonight" when
+  // it is today) and the most recent date before today ("Last night" when it was
+  // yesterday). Until tonight's forecasts are published, last night comes first.
   const tz = "America/New_York";
-  const p = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date());
-  const today = `${p.find((x) => x.type === "year").value}-${p.find((x) => x.type === "month").value}-${p.find((x) => x.type === "day").value}`;
-  const pick = slateDates.find((d) => d >= today);
-  document.querySelectorAll(".slate").forEach((el) => { el.hidden = el.dataset.date !== pick; });
-  const label = document.getElementById("slate-label");
-  if (pick && label) {
-    label.textContent = "for " + new Date(pick + "T12:00:00Z").toLocaleDateString("en-US", { timeZone: "UTC", weekday: "long", month: "long", day: "numeric", year: "numeric" });
+  const ymd = (dt) => {
+    const p = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(dt);
+    return `${p.find((x) => x.type === "year").value}-${p.find((x) => x.type === "month").value}-${p.find((x) => x.type === "day").value}`;
+  };
+  const today = ymd(new Date());
+  const yesterday = ymd(new Date(Date.now() - 864e5));
+  const slates = [...document.querySelectorAll(".slate")];
+  const next = slates.find((el) => el.dataset.date >= today);
+  const prev = slates.filter((el) => el.dataset.date < today).pop();
+  slates.forEach((el) => { el.hidden = el !== next && el !== prev; });
+  if (next) {
+    next.querySelector(".rel").textContent = next.dataset.date === today ? "Tonight" : "Next games";
+    next.style.order = "1";
+  }
+  if (prev) {
+    prev.querySelector(".rel").textContent = prev.dataset.date === yesterday ? "Last night" : "Last games";
+    prev.style.order = next && next.dataset.fc === "0" ? "0" : "2";
   }
   const hours = (Date.now() - Date.parse(generated)) / 3.6e6;
   const stale = document.getElementById("stale");
-  if (stale && (hours > 30 || !pick)) {
+  if (stale && (hours > 30 || !next)) {
     const when = new Date(generated).toLocaleString("en-US", { timeZone: tz, month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
     stale.textContent = `This edition of the data was exported ${when} ET. Newer forecasts and results may exist but are not shown here.`;
     stale.hidden = false;
@@ -140,6 +149,20 @@ const entries = (await getCollection("notebook")).sort((a, b) => +b.data.date - 
 </script>
 
 <style>
+  .statusline { display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 0.8rem; color: var(--ink-2); margin: calc(-1 * var(--s3)) 0 var(--s5); }
+  .statusline .k { color: var(--muted); }
+  .statusline .num { font-size: 0.78rem; }
+  .slates { display: flex; flex-direction: column; gap: var(--s6); }
+  .slate-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px var(--s4); margin-bottom: var(--s3); padding-bottom: 6px; border-bottom: 2px solid var(--rule-heavy); }
+  .slate-head h3 { font-size: 1.05rem; }
+  .slate-head .rel { color: var(--accent); text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.78rem; margin-right: 6px; }
+  .slate-head .meta { margin: 0; }
+  .slate-head .meta b { color: var(--ink); }
+  .age { white-space: nowrap; }
+  .age::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; background: var(--neutral-mark); vertical-align: 0; }
+  .age.fresh::before { background: var(--model); box-shadow: 0 0 0 0 var(--model); animation: ping 2.4s ease-out infinite; }
+  .age.stale::before { background: var(--accent); }
+  @keyframes ping { 0% { box-shadow: 0 0 0 0 rgba(94, 196, 176, 0.6); } 70%, 100% { box-shadow: 0 0 0 7px rgba(94, 196, 176, 0); } }
   .opening { padding-block: var(--s6) var(--s6); display: grid; gap: var(--s6); align-items: center; }
   @media (min-width: 900px) { .opening { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); } }
   .hero-text { max-width: 640px; }
@@ -147,16 +170,8 @@ const entries = (await getCollection("notebook")).sort((a, b) => +b.data.date - 
   .hero-links .btn { text-decoration: none; display: inline-flex; align-items: center; }
   .hero-links .btn.primary { background: var(--ink); color: var(--paper); border-color: var(--ink); }
   .hero-links .btn.primary:hover { background: var(--accent); border-color: var(--accent); }
-  .court-lede { margin-bottom: var(--s5); }
   :global(.board) { margin-bottom: var(--s6); }
   .opening h1 { margin: var(--s3) 0 var(--s4); font-size: clamp(2rem, 4.6vw, 3rem); }
   .meta { font-size: 0.875rem; color: var(--muted); margin-bottom: var(--s3); }
   .sub { margin-bottom: var(--s3); }
-  .observation h2 { margin-top: var(--s2); }
-  .notes { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s5); border-top: 2px solid var(--rule-heavy); padding-top: var(--s4); }
-  @media (min-width: 900px) { .notes { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s6); } }
-  .notes h3 { font-family: var(--serif); font-size: 1.2rem; margin: var(--s2) 0; }
-  .notes h3 a { color: var(--ink); text-decoration: none; }
-  .notes h3 a:hover { text-decoration: underline; }
-  .notes p:last-child { color: var(--ink-2); font-size: 0.95rem; }
 </style>

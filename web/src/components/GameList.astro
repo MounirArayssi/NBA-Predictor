@@ -4,6 +4,12 @@
 import ProbabilityBar from "./ProbabilityBar.astro";
 import { teamVars } from "../lib/teamColors.js";
 import { teamByAbbr, gameUrl, teamUrl, fmtTime, fmtShortDate, favorite } from "../lib/data.js";
+import { reasons, isCoinFlip } from "../lib/reasons.js";
+import { record } from "../lib/streaks.js";
+import StreakBadge from "./StreakBadge.astro";
+
+const UPSET = 0.35; // winner's pregame chance below this = upset
+const isUpset = (g) => g.status === "final" && g.fc && (g.score.h > g.score.a ? g.fc.hwp : 1 - g.fc.hwp) < UPSET;
 
 interface Props { games: any[]; showDate?: boolean; label?: string }
 const { games, showDate = false, label = "Games" } = Astro.props;
@@ -17,7 +23,7 @@ function state(g) {
       ? { text: `✓ Picked ${fav.abbr}`, cls: "ok" }
       : { text: `✗ Picked ${fav.abbr}`, cls: "miss" };
   }
-  if (g.status === "scheduled") return p ? { text: "Awaiting result", cls: "na" } : { text: "Forecast not yet published", cls: "na" };
+  if (g.status === "scheduled") return p ? { text: "Awaiting result", cls: "na" } : { text: "Forecast coming", cls: "na" };
   return { text: "Result not recorded", cls: "na" };
 }
 ---
@@ -34,21 +40,22 @@ function state(g) {
     const sides = [["away", g.away, p?.pa, g.score?.a], ["home", g.home, p?.ph, g.score?.h]];
     const winner = g.score ? (g.score.h > g.score.a ? g.home : g.away) : null;
     return (
-      <article class="grow" role="listitem" data-date={g.date} data-teams={`${g.home} ${g.away}`} data-status={g.status}
+      <article class="grow" id={`g-${g.id}`} role="listitem" data-date={g.date} data-teams={`${g.home} ${g.away}`} data-status={g.status}
         aria-label={`${teamByAbbr[g.away]?.name} at ${teamByAbbr[g.home]?.name}, ${g.date}`}>
         <div class="when">
           {showDate && <span class="d num">{fmtShortDate(g.date)}</span>}
           <span class="t num">{g.status === "final" ? "Final" : g.tip ? fmtTime(g.tip) : "Time TBD"}</span>
+          {g.status !== "final" && g.tip && <span class="cd" data-tip={g.tip}></span>}
           {g.stype === "Playoffs" && <span class="po">Playoffs</span>}
         </div>
         <div class="teams">
           <div class="tline mhead" aria-hidden="true"><span></span><span></span><span class="r">Proj.</span><span class="r">Final</span></div>
           {sides.map(([side, abbr, proj, fin]) => (
             <div class={`tline ${winner === abbr ? "won" : ""}`}>
-              <a class="abbr" href={teamUrl(abbr)}><i class="chip" style={teamVars(abbr)} aria-hidden="true"></i>{abbr}</a>
-              <span class="name">{teamByAbbr[abbr]?.name}{side === "home" ? <span class="ha"> · home</span> : null}</span>
+              <a class="abbr" href={teamUrl(abbr)}><i class="chip" style={teamVars(abbr)} aria-hidden="true"></i><span>{side === "home" && <span class="at">@</span>}{abbr}</span></a>
+              <span class="name">{teamByAbbr[abbr]?.name}{side === "home" && <span class="sr-only"> (home)</span>}{!p && g.status !== "final" && <span class="rec num"> {record(abbr, g.season, g.date)}</span>}<StreakBadge abbr={abbr} season={g.season} date={g.date} /></span>
               <span class="proj num" title="Projected score">{proj != null ? Math.round(proj) : "–"}</span>
-              <span class="fin num" title="Final score">{fin != null ? fin : ""}</span>
+              <span class="fin num" title="Final score" data-roll={fin != null ? "" : undefined}>{fin != null ? fin : ""}</span>
             </div>
           ))}
         </div>
@@ -56,11 +63,17 @@ function state(g) {
           {p ? (
             <>
               <ProbabilityBar away={g.away} home={g.home} hwp={p.hwp} />
+              {(isCoinFlip(p) || reasons(g).length > 0) && (
+                <p class="why">
+                  {isCoinFlip(p) && <span class="flip" title={`Neither team above 55%`}>Coin flip</span>}
+                  {reasons(g).length > 0 && <span class="rs"><span class="k">Why:</span> {reasons(g).map((r, i) => <>{i > 0 ? " · " : ""}{`${r.label} `}<b class="num">{r.pts.toFixed(1)}</b>{` → ${r.team}`}</>)}</span>}
+                </p>
+              )}
             </>
           ) : null}
         </div>
         <div class="end">
-          <span class={`res ${st.cls}`}>{st.text}</span>
+          <span class="endtags">{isUpset(g) && <span class="upset" title={`${g.score.h > g.score.a ? g.home : g.away} had a ${Math.round(100 * (g.score.h > g.score.a ? g.fc.hwp : 1 - g.fc.hwp))}% pregame chance`}>Upset</span>}<span class={`res ${st.cls} ${g.status === "final" && p ? "stamp" : ""}`} data-reveal={g.status === "final" && p ? "" : undefined}>{st.text}</span></span>
           <a class="more" href={gameUrl(g.id)} aria-label={`Game details: ${g.away} at ${g.home}`}>Details</a>
         </div>
       </article>
@@ -68,6 +81,10 @@ function state(g) {
   })}
 </div>
 <style>
+  .why { margin: 6px 0 0; font-size: 0.75rem; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; }
+  .why .k { font-weight: 600; color: var(--ink-2); }
+  .why b { color: var(--ink); font-weight: 600; }
+  .flip { font-size: 0.66rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; border: 1px solid var(--rule-strong); border-radius: var(--radius); padding: 0 5px; color: var(--ink-2); }
   .glist { border-top: 2px solid var(--rule-heavy); container-type: inline-size; }
   .ghead, .grow { display: grid; grid-template-columns: 96px minmax(0, 1.5fr) minmax(170px, 1fr) 160px; gap: var(--s4); align-items: center; }
   .ghead { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); padding: 8px 0; border-bottom: 1px solid var(--rule-strong); }
@@ -79,11 +96,13 @@ function state(g) {
   .when .d { color: var(--ink); font-weight: 500; }
   .po { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--accent); }
   .teams { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-  .tline { display: grid; grid-template-columns: 58px minmax(0, 1fr) 44px 44px; gap: var(--s3); align-items: baseline; }
+  .tline { display: grid; grid-template-columns: 66px minmax(0, 1fr) 44px 44px; gap: var(--s3); align-items: baseline; }
   .abbr { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; color: var(--ink); text-decoration: none; letter-spacing: 0.02em; }
   .abbr:hover { text-decoration: underline; }
   .name { color: var(--ink-2); font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .ha { color: var(--muted); }
+  .at { color: var(--muted); font-weight: 400; margin-right: 2px; }
+  .rec { color: var(--muted); font-size: 0.82rem; margin-left: 4px; }
+  .endtags { display: inline-flex; gap: 6px; align-items: baseline; flex-wrap: wrap; justify-content: flex-end; }
   .proj { text-align: right; color: var(--model); font-weight: 500; }
   .fin { text-align: right; color: var(--ink-2); }
   .won .fin { color: var(--ink); font-weight: 600; }
@@ -102,6 +121,6 @@ function state(g) {
     .grow { grid-template-columns: minmax(0, 1fr); }
     .when { flex-direction: row; gap: var(--s3); }
     .fc, .end { grid-column: 1; }
-    .tline { grid-template-columns: 54px minmax(0, 1fr) 36px 36px; gap: var(--s2); }
+    .tline { grid-template-columns: 62px minmax(0, 1fr) 36px 36px; gap: var(--s2); }
   }
 </style>

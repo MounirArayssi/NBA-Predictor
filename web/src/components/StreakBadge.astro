@@ -1,0 +1,17 @@
+---
+// Hot/cold marker for a team on a 4+ game win or loss streak this season, going
+// into the given date. The emoji is decorative; the text (W5 / L4) and the label
+// carry the meaning. Styles live in global.css (.streak) so it works on light
+// pages and inside dark instrument panels.
+import { streak, STREAK_MIN } from "../lib/streaks.js";
+interface Props { abbr: string; season: string; date: string }
+const { abbr, season, date } = Astro.props;
+const s = streak(abbr, season, date);
+const show = s.n >= STREAK_MIN;
+const label = show ? `${abbr} ${s.won ? "won" : "lost"} ${s.n} straight` : "";
+---
+{show && (
+  <span class={`streak ${s.won ? "hot" : "cold"}`} title={label} aria-label={label} role="img" data-reveal>
+    <span class="ico" aria-hidden="true">{s.won ? "🔥" : "🧊"}</span><span class="sn" aria-hidden="true">{s.won ? "W" : "L"}{s.n}</span>
+  </span>
+)}

@@ -2,7 +2,10 @@
 import Base from "../../layouts/Base.astro";
 import GameCourt from "../../components/GameCourt.astro";
 import InsideForecast from "../../components/InsideForecast.astro";
+import RawBreakdown from "../../components/RawBreakdown.astro";
 import ForecastMiss from "../../components/ForecastMiss.astro";
+import StreakBadge from "../../components/StreakBadge.astro";
+import { record } from "../../lib/streaks.js";
 import { teamVars } from "../../lib/teamColors.js";
 import { games, gameById, teamByAbbr, teamUrl, gameUrl, fmtLongDate, fmtShortDate, fmtTime, fmtDateTime, favorite, signed, fixed } from "../../lib/data.js";
 
@@ -63,7 +66,14 @@ const desc = p
       <a class="back" href={`/forecasts/?date=${g.date}`}>← Forecasts for {fmtShortDate(g.date)}</a>
       <p class="kicker">{g.season} · {g.stype} · {final ? "Final" : g.status === "scheduled" ? "Scheduled" : "Result not recorded"}</p>
       <h1><a class="tn" href={teamUrl(g.away)}>{A.name}</a> at <a class="tn" href={teamUrl(g.home)}>{H.name}</a></h1>
-      <p class="lede">{fmtLongDate(g.date)}{g.tip ? ` · tip-off ${fmtTime(g.tip)}` : " · tip-off time not recorded"}</p>
+      <p class="lede">{fmtLongDate(g.date)}{g.tip ? ` · tip-off ${fmtTime(g.tip)}` : " · tip-off time not recorded"}{!final && g.tip && <> <span class="cd" data-tip={g.tip}></span></>}</p>
+      <p class="recs">
+        {[[g.away, false], [g.home, true]].map(([abbr, home]) => (
+          <span class="rc"><i class="chip" style={teamVars(abbr)} aria-hidden="true"></i>{home && <span class="at">@</span>}<b>{abbr}</b> <span class="num">{record(abbr, g.season, g.date)}</span><StreakBadge abbr={abbr} season={g.season} date={g.date} /></span>
+        ))}
+        <span class="rn">records going into the game</span>
+        {final && <a class="ext" href={`https://www.nba.com/game/${g.id}`} target="_blank" rel="noopener">NBA.com recap ↗</a>}
+      </p>
     </header>
 
     {p && <GameCourt away={g.away} home={g.home} hwp={p.hwp} pa={p.pa} ph={p.ph} fa={g.score?.a} fh={g.score?.h} />}
@@ -110,6 +120,7 @@ const desc = p
     </section>
 
     {p && <InsideForecast g={g} />}
+    {p && g.inputs && <RawBreakdown g={g} />}
     {final && p && <ForecastMiss g={g} />}
 
     {final && p && (
@@ -221,6 +232,11 @@ const desc = p
 
 <style>
   .tn { color: inherit; text-decoration: none; }
+  .recs { display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center; margin-top: var(--s3); font-size: 0.95rem; }
+  .rc { display: inline-flex; align-items: center; gap: 6px; }
+  .rc .at { color: var(--muted); margin-right: -3px; }
+  .rn { font-size: 0.8rem; color: var(--muted); }
+  .ext { font-size: 0.85rem; margin-left: auto; }
   .tn:hover { text-decoration: underline; }
   .top { border-top: 0; padding-top: 0; }
   .scoretable { font-size: 1.05rem; }

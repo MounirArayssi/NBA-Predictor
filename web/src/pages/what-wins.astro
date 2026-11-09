@@ -1,0 +1,184 @@
+---
+// What wins games: which pregame numbers lined up with the final margin
+// (web/scripts/what_wins.py), next to what the model actually leans on (SHAP,
+// explanations.json) and what builds a rating (four-factor fit, breakdowns.json).
+import Base from "../layouts/Base.astro";
+import CourtHome from "../components/home/CourtHome.astro";
+import ww from "../data/what_wins.json";
+import ex from "../data/explanations.json";
+import bd from "../data/breakdowns.json";
+import { fmtShortDate } from "../lib/data.js";
+
+const stats = ww.stats;
+const rMax = Math.max(0.45, ...stats.map((s) => Math.abs(s.r)));
+const inputs = stats.filter((s) => s.group === "Model input");
+const factors = stats.filter((s) => s.group !== "Model input");
+const top = stats[0];
+const topFactor = factors[0];
+
+// What the model leans on: mean |summed SHAP margin push| per input group, over
+// explained forecasts.
+const GROUPS = [
+  ["elo", "Elo rating", ["home_elo", "away_elo", "elo_diff"]],
+  ["season_margin", "Season scoring margin", ["home_season_margin", "away_season_margin"]],
+  ["gp", "Games played (how much to trust this season)", ["home_games_played", "away_games_played"]],
+  ["off", "Offensive rating, last 10", ["home_off_rating", "away_off_rating"]],
+  ["def", "Defensive rating, last 10", ["home_def_rating", "away_def_rating"]],
+  ["pace", "Pace, last 10", ["combined_pace"]],
+  ["missing", "Rotation points missing", ["home_missing_pts", "away_missing_pts"]],
+  ["rest", "Rest days", ["home_rest_days", "away_rest_days"]],
+  ["b2b", "Back-to-back", ["home_back_to_back", "away_back_to_back"]],
+];
+const okGames = Object.values(ex.games).filter((e: any) => e.ok);
+const lean = GROUPS.map(([k, label, keys]) => ({
+  k, label,
+  v: okGames.length ? okGames.reduce((s, e: any) => s + Math.abs(keys.reduce((t, f) => t + (e.c[f]?.[2] ?? 0), 0)), 0) / okGames.length : 0,
+})).sort((a, b) => b.v - a.v);
+const leanMax = Math.max(1, ...lean.map((l) => l.v));
+
+const swing = [...bd.factors].map((k) => ({ k, label: bd.labels[k], off: bd.spread.off[k].sd, def: bd.spread.def[k].sd, coef: bd.fit.coef[k] }))
+  .sort((a, b) => b.off + b.def - a.off - a.def);
+const swMax = Math.max(...swing.flatMap((s) => [s.off, s.def]));
+const pct = (x) => `${(100 * x).toFixed(0)}%`;
+const b2b = stats.find((s) => s.key === "b2b");
+const b2bLean = lean.find((l) => l.k === "b2b");
+---
+<Base title="What Wins Games" description="Which pregame numbers line up with who wins NBA games, from Elo and scoring margin to shooting and turnovers, and how much the forecast model actually leans on each." section="what-wins">
+  <div class="wrap">
+    <header class="page-head">
+      <p class="kicker accent">Stats and results</p>
+      <h1>What wins games</h1>
+      <p class="lede">For {ww.n_games.toLocaleString()} graded games ({fmtShortDate(ww.first)}, {ww.first.slice(0, 4)} to {fmtShortDate(ww.last)}, {ww.last.slice(0, 4)}), how well each team's numbers going into the game lined up with the final margin. Every comparison is home team minus road team, with the sign set so that "better" always points the same way.</p>
+    </header>
+
+    <section class="section" aria-labelledby="h-rank">
+      <div class="section-head">
+        <h2 id="h-rank">Which numbers line up with winning</h2>
+        <span class="meta">Correlation with the final margin · how often the better side won</span>
+      </div>
+      <div class="instrument panel" data-reveal>
+        <div class="ranks" role="table" aria-label="Pregame stats ranked by correlation with the final margin">
+          <div class="rk head" role="row">
+            <span role="columnheader">Pregame gap in…</span>
+            <span role="columnheader">Correlation with final margin</span>
+            <span role="columnheader" class="r">Better side won</span>
+          </div>
+          {stats.map((s) => (
+            <div class={`rk ${s.group === "Model input" ? "in" : "ff"}`} role="row">
+              <span role="cell" class="lbl">{s.label}<span class="grp">{s.group === "Model input" ? "model input" : "not an input"}</span></span>
+              <span role="cell" class="barcell"><span class="track"><i style={`--w:${(100 * Math.abs(s.r)) / rMax}%`}></i></span><b class="num">{s.r.toFixed(2)}</b></span>
+              <span role="cell" class="r num won">{s.better_won == null ? "–" : pct(s.better_won)}</span>
+            </div>
+          ))}
+        </div>
+        <p class="legend"><span class="sw in"></span> model input <span class="sw ff"></span> four-factor stat the model doesn't see directly (10-game average). Home teams won {pct(ww.home_won)} of these games regardless.</p>
+      </div>
+
+      <div class="cols cols-2 take">
+        <div>
+          <h3>What stands out</h3>
+          <ul>
+            <li><strong>{top.label}</strong> lines up best: the better-rated team won {pct(top.better_won)} of the time. Measures built from results (Elo, season margin, net rating) beat any single box-score stat.</li>
+            <li>Among the four factors, <strong>{topFactor.label.toLowerCase()}</strong> leads. Shooting and shooting defense matter most; offensive rebounding and free throws barely separate winners from losers on their own.</li>
+            <li><strong>Injuries matter:</strong> the side missing fewer rotation points won {pct(stats.find((s) => s.key === "missing").better_won)}.</li>
+            {b2b && b2bLean && <li><strong>Back-to-backs:</strong> the rested side won {pct(b2b.better_won)} when only one team was on the second night, yet the model gives that input almost no weight ({b2bLean.v.toFixed(2)} pts). Part of that edge is home court, since road teams are more often on back-to-backs, but it's worth a closer look.</li>}
+          </ul>
+        </div>
+        <div>
+          <h3>How to read this</h3>
+          <p class="note">Correlation runs from 0 (no relationship) to 1 (the gap fully predicts the margin). Single-game NBA results are noisy, so 0.4 is strong. These stats overlap heavily: shooting feeds offensive rating, which feeds net rating and, through results, Elo. A stat can matter for winning and still add nothing to a model that already has the summary. This is correlation over past games, not proof of cause.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="h-lean">
+      <div class="section-head">
+        <h2 id="h-lean">What the model leans on</h2>
+        <span class="meta">Average push on the projected margin, {okGames.length} explained forecasts</span>
+      </div>
+      <div class="cols cols-2">
+        <div class="bars" data-reveal>
+          {lean.map((l) => (
+            <div class="br"><span class="lbl">{l.label}</span><span class="track"><i class="m" style={`--w:${(100 * l.v) / leanMax}%`}></i></span><b class="num">{l.v.toFixed(1)}</b></div>
+          ))}
+        </div>
+        <p class="note">How many points each input moved a forecast's projected margin, on average, across the forecasts that can be explained exactly (<a href="/methodology/#explanations">how</a>). Compare with the ranking above: the model leans hardest on the same results-based measures that line up best with winning. The sample is this season's forecasts only, so treat small values as rough.</p>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="h-build">
+      <div class="section-head">
+        <h2 id="h-build">What builds a rating</h2>
+        <a href="/methodology/#raw-stats">Method</a>
+      </div>
+      <div class="cols cols-2">
+        <div class="bars two" data-reveal>
+          <div class="br head"><span></span><span class="key"><i class="o"></i> offense <i class="d"></i> defense</span><span></span></div>
+          {swing.map((s) => (
+            <div class="br">
+              <span class="lbl">{s.label}<span class="sub">{s.k === "ftr" ? `${(s.coef * 0.01).toFixed(2)} rating pts per 0.01` : `${s.coef > 0 ? "+" : "−"}${Math.abs(s.coef * 0.01).toFixed(2)} rating pts per 1 pt`}</span></span>
+              <span class="stack"><span class="track"><i class="o" style={`--w:${(100 * s.off) / swMax}%`}></i></span><span class="track"><i class="d" style={`--w:${(100 * s.def) / swMax}%`}></i></span></span>
+              <b class="num">±{((s.off + s.def) / 2).toFixed(1)}</b>
+            </div>
+          ))}
+        </div>
+        <p class="note">Offensive and defensive ratings are the model's view of recent form. The four factors explain {(100 * bd.fit.r2).toFixed(0)}% of a game's rating. Bars show the typical swing each factor gives a team's 10-game rating, in points per 100 possessions. Shooting moves ratings about twice as much as anything else. Every game page traces its teams' ratings back to these factors under "Built from the box scores".</p>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="h-court">
+      <div class="section-head">
+        <h2 id="h-court">Home court, measured</h2>
+        <a href="/notebook/2026-11-06-home-court-gap/">Does it shrink against better teams?</a>
+      </div>
+      <p class="lede court-lede">Home teams win more often, and the model knows it: Elo adds 70 rating points, about 2.5 points of margin, to every home team before the score models take over.</p>
+      <CourtHome />
+    </section>
+  </div>
+</Base>
+
+<style>
+  .panel { border-radius: 6px; padding: var(--s5); }
+  .court-lede { margin-bottom: var(--s5); }
+  .ranks { display: grid; gap: 2px; }
+  .rk { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.6fr) 7em; gap: var(--s4); align-items: center; padding: 6px 0; border-bottom: 1px solid var(--rule); font-size: 0.9rem; }
+  .rk.head { font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+  .rk .r { text-align: right; }
+  .lbl { display: flex; flex-direction: column; }
+  .grp, .sub { font-size: 0.72rem; color: var(--muted); }
+  .barcell { display: grid; grid-template-columns: minmax(0, 1fr) 3.2em; gap: 8px; align-items: center; }
+  .barcell b { text-align: right; }
+  .track { position: relative; display: block; height: 10px; background: var(--rule); border-radius: 2px; overflow: hidden; }
+  .track i { position: absolute; inset: 0 auto 0 0; width: var(--w); border-radius: 2px; }
+  .rk.in .track i, .sw.in { background: var(--model); }
+  .rk.ff .track i, .sw.ff { background: var(--neutral-mark); }
+  .won { font-weight: 600; }
+  .legend { font-size: 0.8rem; color: var(--muted); margin: var(--s3) 0 0; }
+  .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin: 0 4px 0 10px; vertical-align: -1px; }
+  .sw:first-child { margin-left: 0; }
+  .take { margin-top: var(--s6); }
+  .take h3 { font-size: 1.05rem; margin: 0 0 var(--s2); }
+  .take ul { margin: 0; padding-left: 1.1em; }
+  .take li { margin-bottom: var(--s2); }
+  .bars { display: grid; gap: 10px; }
+  .br { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1.5fr) 3.2em; gap: 10px; align-items: center; font-size: 0.9rem; }
+  .br b { text-align: right; }
+  .br.head { font-size: 0.75rem; color: var(--muted); }
+  .key i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin: 0 4px 0 8px; vertical-align: -1px; }
+  .track i.m { background: var(--model); }
+  i.o { background: var(--accent); }
+  i.d { background: var(--neutral-mark); }
+  .stack { display: grid; gap: 3px; }
+  .stack .track { height: 7px; }
+  :global(html.js) .ranks .track i, :global(html.js) .bars .track i { transform: scaleX(0); transform-origin: left; }
+  :global(html.js) .in .ranks .track i, :global(html.js) .bars.in .track i { transform: none; transition: transform 0.7s var(--ease-out); }
+  @media (prefers-reduced-motion: reduce) { :global(html.js) .ranks .track i, :global(html.js) .bars .track i { transform: none; } }
+  @media (max-width: 640px) {
+    .rk { grid-template-columns: minmax(0, 1fr) 4.2em; }
+    .rk .barcell { grid-column: 1 / -1; grid-row: 2; }
+    .rk.head span:nth-child(2) { display: none; }
+    .br { grid-template-columns: minmax(0, 1fr) 3.2em; }
+    .br .track, .br .stack { grid-column: 1 / -1; grid-row: 2; }
+    .br.head { display: none; }
+  }
+</style>

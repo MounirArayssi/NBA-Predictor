@@ -7,6 +7,8 @@ const current = games.filter((g) => g.season === site.season).sort((a, b) => (a.
 const dates = [...new Set(current.map((g) => g.date))].sort();
 const byDate = Object.fromEntries(dates.map((d) => [d, current.filter((g) => g.date === d)]));
 const counts = Object.fromEntries(dates.map((d) => [d, { n: byDate[d].length, f: byDate[d].filter((g) => g.fc).length }]));
+// Per-day pick strip: one square per forecast game, in tip-off order.
+const picks = (d) => byDate[d].filter((g) => g.fc).map((g) => ({ g, s: g.status === "final" ? (g.fc.correct ? "ok" : "no") : "wait" }));
 const buildDay = etDate(new Date(site.generated_at));
 const first = dates[0], last = dates[dates.length - 1];
 ---
@@ -68,8 +70,20 @@ const first = dates[0], last = dates[dates.length - 1];
         <section class="day" data-date={d} aria-labelledby={`h-${d}`}>
           <div class="section-head">
             <h2 id={`h-${d}`}>{fmtLongDate(d)}</h2>
-            <span class="meta">{counts[d].n} games · {counts[d].f ? `${counts[d].f} forecast` : "no forecasts published"}</span>
+            <span class="meta">
+              {(() => { const pk = picks(d), ok = pk.filter((x) => x.s === "ok").length, no = pk.filter((x) => x.s === "no").length;
+                return ok + no ? <><b class="num daysum">{ok}–{no}</b> picks · </> : null; })()}
+              {counts[d].n} games · {counts[d].f ? `${counts[d].f} forecast` : "forecasts not yet published"}
+            </span>
           </div>
+          {picks(d).length > 0 && (
+            <ol class="pickstrip" data-reveal aria-label={`Forecast results on ${d}`}>
+              {picks(d).map(({ g, s }, i) => {
+                const t = `${g.away} at ${g.home}: ${s === "wait" ? "awaiting result" : `picked ${g.fc.hwp >= 0.5 ? g.home : g.away}, ${s === "ok" ? "right" : "wrong"}`}`;
+                return <li class={s} style={`--i:${i}`}><a href={`#g-${g.id}`} title={t} aria-label={t}><span aria-hidden="true">{s === "ok" ? "✓" : s === "no" ? "✗" : ""}</span></a></li>;
+              })}
+            </ol>
+          )}
           <GameList games={byDate[d]} label={`Games on ${d}`} />
         </section>
       ))}
@@ -195,6 +209,17 @@ const first = dates[0], last = dates[dates.length - 1];
   .day { padding-block: var(--s5) var(--s4); }
   .day h2 { font-size: 1.3rem; }
   .meta { font-size: 0.875rem; color: var(--muted); }
+  .daysum { color: var(--ink); }
+  .pickstrip { list-style: none; margin: calc(-1 * var(--s3)) 0 var(--s4); padding: 0; display: flex; flex-wrap: wrap; gap: 4px; }
+  .pickstrip a { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 3px; font-size: 0.8rem; font-weight: 700; text-decoration: none; transition: transform 0.15s ease; }
+  .pickstrip a:hover { transform: scale(1.15); }
+  .pickstrip .ok a { background: var(--model-soft); color: var(--model); }
+  .pickstrip .no a { background: var(--accent-soft); color: var(--accent); }
+  .pickstrip .wait a { border: 1.5px dashed var(--rule-strong); }
+  :global(html.js) .pickstrip li { opacity: 0; transform: translateY(6px) scale(0.6); }
+  :global(html.js) .pickstrip.in li { opacity: 1; transform: none; transition: opacity 0.3s ease, transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1); transition-delay: calc(var(--i) * 50ms); }
+  @media (prefers-reduced-motion: reduce) { :global(html.js) .pickstrip li { opacity: 1; transform: none; } }
+  :global(.grow:target) { background: var(--accent-soft); transition: background 1.5s ease; }
   @media (max-width: 560px) {
     .datenav .seg { width: 100%; }
     .datenav .seg .btn { flex: 1; justify-content: center; padding-inline: 4px; font-size: 0.8rem; }

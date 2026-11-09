@@ -7,6 +7,7 @@
 import { teamColor } from "../lib/teamColors.js";
 import { teamByAbbr, signed, fixed } from "../lib/data.js";
 import ex from "../data/explanations.json";
+import bd from "../data/breakdowns.json";
 
 interface Props { g: any }
 const { g } = Astro.props;
@@ -57,6 +58,52 @@ if (ok) {
   wf = { W, H: steps.length * rowH + 40, rowH, L, x, ticks, lim };
 }
 const label = (val) => `${Math.abs(val).toFixed(1)} toward ${val >= 0 ? home : away}`;
+
+// "Why" summary: rule-written sentences from the raw-stat breakdowns
+// (web/analytics/narrative.py), favorite first, plus what moved the margin.
+const W = bd.games[g.id];
+const fc = g.fc;
+const fav = fc ? (fc.ph >= fc.pa ? home : away) : null;
+const favSide = fav === home ? "home" : "away";
+const whyTeams = W && fc ? [[favSide, fav], [favSide === "home" ? "away" : "home", fav === home ? away : home]].filter(([s]) => W[s]?.why?.length) : [];
+const moved = ok && e.groups ? Object.entries(e.groups).filter(([k, v]) => (k !== "playoff" || po) && Math.abs(v) >= 0.3).sort((p, q) => Math.abs(q[1]) - Math.abs(p[1])).slice(0, 3) : [];
+// One plain fact per group that moved the forecast, from the saved inputs (and
+// the injury breakdown for player names).
+const keyMax = ok ? Math.max(Math.abs(e.base), ...moved.map(([, x]) => Math.abs(x))) : 1;
+const f1 = (x) => (x == null ? "–" : Number(x).toFixed(1));
+const outList = (side, t) => {
+  const pl = W?.[side]?.missing?.ok ? W[side].missing.players : null;
+  if (pl?.length) {
+    const top = pl.slice(0, 2).map((p) => `${p.n} (${Math.round(p.ppg)} ppg)`).join(" and ");
+    return `${t} without ${top}${pl.length > 2 ? ` and ${pl.length - 2} more` : ""}`;
+  }
+  const v0 = v(side, "missing_pts");
+  return v0 >= 1 ? `${t} missing ${f1(v0)} rotation points a game` : null;
+};
+const fact = (k) => {
+  if (k === "strength") return `Elo ${home} ${Math.round(v("home", "elo"))}, ${away} ${Math.round(v("away", "elo"))}; season margin ${home} ${signed(v("home", "season_margin"), 1)}, ${away} ${signed(v("away", "season_margin"), 1)}.`;
+  if (k === "form") return `Last 10 games, per 100 possessions: ${home} scores ${f1(v("home", "off_rating"))} and allows ${f1(v("home", "def_rating"))}; ${away} scores ${f1(v("away", "off_rating"))} and allows ${f1(v("away", "def_rating"))}.`;
+  if (k === "availability") {
+    const l = [outList("away", away), outList("home", home)].filter(Boolean);
+    return (l.length ? `${l.join("; ")}.` : "Both teams close to full strength.") + (oddInjury ? ` The effect points toward ${oddInjury}, the team missing players: a quirk of the model, not basketball logic.` : "");
+  }
+  if (k === "rest") {
+    const b = [[home, "home"], [away, "away"]].filter(([, s]) => v(s, "back_to_back")).map(([t]) => t);
+    return `${home} ${v("home", "rest_days")} days of rest, ${away} ${v("away", "rest_days")}.${b.length ? ` ${b.join(" and ")} on the second night of a back-to-back.` : ""}`;
+  }
+  if (k === "playoff") return `Series: ${I.series?.home_wins ?? "–"} home wins${I.series?.elimination ? ", elimination game" : ""}.`;
+  return "";
+};
+// Flag an injury effect that points the counter-intuitive way (toward the team missing players).
+const oddInjury = (() => {
+  if (!ok || !W || !e.groups?.availability) return null;
+  const av = e.groups.availability;
+  const mh = W.home?.missing?.ok ? W.home.missing.v : 0, ma = W.away?.missing?.ok ? W.away.missing.v : 0;
+  const hurt = mh - ma >= 8 ? home : ma - mh >= 8 ? away : null;
+  if (!hurt || Math.abs(av) < 0.05) return null;
+  const toward = av > 0 ? home : away;
+  return toward === hurt ? hurt : null;
+})();
 ---
 <section class="section inside" id="inside" aria-labelledby="h-inside">
   <div class="section-head">
@@ -68,33 +115,28 @@ const label = (val) => `${Math.abs(val).toFixed(1)} toward ${val >= 0 ? home : a
     <p class="state">No saved inputs are stored with this game's forecast.</p>
   ) : (
     <>
-      {ok ? <p class="lede summary">{e.summary}</p> : null}
-      <div class={ok ? "cols cols-2 split" : ""}>
-        <div>
-          <p class="chart-title">What the model received</p>
-          <p class="chart-sub">Values saved with the forecast, before tip-off. {ok ? "The last column is each input's effect on the projected home margin." : ""}</p>
-          <div class="table-scroll">
-            <table class="inputs" data-reveal>
-              <thead><tr><th>Input</th><th class="r">{away}</th><th class="r">{home}</th>{ok && <th class="r eff-h">Effect, pts</th>}</tr></thead>
-              <tbody>
-                {rows.map((r) => (
-                  <tr>
-                    <td>{r.label}{r.note && <span class="nt">{r.note}</span>}</td>
-                    {r.single != null ? <td class="r num" colspan="2">{r.single}</td> : <><td class="r num">{fmtV(r, r.a)}</td><td class="r num">{fmtV(r, r.h)}</td></>}
-                    {ok && (
-                      <td class="r eff">
-                        <span class="num">{signed(r.eff, 1)}</span>
-                        <span class="ebar" aria-hidden="true"><i style={`--w:${(50 * Math.abs(r.eff)) / maxEff}%;--c:${r.eff >= 0 ? ch : ca};${r.eff >= 0 ? "left:50%;transform-origin:left" : "right:50%;transform-origin:right"}`}></i></span>
-                      </td>
-                    )}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+      {ok && fc && (
+        <div class="why">
+          <h3>Why the model leans {fav}</h3>
+          <ul class="keys" data-reveal>
+            <li style={`--w:${(100 * Math.abs(e.base)) / keyMax}%;--c:${ch};--i:0`}><span class="kl">Home court</span><span class="kp">{signed(e.base, 1)} {home}</span><span class="kf">What the model gives the home team on an average night.</span></li>
+            {moved.map(([k, val], j) => (
+              <li style={`--w:${(100 * Math.abs(val)) / keyMax}%;--c:${val >= 0 ? ch : ca};--i:${j + 1}`}><span class="kl">{GROUPS[k]}</span><span class="kp">+{Math.abs(val).toFixed(1)} {val >= 0 ? home : away}</span><span class="kf">{fact(k)}</span></li>
+            ))}
+          </ul>
+          <p class="why-sum">Together: <strong>{fav} by {Math.abs(Math.round(fc.ph - fc.pa))}</strong>, a {Math.round(100 * Math.max(fc.hwp, 1 - fc.hwp))}% chance.{moved.length < Object.keys(e.groups).length ? " Smaller inputs make up the rest; the chart below has all of them." : ""}</p>
+          {whyTeams.length > 0 && (
+            <details class="data notes">
+              <summary>Team-by-team notes from the box scores</summary>
+              {whyTeams.map(([s, t]) => (
+                <p class="why-team"><span class="wt" aria-hidden="true" style={`--tc:${teamColor(t).light}`}></span>{W[s].why[0].startsWith(`${t} `) ? <><strong>{t}</strong>{W[s].why.join(" ").slice(t.length)}</> : <><strong>{t}:</strong> {W[s].why.join(" ")}</>}</p>
+              ))}
+              <p class="note">Written from the numbers in <a href="#raw">Built from the box scores</a>, using only values that rebuild exactly.</p>
+            </details>
+          )}
         </div>
-
-        {ok && wf && (
+      )}
+      {ok && wf && (
           <figure class="chart wf">
             <p class="chart-title">How the projected margin was built</p>
             <p class="chart-sub">Points of home margin. Right of zero favors {home}; left favors {away}.</p>
@@ -120,40 +162,80 @@ const label = (val) => `${Math.abs(val).toFixed(1)} toward ${val >= 0 ? home : a
               </svg>
             </div>
             <figcaption>
-              {!po && Object.prototype.hasOwnProperty.call(e.groups, "playoff") && Math.abs(e.groups.playoff) > 0.05 ? "In a regular-season game the playoff inputs are zero; because the model's average output includes playoff games, their absence still shifts the margin slightly. " : ""}Contributions are exact for this model (TreeSHAP on the home and away score models; the margin's contribution is home minus away). Baseline {signed(e.base, 1)} plus the bars equals the projected margin {signed(e.pm, 1)} before rounding. These describe how the model used its inputs, not what will cause the result.
+              Baseline {signed(e.base, 1)} plus the bars equals the projected margin {signed(e.pm, 1)}. The {Math.round(100 * Math.max(g.fc.hwp, 1 - g.fc.hwp))}% win probability comes from a separate curve on that margin. This shows how the model used its inputs, not what will decide the game. <a href="/methodology/#explanations">How it's calculated</a>
             </figcaption>
-            <details class="data">
-              <summary>All {ex.features.length} inputs, in points</summary>
-              <div class="table-scroll">
-                <table>
-                  <thead><tr><th>Input</th><th class="r">Value</th><th class="r">{home} pts</th><th class="r">{away} pts</th><th class="r">Margin</th></tr></thead>
-                  <tbody>
-                    {ex.features.slice().sort((p, q) => Math.abs(e.c[q][2]) - Math.abs(e.c[p][2])).map((k) => (
-                      <tr><td>{ex.meta[k].label}</td><td class="r num">{fixed(e.x[k], ex.meta[k].unit === "yes/no" ? 0 : 1)}</td><td class="r num">{signed(e.c[k][0], 2)}</td><td class="r num">{signed(e.c[k][1], 2)}</td><td class="r num">{signed(e.c[k][2], 2)}</td></tr>
-                    ))}
-                    <tr class="total"><td>Baseline (average output)</td><td></td><td class="r num">{fixed(e.bh, 1)}</td><td class="r num">{fixed(e.ba, 1)}</td><td class="r num">{signed(e.base, 2)}</td></tr>
-                  </tbody>
-                </table>
-              </div>
-            </details>
           </figure>
+      )}
+      <details class="data inputs-d" open={!ok}>
+        <summary>{ok ? "Every input the model received, with its effect" : "What the model received"}</summary>
+          <div class="table-scroll">
+            <table class="inputs" data-reveal>
+              <thead><tr><th>Input</th><th class="r">{away}</th><th class="r">{home}</th>{ok && <th class="r eff-h">Effect, pts</th>}</tr></thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr>
+                    <td>{r.label}{r.note && <span class="nt">{r.note}</span>}</td>
+                    {r.single != null ? <td class="r num" colspan="2">{r.single}</td> : <><td class="r num">{fmtV(r, r.a)}</td><td class="r num">{fmtV(r, r.h)}</td></>}
+                    {ok && (
+                      <td class="r eff">
+                        <span class="num">{signed(r.eff, 1)}</span>
+                        <span class="ebar" aria-hidden="true"><i style={`--w:${(50 * Math.abs(r.eff)) / maxEff}%;--c:${r.eff >= 0 ? ch : ca};${r.eff >= 0 ? "left:50%;transform-origin:left" : "right:50%;transform-origin:right"}`}></i></span>
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        {ok && (
+          <details class="data">
+            <summary>All {ex.features.length} raw inputs, in points for each team</summary>
+            <div class="table-scroll">
+              <table>
+                <thead><tr><th>Input</th><th class="r">Value</th><th class="r">{home} pts</th><th class="r">{away} pts</th><th class="r">Margin</th></tr></thead>
+                <tbody>
+                  {ex.features.slice().sort((p, q) => Math.abs(e.c[q][2]) - Math.abs(e.c[p][2])).map((k) => (
+                    <tr><td>{ex.meta[k].label}</td><td class="r num">{fixed(e.x[k], ex.meta[k].unit === "yes/no" ? 0 : 1)}</td><td class="r num">{signed(e.c[k][0], 2)}</td><td class="r num">{signed(e.c[k][1], 2)}</td><td class="r num">{signed(e.c[k][2], 2)}</td></tr>
+                  ))}
+                  <tr class="total"><td>Baseline (average output)</td><td></td><td class="r num">{fixed(e.bh, 1)}</td><td class="r num">{fixed(e.ba, 1)}</td><td class="r num">{signed(e.base, 2)}</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </details>
         )}
-      </div>
-
-      <p class="note prob-note">
-        {ok
-          ? `The win probability (${Math.round(100 * Math.max(g.fc.hwp, 1 - g.fc.hwp))}% ${g.fc.hwp >= 0.5 ? home : away}) comes from a separate curve applied to the projected margin, so these contributions are points of margin, not percentage points.`
-          : e && !e.ok
-            ? `This forecast can't be broken down exactly: ${e.why}. The inputs above are the values it received. Explanations are shown only when the model that made a forecast can be rebuilt and reproduces it.`
-            : "Explanations are shown only when the model that made a forecast can be rebuilt and reproduces it."}
-        {" "}<a href="/methodology/#explanations">How explanations are checked</a>
-      </p>
+      </details>
+      {!ok && (
+        <p class="note prob-note">
+          {e ? `This forecast can't be broken down exactly: ${e.why}. Explanations are shown only when the model that made a forecast can be rebuilt and reproduces it.` : "Explanations are shown only when the model that made a forecast can be rebuilt and reproduces it."}
+          {" "}<a href="/methodology/#explanations">How explanations are checked</a>
+        </p>
+      )}
     </>
   )}
 </section>
 
 <style>
   .summary { margin-bottom: var(--s5); max-width: 75ch; }
+  .why { max-width: 80ch; margin-bottom: var(--s6); padding: var(--s4) var(--s5); background: var(--surface); border: 1px solid var(--rule); border-left: 3px solid var(--model); border-radius: var(--radius); }
+  .why h3 { font-size: 1.1rem; margin: 0 0 var(--s2); }
+  .why p { margin: 0 0 var(--s3); }
+  .keys { list-style: none; margin: 0 0 var(--s3); padding: 0; }
+  .keys li { display: grid; grid-template-columns: 11em 6.5em minmax(0, 1fr); gap: 4px var(--s3); align-items: baseline; padding: 7px 0; border-bottom: 1px solid var(--rule); font-size: 0.92rem; }
+  .keys li { position: relative; }
+  .keys li::after { content: ""; position: absolute; left: 0; bottom: -1px; height: 2px; width: var(--w); background: var(--c); opacity: 0.85; transform-origin: left; }
+  :global(html.js) .keys li::after { transform: scaleX(0); }
+  :global(html.js) .keys.in li::after { transform: none; transition: transform 0.8s var(--ease-out); transition-delay: calc(var(--i) * 120ms + 0.15s); }
+  @media (prefers-reduced-motion: reduce) { :global(html.js) .keys li::after { transform: none; } }
+  .kl { font-weight: 600; }
+  .kp { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; border-left: 3px solid var(--c); padding-left: 6px; }
+  .kf { color: var(--ink-2); }
+  @media (max-width: 600px) { .keys li { grid-template-columns: minmax(0, 1fr) auto; } .kf { grid-column: 1 / -1; } }
+  .why-sum { font-size: 1.02rem; }
+  .notes { margin-top: var(--s2); }
+  .notes .why-team { margin: var(--s2) 0; }
+  .inputs-d { margin-top: var(--s4); }
+  .why-team .wt { display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: var(--tc); margin-right: 7px; }
+  .why .note { margin: 0; }
   .split { align-items: start; }
   .inputs td:first-child { min-width: 180px; }
   .nt { display: block; font-size: 0.78rem; color: var(--muted); }
@@ -161,6 +243,7 @@ const label = (val) => `${Math.abs(val).toFixed(1)} toward ${val >= 0 ? home : a
   .eff .num { display: inline-block; min-width: 3.4em; }
   .ebar { position: relative; display: inline-block; width: 70px; height: 8px; margin-left: 6px; vertical-align: 0; background: linear-gradient(var(--rule-strong), var(--rule-strong)) 50% 0 / 1px 100% no-repeat; }
   .ebar i { position: absolute; top: 0; height: 100%; width: var(--w); background: var(--c); border-radius: 1px; }
+  .wf { max-width: 680px; margin-top: var(--s5); }
   .wf svg { min-width: 0 !important; }
   .wf svg text { font-size: 13px; }
   @media (max-width: 600px) { .ebar { display: none; } .inputs td:first-child { min-width: 140px; } .nt { display: none; } }
