@@ -10,7 +10,7 @@ import SeasonSoFar from "../components/charts/SeasonSoFar.astro";
 import Importance from "../components/charts/Importance.astro";
 import surprises from "../data/surprises.json";
 import whatWins from "../data/what_wins.json";
-import { performance as P, site, fmtShortDate, fixed, pct100, liveRecord as live } from "../lib/data.js";
+import { performance as P, site, fmtShortDate, fixed, pct100 } from "../lib/data.js";
 const B = P.record, M = P.market;
 const eloBase = whatWins.stats.find((s) => s.key === "elo");
 
@@ -41,7 +41,7 @@ const ctx = [
     <header class="page-head">
       <p class="kicker accent">Model evaluation</p>
       <h1>Performance</h1>
-      <p class="lede">One record: every graded game since 2022-23, one forecast each, from a model that had not seen the game. Most of these forecasts were produced after the fact by the walk-forward evaluation; {live.n} were saved live by the daily pipeline before tip-off ({live.w}–{live.l}), too few yet to judge on their own.</p>
+      <p class="lede">One record: every graded game since 2022-23, one forecast each, from a model that had not seen the game. Most of these forecasts were produced after the fact by the walk-forward evaluation; the rest were saved live by the daily pipeline before tip-off.</p>
       <p class="note">How both are produced: <a href="/methodology/">Methodology</a>.</p>
     </header>
 
@@ -58,7 +58,6 @@ const ctx = [
             <tr><td>Winners picked</td><td class="r num">{pct100(B.all.win)}</td><td>The team with the higher projected score won this often.</td></tr>
             <tr><td>Home team won</td><td class="r num">{pct100(B.all.home_win)}</td><td>The baseline: picking the home team every time would have been right this often.</td></tr>
             {eloBase && <tr><td>Higher-Elo team won</td><td class="r num">{pct100(100 * eloBase.better_won)}</td><td>A tougher baseline: picking the team with the better Elo rating going in. The forecast has to beat this to add anything.</td></tr>}
-            <tr><td>Saved live before tip-off</td><td class="r num">{live.w}–{live.l}</td><td>The {live.n} forecasts the daily pipeline published before the game ({live.first && fmtShortDate(live.first)} – {live.last && fmtShortDate(live.last)}). The rest of the record is the walk-forward test.</td></tr>
             <tr><td>Margin error</td><td class="r num">{fixed(B.all.margin_mae, 1)} pts</td><td>Average distance between the forecast margin and the final margin.</td></tr>
             <tr><td>Total points error</td><td class="r num">{fixed(B.all.total_mae, 1)} pts</td><td>Average distance between forecast and actual combined score.</td></tr>
             <tr><td>Team score error</td><td class="r num">{fixed(B.all.team_mae, 1)} pts</td><td>Average miss on a single team's score. Half of team scores land within {B.team_median} points.</td></tr>

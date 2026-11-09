@@ -1,6 +1,5 @@
 ---
 import Base from "../layouts/Base.astro";
-import { liveRecord as live } from "../lib/data.js";
 ---
 <Base title="About" description="About this independent NBA forecasting project: what it predicts, how it is built, data sources and limitations." section="about">
   <div class="wrap">
@@ -14,7 +13,7 @@ import { liveRecord as live } from "../lib/data.js";
       <h2>Why "ledger"</h2>
       <p>A ledger keeps every entry, wins and misses alike. Every game since 2022-23 has one forecast, from a model that had not seen it, graded against the final score. Two kinds of entry make up the record:</p>
       <ul>
-        <li><strong>Live forecasts</strong>, saved by the daily pipeline before tip-off and never revised after. These are the real test, and there are only {live.n} of them so far ({live.w}–{live.l}).</li>
+        <li><strong>Live forecasts</strong>, saved by the daily pipeline before tip-off and never revised after.</li>
         <li><strong>Walk-forward forecasts</strong>, produced after the fact for every earlier game by retraining the model on prior seasons only. They show how the method holds up across thousands of games, but they were not published in advance.</li>
       </ul>
       <p>The full record is on the <a href="/performance/">Performance</a> page and in the <a href="/forecasts/archive/">archive</a>; how the two are produced is on the <a href="/methodology/">Methodology</a> page.</p>
