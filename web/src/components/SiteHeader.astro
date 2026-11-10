@@ -3,16 +3,19 @@ import { TITLE, site } from "../lib/data.js";
 import LogoMark from "./LogoMark.astro";
 interface Props { section: string }
 const { section } = Astro.props;
+// Main pages, then the research pages grouped under one menu (each keeps its own page).
 const links = [
   ["home", "/", "Home"],
   ["forecasts", "/forecasts/", "Forecasts"],
   ["teams", "/teams/", "Teams"],
-  ["surprises", "/surprises/", "Surprises"],
-  ["what-wins", "/what-wins/", "What wins"],
   ["performance", "/performance/", "Performance"],
-  ["notebook", "/notebook/", "Notebook"],
-  ["about", "/about/", "About"],
 ];
+const research = [
+  ["surprises", "/surprises/", "Surprises", "Games furthest from the forecast"],
+  ["what-wins", "/what-wins/", "What wins", "Which pre-game numbers line up with wins"],
+  ["notebook", "/notebook/", "Notebook", "Model changes and ideas tested"],
+];
+const inResearch = research.some(([key]) => key === section);
 ---
 <header class="site-header instrument">
   <div class="wrap bar">
@@ -24,7 +27,17 @@ const links = [
         {links.map(([key, href, label]) => (
           <li><a href={href} aria-current={section === key ? "page" : undefined}>{label}</a></li>
         ))}
-        <li class="soon-li"><span class="soon-nav" title="Player stats are coming soon" aria-disabled="true">Players <span class="soon">Soon</span></span></li>
+        <li class="group">
+          <details class="drop">
+            <summary aria-current={inResearch ? "page" : undefined}>Research</summary>
+            <ul class="sub">
+              {research.map(([key, href, label, hint]) => (
+                <li><a href={href} aria-current={section === key ? "page" : undefined}><span class="lb">{label}</span><span class="hint">{hint}</span></a></li>
+              ))}
+            </ul>
+          </details>
+        </li>
+        <li><a href="/about/" aria-current={section === "about" ? "page" : undefined}>About</a></li>
       </ul>
     </nav>
   </div>
@@ -38,7 +51,13 @@ const links = [
     btn.setAttribute("aria-expanded", String(!open));
     nav?.classList.toggle("open", !open);
   });
+  // Close the Research menu on an outside click or Escape.
+  const drop = document.querySelector<HTMLDetailsElement>("details.drop");
+  document.addEventListener("click", (e) => {
+    if (drop?.open && !drop.contains(e.target as Node)) drop.open = false;
+  });
   document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && drop?.open) { drop.open = false; drop.querySelector("summary")?.focus(); return; }
     if (e.key === "Escape" && btn?.getAttribute("aria-expanded") === "true") {
       btn.setAttribute("aria-expanded", "false");
       nav?.classList.remove("open");
@@ -71,10 +90,24 @@ const links = [
     font-size: 0.9rem; font-weight: 500; border-bottom: 3px solid transparent;
   }
   nav a:hover { color: var(--header-ink); }
-  .soon-nav { display: block; padding: 18px 10px 15px; color: var(--header-muted); opacity: 0.75; font-size: 0.9rem; font-weight: 500; cursor: default; white-space: nowrap; }
-  .soon { font-size: 0.58rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--board); background: var(--led); border-radius: 3px; padding: 1px 4px; margin-left: 3px; vertical-align: 2px; animation: soonglow 2.6s ease-in-out infinite; }
-  @keyframes soonglow { 50% { box-shadow: 0 0 8px rgba(245, 185, 76, 0.7); } }
   nav a[aria-current="page"] { color: var(--header-ink); border-bottom-color: var(--accent); }
+  .group { position: relative; }
+  .drop summary {
+    list-style: none; cursor: pointer; padding: 18px 10px 15px; color: var(--header-muted); font-size: 0.9rem; font-weight: 500;
+    border-bottom: 3px solid transparent; white-space: nowrap;
+  }
+  .drop summary::-webkit-details-marker { display: none; }
+  .drop summary::after { content: ""; display: inline-block; width: 5px; height: 5px; margin-left: 7px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(45deg); vertical-align: 3px; transition: transform 0.2s var(--ease-out); }
+  .drop[open] summary::after { transform: rotate(225deg); vertical-align: -1px; }
+  .drop summary:hover, .drop[open] summary { color: var(--header-ink); }
+  .drop summary[aria-current="page"] { color: var(--header-ink); border-bottom-color: var(--accent); }
+  .drop summary:focus-visible { outline-color: var(--accent); }
+  .sub { position: absolute; right: 0; top: 100%; z-index: 20; display: block !important; min-width: 250px; padding: 6px !important; background: var(--header); border: 1px solid var(--rule-strong); border-radius: var(--radius); box-shadow: 0 10px 24px rgba(0, 0, 0, 0.25); }
+  .sub a { padding: 9px 10px; border-bottom: 0; border-radius: var(--radius); }
+  .sub a:hover { background: rgba(255, 255, 255, 0.06); }
+  .sub a[aria-current="page"] { box-shadow: inset 3px 0 0 var(--accent); }
+  .sub .lb { display: block; color: var(--header-ink); }
+  .sub .hint { display: block; font-size: 0.76rem; font-weight: 400; color: var(--header-muted); margin-top: 1px; }
   nav a:focus-visible, .title:focus-visible, .menu-btn:focus-visible { outline-color: var(--accent); }
   .menu-btn {
     display: none; margin-left: auto; font: inherit; font-size: 0.875rem; color: var(--header-ink);
@@ -90,5 +123,9 @@ const links = [
     :global(html:not(.js)) nav ul { flex-direction: row; flex-wrap: wrap; }
     nav a { padding: 12px 0; border-bottom: 1px solid var(--rule); }
     nav a[aria-current="page"] { border-bottom-color: var(--rule); box-shadow: inset 3px 0 0 var(--accent); padding-left: 12px; }
+    .drop summary { padding: 12px 0; border-bottom: 1px solid var(--rule); }
+    .drop summary[aria-current="page"] { border-bottom-color: var(--rule); }
+    .sub { position: static; min-width: 0; padding: 0 0 0 14px !important; border: 0; box-shadow: none; background: transparent; }
+    .sub a { border-radius: 0; border-bottom: 1px solid var(--rule); }
   }
 </style>

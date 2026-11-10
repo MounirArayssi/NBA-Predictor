@@ -1,28 +1,18 @@
 ---
-import { site, fmtDateTime } from "../lib/data.js";
 ---
 <footer class="site-footer">
   <div class="wrap grid">
     <div>
       <p class="strong">The Hoop Ledger</p>
-      <p>A personal basketball research project. Every forecast graded against the final score.</p>
-      <p>Independent and noncommercial. Not affiliated with, endorsed by, or connected to the NBA, any team, or any other organization. For research and educational purposes only. <a href="/about/#disclaimer">Disclaimer</a>.</p>
+      <p>Independent and noncommercial, built from public data (NBA Stats and the official NBA injury report). Not affiliated with the NBA, any team, or any other organization. <a href="/about/#disclaimer">Disclaimer</a>.</p>
     </div>
-    <div>
-      <p class="strong">Data</p>
-      <p>Built entirely from publicly available data. Results and box scores: NBA Stats. Player availability: the official NBA injury report.</p>
-    </div>
-    <div>
-      <p class="strong">This edition</p>
-      <p>Data exported <time datetime={site.generated_at}>{fmtDateTime(site.generated_at)}</time>.</p>
-      <p><a href="/methodology/">Methodology</a> · <a href="/forecasts/archive/">Forecast archive</a> · <a href="/notebook/">Notebook</a></p>
-    </div>
+    <p class="links"><a href="/methodology/">Methodology</a> · <a href="/forecasts/archive/">Forecast archive</a> · <a href="/about/">About</a></p>
   </div>
 </footer>
 <style>
   .site-footer { margin-top: var(--s7); border-top: 2px solid var(--rule-heavy); background: var(--surface); }
   .grid { display: grid; gap: var(--s3) var(--s6); padding-block: var(--s4) var(--s5); font-size: 0.8rem; line-height: 1.45; color: var(--ink-2); }
-  @media (min-width: 800px) { .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  @media (min-width: 800px) { .grid { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); align-items: end; } .links { text-align: right; } }
   .strong { font-weight: 600; color: var(--ink); margin-bottom: 2px; }
-  p { margin-bottom: var(--s1); }
+  p { margin-bottom: var(--s1); max-width: 70ch; }
 </style>

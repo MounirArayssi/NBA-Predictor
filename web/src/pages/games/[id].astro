@@ -123,9 +123,11 @@ const desc = p
     {p && g.inputs && <RawBreakdown g={g} />}
     {final && p && <ForecastMiss g={g} />}
 
+    <h2 class="more-head">More about this game</h2>
+
     {final && p && (
       <section class="section" aria-labelledby="h-rev">
-        <h2 id="h-rev">Where the forecast differed from the result</h2>
+        <details class="fold"><summary><h2 id="h-rev">Where the forecast differed from the result</h2></summary>
         <div class="table-scroll narrow">
           <table>
             <thead><tr><th>Measure</th><th class="r">Forecast</th><th class="r">Actual</th><th class="r">Actual − forecast</th></tr></thead>
@@ -137,12 +139,13 @@ const desc = p
             </tbody>
           </table>
         </div>
+        </details>
       </section>
     )}
 
     {final && g.quarters?.h && g.quarters?.a && (
       <section class="section" aria-labelledby="h-q">
-        <h2 id="h-q">Score by quarter</h2>
+        <details class="fold"><summary><h2 id="h-q">Score by quarter</h2></summary>
         <div class="table-scroll narrow">
           <table>
             <thead><tr><th>Team</th><th class="r">Q1</th><th class="r">Q2</th><th class="r">Q3</th><th class="r">Q4</th><th class="r">OT</th><th class="r">Final</th></tr></thead>
@@ -153,13 +156,14 @@ const desc = p
             </tbody>
           </table>
         </div>
+        </details>
       </section>
     )}
 
-    <div class="cols cols-2 lower">
+    <div class="lower">
       {g.injuries && (
         <section class="section" aria-labelledby="h-inj">
-          <h2 id="h-inj">Injury report</h2>
+          <details class="fold" open={!final}><summary><h2 id="h-inj">Injury report</h2></summary>
           <p class="note">Official NBA injury report, {g.injuries.report} (the latest stored report before the forecast was saved). Two-way and G League assignments are omitted. The model counts players listed Out or Doubtful; Questionable players are treated as available.</p>
           {[[A, g.injuries.away], [H, g.injuries.home]].map(([t, list]) => (
             <div class="inj">
@@ -169,13 +173,14 @@ const desc = p
               ) : <p class="muted">No players listed.</p>}
             </div>
           ))}
+          </details>
         </section>
       )}
     </div>
 
-    <div class="cols cols-2 lower">
+    <div class="lower">
       <section class="section" aria-labelledby="h-form">
-        <h2 id="h-form">Recent form before this game</h2>
+        <details class="fold"><summary><h2 id="h-form">Recent form before this game</h2></summary>
         {[[A, g.away, g.form.away], [H, g.home, g.form.home]].map(([t, abbr, list]) => (
           <div class="form">
             <h3>{t.name}</h3>
@@ -193,10 +198,11 @@ const desc = p
             ) : <p class="muted">No earlier games in the data.</p>}
           </div>
         ))}
+        </details>
       </section>
 
       <section class="section" aria-labelledby="h-h2h">
-        <h2 id="h-h2h">Previous meetings</h2>
+        <details class="fold"><summary><h2 id="h-h2h">Previous meetings</h2></summary>
         {g.h2h.length ? (
           <table>
             <thead><tr><th>Date</th><th>Matchup</th><th class="r">Score</th></tr></thead>
@@ -209,6 +215,7 @@ const desc = p
             ))}</tbody>
           </table>
         ) : <p class="muted">No earlier meetings since 2021-22 in the data.</p>}
+        </details>
       </section>
     </div>
 
@@ -232,6 +239,26 @@ const desc = p
 
 <style>
   .tn { color: inherit; text-decoration: none; }
+  /* Detail sections fold under their headings so the forecast stays in front. */
+  .fold > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 10px; padding-bottom: 6px; border-bottom: 1px solid var(--rule); }
+  .fold > summary::-webkit-details-marker { display: none; }
+  .fold > summary h2 { margin: 0; }
+  .fold > summary::after { content: ""; flex: none; width: 7px; height: 7px; margin-left: auto; border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); transform: rotate(45deg); transition: transform 0.2s var(--ease-out); }
+  .fold[open] > summary::after { transform: rotate(225deg); }
+  .fold > summary:hover h2 { color: var(--accent); }
+  .fold[open] > summary { margin-bottom: var(--s3); }
+  .section:has(> .fold) { padding-block: 0; border-top: 0; }
+  .fold > summary { padding: 14px 0; margin: 0; }
+  .fold > summary h2 { font-family: var(--sans); font-size: 1rem; font-weight: 600; }
+  .fold[open] > summary { margin-bottom: var(--s3); }
+  .fold[open] { padding-bottom: var(--s4); }
+  .more-head { margin: var(--s7) 0 var(--s2); padding-top: var(--s6); border-top: 1px solid var(--rule); }
+  /* The two teams sit side by side inside an open fold on wide screens. */
+  @media (min-width: 800px) {
+    .fold:has(> .inj), .fold:has(> .form) { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: var(--s6); }
+    .fold:has(> .inj) > summary, .fold:has(> .form) > summary, .fold:has(> .inj) > .note { grid-column: 1 / -1; }
+    .fold > .inj + .inj, .fold > .form + .form { margin-top: 0; }
+  }
   .recs { display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center; margin-top: var(--s3); font-size: 0.95rem; }
   .rc { display: inline-flex; align-items: center; gap: 6px; }
   .rc .at { color: var(--muted); margin-right: -3px; }
@@ -252,7 +279,6 @@ const desc = p
   dt { color: var(--muted); }
   dd { margin: 0; }
   .narrow { max-width: 680px; }
-  .lower > .section { border-top: 1px solid var(--rule); }
   .facts { margin: var(--s4) 0 0; padding-left: 1.1em; color: var(--ink-2); font-size: 0.95rem; }
   .inj + .inj, .form + .form { margin-top: var(--s5); }
   .lower h2 + .note, .lower h2 + .form, .lower h2 + table { margin-top: var(--s2); }
