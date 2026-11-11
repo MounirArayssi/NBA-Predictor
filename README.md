@@ -153,7 +153,13 @@ NBA-Predictor/
 │   │   ├── compute_team_similarity.py        # legacy; not a model input
 │   │   ├── team_strength.py                  # Elo and season-margin blend
 │   │   ├── update_series.py                  # playoff series state
-│   │   └── build_features.py                 # assembles the feature matrix
+│   │   └── build_features.py                 # base query + runs the feature builders in order
+│   ├── features/                   # feature builders by category
+│   │   ├── strength.py                       # A  Elo, home court, rating matchups, similarity, style, H2H
+│   │   ├── recent_form.py                    # B  momentum, variance, shooting, quarters, four factors
+│   │   ├── availability.py                   # C  rotation players out (training + live)
+│   │   ├── rest.py                           # D  rest days, back-to-backs
+│   │   └── playoffs.py                       # E  series state, playoff elevation, in-series form
 │   └── storage/                    # SQLAlchemy engine and ORM models
 ├── model/
 │   ├── train.py                    # team score models (production fit)
@@ -225,17 +231,15 @@ python pipeline/run_daily.py                  # full: ingest, recompute, retrain
 python pipeline/run_daily.py --today-only     # only what today's games need; no retrain
 python pipeline/run_daily.py --predict-only   # predict only (e.g. a rerun in the last hour before tip)
 python pipeline/run_daily.py --skip-retrain   # full ingest, keep the current models
+python pipeline/run_daily.py --grade          # fetch finished results and grade official forecasts
 ```
 
 Before predicting, the pipeline checks that every team playing today has its previous game
 final, and re-fetches if not, so forecasts never miss a just-finished game.
 
-Grading a finished slate:
-
-```python
-from model.evaluate_predictions import evaluate_predictions
-evaluate_predictions(start_date=d, end_date=d)
-```
+Grading a finished slate: `python pipeline/run_daily.py --grade` fetches the results and box
+scores, then grades every official forecast whose game is final and not yet graded. The
+normal daily run does not grade.
 
 Extending the walk-forward backtest:
 

@@ -48,12 +48,12 @@ const status = [
       <div class="hero-text">
         <p class="kicker accent">NBA forecasts, on the record</p>
         <h1><span class="l1">Every game forecast.</span> <span class="l2">Every forecast graded.</span></h1>
+        <div class="hero-board"><Scoreboard cells={board} /></div>
         <p class="lede">An independent NBA model that forecasts every game and grades every forecast against the final score.</p>
         <p class="hero-links"><a class="btn primary" href="/forecasts/">Today's forecasts</a> <a class="btn" href="/performance/">See the record</a></p>
       </div>
       <DataBall />
     </section>
-    <Scoreboard cells={board} />
 
     <section class="section games" aria-labelledby="h-today">
       <div class="section-head">
@@ -157,6 +157,12 @@ const status = [
   .opening { padding-block: var(--s6) var(--s6); display: grid; gap: var(--s6); align-items: center; }
   @media (min-width: 900px) { .opening { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); } }
   .hero-text { max-width: 640px; }
+  /* Headline record sits right under the h1, beside the ball, so it shows on load. */
+  .hero-board { margin: 0 0 var(--s4); }
+  .hero-board :global(.board) { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .hero-board :global(.cell) { padding: 14px 8px 12px; }
+  .hero-board :global(.digits) { font-size: clamp(1.25rem, 5vw, 2rem); }
+  .hero-board :global(.lab) { font-size: 0.66rem; letter-spacing: 0.08em; }
   .hero-links { margin-top: var(--s5); display: flex; gap: var(--s3); flex-wrap: wrap; }
   .hero-links .btn { text-decoration: none; display: inline-flex; align-items: center; }
   .hero-links .btn.primary { background: var(--ink); color: var(--paper); border-color: var(--ink); }

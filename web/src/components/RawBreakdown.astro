@@ -58,7 +58,6 @@ const spark = (pts) => {
   const x = (i) => 4 + ((W - 8) * i) / n, y = (v) => 6 + ((H - 12) * (eHi - v)) / (eHi - eLo);
   return { W, H, d: pts.map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(""), y1500: y(1500), last: [x(pts.length - 1), y(pts[pts.length - 1])], dots: pts.map((v, i) => [x(i), y(v)]) };
 };
-const gl = (s) => B?.[s]?.games || [];
 const hasAny = B && sides.some(([s]) => ["elo", "margin", "off", "def", "missing", "rest"].some((k) => B[s]?.[k]?.ok));
 const bad = (s, k) => !B?.[s]?.[k]?.ok;
 ---
@@ -240,36 +239,7 @@ const bad = (s, k) => !B?.[s]?.[k]?.ok;
   </div>
   </details>
 
-  <!-- Game logs -->
-  <details class="data logs">
-    <summary>The last 10 games behind these numbers, box-score totals</summary>
-    <div class="cols cols-2">
-      {sides.map(([s, t]) => (
-        <div>
-          <p class="chart-title">{t}</p>
-          {gl(s).length ? (
-            <div class="table-scroll">
-              <table class="log">
-                <thead><tr><th>Date</th><th>Opp</th><th class="r">Score</th><th class="r">FG</th><th class="r">3P</th><th class="r">FT</th><th class="r">TOV</th><th class="r">OREB</th><th class="r">Off</th><th class="r">Def</th><th class="r">Pace</th></tr></thead>
-                <tbody>
-                  {gl(s).slice().reverse().map((x) => (
-                    <tr>
-                      <td class="nw">{fmtShortDate(x.d)}</td><td class="nw">{x.h ? "" : "@"}{x.o}</td>
-                      <td class={`r num ${x.pf > x.pa ? "win" : ""}`}>{x.pf}–{x.pa}</td>
-                      <td class="r num">{x.s[0]}-{x.s[1]}</td><td class="r num">{x.s[2]}-{x.s[3]}</td><td class="r num">{x.s[4]}-{x.s[5]}</td>
-                      <td class="r num">{x.s[6]}</td><td class="r num">{x.s[7] ?? "–"}</td>
-                      <td class="r num">{fixed(x.or_, 1)}</td><td class="r num">{fixed(x.dr, 1)}</td><td class="r num">{fixed(x.pc, 1)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : <p class="note">No games on record.</p>}
-        </div>
-      ))}
-    </div>
-    <p class="note">Off and Def are points scored and allowed per 100 possessions in each game; their averages are the 10-game ratings above. OREB is missing (–) where the source data didn't record it.</p>
-  </details>
+  <p class="note logs">The game-by-game box scores behind these ratings are under <a href="#h-form">Recent form before this game</a>.</p>
 </section>
 )}
 
@@ -325,9 +295,6 @@ const bad = (s, k) => !B?.[s]?.[k]?.ok;
   .ff tr.oth td { color: var(--muted); }
   .ff tr.oth .track i { opacity: 0.45; }
   .logs { margin-top: var(--s5); }
-  .log { font-size: 0.8rem; }
-  .log th, .log td { padding: 5px 8px 5px 0; }
-  .log .win { font-weight: 600; }
   .nw { white-space: nowrap; }
   :global(html.js) .ff .track i { transform: scaleX(0); }
   :global(html.js) .ff.in .track i { transform: none; transition: transform 0.6s var(--ease-out) 0.15s; }

@@ -7,6 +7,7 @@ import ForecastMiss from "../../components/ForecastMiss.astro";
 import StreakBadge from "../../components/StreakBadge.astro";
 import { record } from "../../lib/streaks.js";
 import { teamVars } from "../../lib/teamColors.js";
+import breakdowns from "../../data/breakdowns.json";
 import { games, gameById, teamByAbbr, teamUrl, gameUrl, fmtLongDate, fmtShortDate, fmtTime, fmtDateTime, favorite, signed, fixed } from "../../lib/data.js";
 
 export function getStaticPaths() {
@@ -59,6 +60,11 @@ if (I) {
 const desc = p
   ? `${A.name} at ${H.name}, ${fmtLongDate(g.date)}: forecast ${fav.abbr} ${Math.round(100 * fav.p)}% (projected ${g.away} ${Math.round(p.pa)}, ${g.home} ${Math.round(p.ph)})${final ? `; final ${g.away} ${g.score.a}, ${g.home} ${g.score.h}` : ""}.`
   : `${A.name} at ${H.name}, ${fmtLongDate(g.date)}.`;
+// Recent form: the box-score game logs behind the 10-game ratings (breakdowns.json),
+// newest first; the first 5 show, the rest open with "Show all 10 games".
+const bdGame = breakdowns.games[g.id];
+const hasLog = !!(bdGame?.home?.games?.length || bdGame?.away?.games?.length);
+const gameOn = (d, abbr) => games.find((x) => x.date === d && (x.home === abbr || x.away === abbr))?.id;
 ---
 <Base title={`${g.away} at ${g.home}, ${fmtShortDate(g.date)}`} description={desc} section="forecasts" type="article">
   <div class="wrap">
@@ -164,15 +170,20 @@ const desc = p
       {g.injuries && (
         <section class="section" aria-labelledby="h-inj">
           <details class="fold" open={!final}><summary><h2 id="h-inj">Injury report</h2></summary>
-          <p class="note">Official NBA injury report, {g.injuries.report} (the latest stored report before the forecast was saved). Two-way and G League assignments are omitted. The model counts players listed Out or Doubtful; Questionable players are treated as available.</p>
-          {[[A, g.injuries.away], [H, g.injuries.home]].map(([t, list]) => (
-            <div class="inj">
-              <h3>{t.name}</h3>
+          <p class="note">Official NBA injury report, {g.injuries.report} (the latest stored report before the forecast was saved). Two-way and G League assignments are omitted. The model counts players listed Out or Doubtful (status in bold); Questionable players are treated as available.</p>
+          <div class="form-pair inj-pair">
+          {[[A, g.away, g.injuries.away], [H, g.home, g.injuries.home]].map(([t, abbr, list]) => (
+            <div class="inj" style={teamVars(abbr)}>
+              <h3 class="team-band"><span class="ab">{abbr}</span> <span class="name">{t.name}</span>{abbr === g.home ? <span class="side"> (home)</span> : null}</h3>
               {list.length ? (
-                <ul>{list.map((e) => <li><span class="st">{e.status}</span> {e.name}{e.reason && <span class="muted"> · {e.reason}</span>}</li>)}</ul>
+                <ul>{list.map((e) => {
+                  const counted = /^(out|doubtful)$/i.test(e.status);
+                  return <li><span class={`st ${counted ? "counted" : ""}`}>{e.status}</span> <span class="pn">{e.name}</span>{e.reason && <span class="why">{e.reason}</span>}</li>;
+                })}</ul>
               ) : <p class="muted">No players listed.</p>}
             </div>
           ))}
+          </div>
           </details>
         </section>
       )}
@@ -181,23 +192,56 @@ const desc = p
     <div class="lower">
       <section class="section" aria-labelledby="h-form">
         <details class="fold"><summary><h2 id="h-form">Recent form before this game</h2></summary>
-        {[[A, g.away, g.form.away], [H, g.home, g.form.home]].map(([t, abbr, list]) => (
-          <div class="form">
-            <h3>{t.name}</h3>
-            {list.length ? (
+        <div class={`form-pair${hasLog ? " wide" : ""}`}>
+        {[[A, g.away], [H, g.home]].map(([t, abbr]) => {
+          const side = abbr === g.home ? "home" : "away";
+          const log = (bdGame?.[side]?.games || []).slice().reverse();
+          const simple = g.form[side] || [];
+          return (
+          <div class="form" style={teamVars(abbr)}>
+            <h3 class="team-band"><span class="ab">{abbr}</span> <span class="name">{t.name}</span>{abbr === g.home ? <span class="side"> (home)</span> : null}</h3>
+            {log.length ? (
+              <div class="table-scroll">
+                <table class="log" data-rows={log.length}>
+                  <thead><tr><th>Date</th><th>Opp</th><th>Result</th><th class="r">FG</th><th class="r">3P</th><th class="r">FT</th><th class="r">TOV</th><th class="r">OREB</th><th class="r">Off</th><th class="r">Def</th><th class="r">Pace</th></tr></thead>
+                  <tbody>
+                    {log.map((x, k) => {
+                      const id = gameOn(x.d, abbr);
+                      const won = x.pf > x.pa;
+                      return (
+                      <tr class={k >= 5 ? "older" : ""}>
+                        <td class="nw num">{id ? <a href={gameUrl(id)}>{fmtShortDate(x.d)}</a> : fmtShortDate(x.d)}</td>
+                        <td class="nw">{x.h ? "vs" : "at"} <a href={teamUrl(x.o)}>{x.o}</a></td>
+                        <td class="num nw res-c"><span class={won ? "w" : "l"}>{won ? "W" : "L"}</span> {x.pf}–{x.pa}</td>
+                        <td class="r num">{x.s[0]}-{x.s[1]}</td><td class="r num">{x.s[2]}-{x.s[3]}</td><td class="r num">{x.s[4]}-{x.s[5]}</td>
+                        <td class="r num">{x.s[6]}</td><td class="r num">{x.s[7] ?? "–"}</td>
+                        <td class="r num">{fixed(x.or_, 1)}</td><td class="r num">{fixed(x.dr, 1)}</td><td class="r num">{fixed(x.pc, 1)}</td>
+                      </tr>
+                    ); })}
+                  </tbody>
+                </table>
+              </div>
+            ) : simple.length ? (
               <table>
-                <thead><tr><th>Date</th><th>Opponent</th><th>Result</th></tr></thead>
-                <tbody>{list.map((r) => (
+                <thead><tr><th>Date</th><th>Opp</th><th class="r">Result</th></tr></thead>
+                <tbody>{simple.map((r) => (
                   <tr>
                     <td class="num">{gameById[r.id] ? <a href={gameUrl(r.id)}>{fmtShortDate(r.date)}</a> : fmtShortDate(r.date)}</td>
                     <td>{r.home ? "vs" : "at"} <a href={teamUrl(r.opp)}>{r.opp}</a></td>
-                    <td class="num">{r.won ? "W" : "L"} {r.pts}–{r.opp_pts}</td>
+                    <td class="r num"><span class={r.won ? "w" : "l"}>{r.won ? "W" : "L"}</span> {r.pts}–{r.opp_pts}</td>
                   </tr>
                 ))}</tbody>
               </table>
             ) : <p class="muted">No earlier games in the data.</p>}
           </div>
-        ))}
+          ); })}
+        </div>
+        {hasLog && (
+          <>
+            <button type="button" class="btn more10" hidden aria-expanded="false">Show all 10 games</button>
+            <p class="note">Off and Def are points scored and allowed per 100 possessions in each game; the 10-game averages are the offensive and defensive ratings the model uses. OREB is missing (–) where the source data didn't record it.</p>
+          </>
+        )}
         </details>
       </section>
 
@@ -228,14 +272,32 @@ const desc = p
           {nb[abbr].next && <p>Next: <a href={gameUrl(nb[abbr].next.id)}>{nb[abbr].next.away} at {nb[abbr].next.home}, {fmtShortDate(nb[abbr].next.date)}</a></p>}
         </div>
       ))}
-      <div>
-        <p class="kicker">More</p>
-        <p><a href={`/forecasts/?date=${g.date}`}>All games on {fmtShortDate(g.date)}</a></p>
-        <p><a href="/forecasts/archive/">Forecast archive</a></p>
-      </div>
     </nav>
   </div>
 </Base>
+
+<script>
+  // Links to a folded section (e.g. "#h-form") open it.
+  const openTarget = () => {
+    const el = location.hash && document.getElementById(location.hash.slice(1));
+    const d = el?.closest("details");
+    if (d) d.open = true;
+  };
+  openTarget();
+  window.addEventListener("hashchange", openTarget);
+
+  // Recent form: 5 games show; the button reveals all 10 behind the ratings.
+  for (const btn of document.querySelectorAll<HTMLButtonElement>(".more10")) {
+    const pair = btn.parentElement?.querySelector(".form-pair");
+    if (!pair || !pair.querySelector("tr.older")) continue;
+    btn.hidden = false;
+    btn.addEventListener("click", () => {
+      const all = pair.classList.toggle("all");
+      btn.setAttribute("aria-expanded", String(all));
+      btn.textContent = all ? "Show last 5 games" : "Show all 10 games";
+    });
+  }
+</script>
 
 <style>
   .tn { color: inherit; text-decoration: none; }
@@ -255,9 +317,6 @@ const desc = p
   .more-head { margin: var(--s7) 0 var(--s2); padding-top: var(--s6); border-top: 1px solid var(--rule); }
   /* The two teams sit side by side inside an open fold on wide screens. */
   @media (min-width: 800px) {
-    .fold:has(> .inj), .fold:has(> .form) { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: var(--s6); }
-    .fold:has(> .inj) > summary, .fold:has(> .form) > summary, .fold:has(> .inj) > .note { grid-column: 1 / -1; }
-    .fold > .inj + .inj, .fold > .form + .form { margin-top: 0; }
   }
   .recs { display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center; margin-top: var(--s3); font-size: 0.95rem; }
   .rc { display: inline-flex; align-items: center; gap: 6px; }
@@ -280,13 +339,52 @@ const desc = p
   dd { margin: 0; }
   .narrow { max-width: 680px; }
   .facts { margin: var(--s4) 0 0; padding-left: 1.1em; color: var(--ink-2); font-size: 0.95rem; }
-  .inj + .inj, .form + .form { margin-top: var(--s5); }
-  .lower h2 + .note, .lower h2 + .form, .lower h2 + table { margin-top: var(--s2); }
-  .inj h3, .form h3 { margin-bottom: var(--s2); }
-  .inj ul { list-style: none; margin: 0; padding: 0; font-size: 0.95rem; }
-  .inj li { padding: 4px 0; border-bottom: 1px solid var(--rule); }
-  .st { display: inline-block; min-width: 9.5em; font-size: 0.75rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--ink-2); }
+  .lower h2 + .note, .lower h2 + table { margin-top: var(--s2); }
+  /* Recent form: the two teams side by side, each under a band in its primary color. */
+  .form-pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--s4); }
+  .form { min-width: 0; }
+  .team-band { margin: 0 0 var(--s2); padding: 6px 10px; border-radius: var(--radius); background: var(--tp); color: var(--tf); font-family: var(--sans); font-size: 0.95rem; font-weight: 600; line-height: 1.3; box-shadow: inset -6px 0 0 var(--ts); }
+  .team-band .ab { font-weight: 700; margin-right: 2px; }
+  .team-band .side { font-weight: 400; }
+  .form table { font-size: 0.85rem; }
+  /* Box-score logs: side by side only where 11 columns fit; stacked (and scrollable) below. */
+  .form-pair.wide { grid-template-columns: minmax(0, 1fr); gap: var(--s5); }
+  @media (min-width: 1100px) { .form-pair.wide { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+  .form .log { font-size: 0.8rem; }
+  .form .log th, .form .log td { padding: 5px 8px 5px 0; white-space: nowrap; }
+  .form .log .res-c { padding-right: 12px; }
+  .form .nw { white-space: nowrap; }
+  .form .w { color: var(--model); font-weight: 700; }
+  .form .l { color: var(--accent); font-weight: 700; }
+  :global(html.js) .form .log tr.older { display: none; }
+  :global(html.js) .form-pair.all .log tr.older { display: table-row; }
+  .more10 { margin-top: var(--s3); }
+  .form .short { display: none; }
+  @media (max-width: 559px) { .form .short { display: inline; } }
+  @media (max-width: 559px) {
+    .form-pair { gap: var(--s3); }
+    .team-band { font-size: 0.85rem; padding: 5px 8px; }
+    .form-pair:not(.wide) .team-band .name { display: none; }
+    .form-pair:not(.wide) table { font-size: 0.7rem; }
+    .form-pair:not(.wide) th, .form-pair:not(.wide) td { padding-inline: 2px; white-space: nowrap; }
+    .form .long { display: none; }
+  }
+  /* Injury report: same paired, team-banded layout as Recent form. */
+  .inj { min-width: 0; }
+  .inj-pair { margin-top: var(--s3); }
+  .inj ul { list-style: none; margin: 0; padding: 0; font-size: 0.92rem; }
+  .inj li { padding: 6px 0; border-bottom: 1px solid var(--rule); display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 8px; }
+  .inj .pn { font-weight: 600; }
+  .inj .why { flex-basis: 100%; font-size: 0.8rem; color: var(--muted); padding-left: calc(9.5 * 0.7rem + 8px); }
+  .st { display: inline-block; min-width: 9.5em; font-size: 0.7rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); }
+  .st.counted { color: var(--ink); font-weight: 700; }
+  @media (max-width: 559px) {
+    .inj ul { font-size: 0.82rem; }
+    .inj li { column-gap: 4px; }
+    .st { min-width: 0; flex-basis: 100%; font-size: 0.65rem; }
+    .inj .why { padding-left: 0; }
+  }
   .related { display: grid; gap: var(--s5); }
-  @media (min-width: 800px) { .related { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  @media (min-width: 640px) { .related { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   .related p { margin-bottom: var(--s1); font-size: 0.95rem; }
 </style>

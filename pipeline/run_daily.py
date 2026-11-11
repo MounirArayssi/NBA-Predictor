@@ -338,6 +338,22 @@ def run_pipeline(skip_retrain=False, dry_run_twitter=True,
     return predictions
 
 
+def step_grade():
+    """Grade every official forecast whose game is final and not yet graded."""
+    from model.evaluate_predictions import evaluate_predictions
+    evaluate_predictions(official_only=True, include_already_evaluated=False)
+
+
+def run_grade():
+    """Fetch finished results and box scores, then grade. No predicting or retraining."""
+    log.info("=" * 55)
+    log.info(f"GRADE — {date.today()}")
+    log.info("=" * 55)
+    run_step("Fetch games (recent results)", step_fetch_games_today)
+    run_step("Fetch box scores",             step_fetch_box_scores)
+    run_step("Grade official forecasts",     step_grade)
+
+
 if __name__ == "__main__":
     import argparse
 
@@ -351,9 +367,14 @@ if __name__ == "__main__":
     parser.add_argument('--today-only',    action='store_true',
                         help="Only fetch/compute what today's games need; "
                              "skips history backfill and retraining")
+    parser.add_argument('--grade',         action='store_true',
+                        help='Fetch finished results and grade official forecasts; '
+                             'no predicting or retraining')
     args = parser.parse_args()
 
-    if args.predict_only:
+    if args.grade:
+        run_grade()
+    elif args.predict_only:
         run_step("Check previous games are final", step_check_previous_games_final)
         predictions = step_predict()
         step_tweet(predictions, dry_run=not args.post_twitter)
